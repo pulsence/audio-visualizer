@@ -6,11 +6,24 @@ Current the program can create videos from an audio file visualizing the audio v
 as rectangles. These rectangles can have round corners. They can flow from the left to right or
 from a center point outwards.
 
-## Todo:
+# Dependencies:
+- av
+- numpy
+- librosa
+- matplotlib
+- PIL (Pillow)
+- Pyside 6
+
+# Todo:
 ### General:
 - Look in python graphics programming
-- Create a UI
 - Impliment multithreading (multiprocessing module)
+- Provide option to include audio with visual
+
+### GUI
+- Preview shapes
+- Show settings for rectangles or circles based upon visualizer selections
+- Provide view on render ability
 
 ### Visualizers
 - Rectangles

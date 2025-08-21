@@ -1,32 +1,16 @@
-'''
-Visualizer Shape:
-1. Spikes
-2. Rounded corner rectangles
-3. Balls
-4. Shapes based on frequency bands
-
-Video Settings:
-1. Allow user config
-2. Choose to include audio
-
-General Improvements:
-1. Look into multithreading for audio processing and video generation
-
-
-Dependencies:
-- av
-- numpy
-- librosa
-- matplotlib
-- PIL (Pillow)
-'''
 import av
 
 from utilities import AudioData, VideoData, Generator
 from VolumeShape import RectangleVisualizer, CircleVisualizer
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+from ui import MainWindow
+
 
 def main():
+    show_ui()
+
     fps = 16
     video_width = 480
     video_height = 320
@@ -48,15 +32,20 @@ def main():
                                          alignment = 'center', flow = 'center')
 
     preview = False
-    video_data.prepare_container()
-    generateVideo(audio_data, video_data, rectangle_visualizer, preview=preview)
-    video_data.finalize()
+    #generateVideo(audio_data, video_data, rectangle_visualizer, preview=preview)
 
     if preview: 
         from os import startfile
         startfile(video_data.file_path)
-    
+
+def show_ui():
+    app = QApplication([])
+    main_window = MainWindow()
+    main_window.show()
+    app.exec()
+
 def generateVideo(audio_data: AudioData, video_data: VideoData, generator: Generator, preview=False):
+    video_data.prepare_container()
     generator.prepare_shapes()
 
     ''' If preview is True, limit to 30 seconds of video. '''
@@ -70,6 +59,7 @@ def generateVideo(audio_data: AudioData, video_data: VideoData, generator: Gener
         for packet in video_data.stream.encode(frame):
             video_data.container.mux(packet)
     
+    video_data.finalize()
 
 if __name__=="__main__":
     main()
