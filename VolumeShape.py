@@ -39,7 +39,7 @@ class RectangleVisualizer(Generator):
 
         if flow == 'center':
             if alignment == 'center':
-                self.draw_frame = self._draw_bottom_aligned_center_flow
+                self.draw_frame = self._draw_center_aligned_center_flow
             else:
                 self.draw_frame = self._draw_bottom_aligned_center_flow
         else:
@@ -128,7 +128,7 @@ class RectangleVisualizer(Generator):
     '''
     Draws rectangles centered vertically and flowing from the center outwards.
     '''
-    def _draw_bottom_aligned_center_flow(self, frame_index):
+    def _draw_center_aligned_center_flow(self, frame_index):
         img = Image.new("RGB", (self.video_data.video_width, self.video_data.video_height), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
@@ -181,7 +181,7 @@ class CircleVisualizer(Generator):
 
         if flow == 'center':
             if alignment == 'center':
-                self.draw_frame = self._draw_bottom_aligned_center_flow
+                self.draw_frame = self._draw_center_aligned_center_flow
             else:
                 self.draw_frame = self._draw_bottom_aligned_center_flow
         else:
@@ -267,7 +267,7 @@ class CircleVisualizer(Generator):
     '''
     Draws circles centered vertically and flowing from the center outwards.
     '''
-    def _draw_bottom_aligned_center_flow(self, frame_index):
+    def _draw_center_aligned_center_flow(self, frame_index):
         img = Image.new("RGB", (self.video_data.video_width, self.video_data.video_height), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 

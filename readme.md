@@ -23,7 +23,6 @@ from a center point outwards.
 ### GUI
 - Preview shapes
 - Show settings for rectangles or circles based upon visualizer selections
-- Provide view on render ability
 
 ### Visualizers
 - Rectangles

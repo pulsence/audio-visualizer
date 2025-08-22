@@ -1,12 +1,17 @@
-from PySide6.QtCore import Qt, QRunnable, QThreadPool, QObject, Signal
+from PySide6.QtCore import (
+    Qt, QRunnable, QThreadPool, QObject, Signal
+)
 from PySide6.QtWidgets import (
     QMainWindow, QGridLayout, QFormLayout, QHBoxLayout,
     QWidget, QComboBox, QLabel, QLineEdit, QPushButton, QCheckBox,
-    QFileDialog, QColorDialog, QMessageBox)
+    QFileDialog, QColorDialog
+)
 from PySide6.QtGui import QIntValidator
 
-from utilities import AudioData, VideoData, Generator
+
+from utilities import AudioData, VideoData
 from VolumeShape import RectangleVisualizer, CircleVisualizer
+from ui.renderDialog import RenderDialog
 
 import av
 
@@ -79,7 +84,7 @@ class MainWindow(QMainWindow):
 
 
         self.visualizer_alignment = QComboBox()
-        self.visualizer_alignment.addItems(["Bottm", "Center"])
+        self.visualizer_alignment.addItems(["Bottom", "Center"])
         visualizer_settings_layout.addRow("Alignment:", self.visualizer_alignment)
 
         self.visualizer_flow = QComboBox()
@@ -116,9 +121,16 @@ class MainWindow(QMainWindow):
         border_row.addWidget(self.visualizer_border_color_button)
         visualizer_settings_layout.addRow("Border Color:", border_row)
 
+        render_view_layout = QHBoxLayout()
         self.preview_checkbox = QCheckBox("Preview Video (30 seconds)")
-        self.preview_checkbox.setChecked(False)
-        visualizer_settings_layout.addRow(self.preview_checkbox)
+        self.preview_checkbox.setChecked(True)
+        render_view_layout.addWidget(self.preview_checkbox)
+
+        self.show_output_checkbox = QCheckBox("Show Rendered Video")
+        self.show_output_checkbox.setChecked(True)
+        render_view_layout.addWidget(self.show_output_checkbox)
+
+        visualizer_settings_layout.addRow(render_view_layout)
 
         self.render_button = QPushButton("Render Video")
         self.render_button.clicked.connect(self.render_video)
@@ -152,7 +164,13 @@ class MainWindow(QMainWindow):
 
         visualizer_type = self.visualizer.currentText()
         alignment = self.visualizer_alignment.currentText().lower()
-        flow = self.visualizer_flow.currentText().lower()
+
+        flow = self.visualizer_flow.currentText()
+        if flow == "Left to Right":
+            flow = "sideways"
+        elif flow == "Center Outward":
+            flow = "center"
+        
         
         bg_color = tuple(map(int, self.visualizer_bg_color_field.text().split(',')))
         border_color = tuple(map(int, self.visualizer_border_color_field.text().split(',')))
@@ -186,14 +204,9 @@ class MainWindow(QMainWindow):
         self.render_button.setEnabled(True)
         self.render_button.setText("Render Video")
 
-        message = QMessageBox(self)
-        message.setWindowTitle("Render Finished")
-        message.setText("Your render has completed.")
-        message.exec()
-        
-
-class RenderSignals(QObject):
-    finished = Signal()
+        if self.show_output_checkbox.isChecked():
+            player = RenderDialog(self.video_file_path.text())
+            player.exec()
 
 class RenderWorker(QRunnable):
     def __init__(self, audio_data, video_data, visualizer, preview):
@@ -203,6 +216,8 @@ class RenderWorker(QRunnable):
         self.visualizer = visualizer
         self.preview = preview
 
+        class RenderSignals(QObject):
+            finished = Signal()
         self.signals = RenderSignals()
 
     def run(self):
