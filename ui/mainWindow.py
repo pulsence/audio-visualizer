@@ -6,8 +6,10 @@ from PySide6.QtWidgets import (
     QWidget, QComboBox, QLabel, QLineEdit, QPushButton, QCheckBox,
     QFileDialog, QColorDialog
 )
-from PySide6.QtGui import QIntValidator
 
+from PySide6.QtGui import (
+    QIntValidator, QFont
+)
 
 from utilities import AudioData, VideoData
 from VolumeShape import RectangleVisualizer, CircleVisualizer
@@ -19,14 +21,23 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Audio Visualizer")
-        self.setGeometry(100, 100, 600, 400)
+        self.setGeometry(100, 100, 800, 500)
         
-        self.label = QLabel("Welcome to the Audio Visualizer!")
-        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label.adjustSize()
-
         primary_layout = QGridLayout()
-        primary_layout.addWidget(self.label, 0, 0)
+
+        self.heading_label = QLabel("Welcome to the Audio Visualizer!")
+        self.heading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        font = QFont()
+        font.setBold(True)
+        self.heading_label.setFont(font)
+        primary_layout.addWidget(self.heading_label, 0, 0, 1, 2)
+
+        '''
+        General Settings for the visualizer
+        '''
+        self.general_visualizer_settings_lable = QLabel("General Settings")
+        self.general_visualizer_settings_lable.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        primary_layout.addWidget(self.general_visualizer_settings_lable, 1, 0)
 
         visualizer_settings_layout = QFormLayout()
 
@@ -70,18 +81,17 @@ class MainWindow(QMainWindow):
         self.video_height.setValidator(QIntValidator(1, 1080))
         visualizer_settings_layout.addRow("Video Height:", self.video_height)
 
+        self.visualizer_x = QLineEdit("0")
+        self.visualizer_x.setValidator(QIntValidator(1, 1920))
+        visualizer_settings_layout.addRow("Visualizer X:", self.visualizer_x)
+
+        self.visualizer_y = QLineEdit("300")
+        self.visualizer_y.setValidator(QIntValidator(1, 1080))
+        visualizer_settings_layout.addRow("Visualizer Y:", self.visualizer_y)
+
         self.visualizer = QComboBox()
         self.visualizer.addItems(["Rectangle", "Circle"])
         visualizer_settings_layout.addRow("Visualizer Type:", self.visualizer)
-
-
-        self.rectangle_visualizer_layout = QFormLayout()
-        # Insert settings just for rectangles 
-
-        
-        self.circle_visualizer_layout = QFormLayout()
-        # Insert settings just for circles
-
 
         self.visualizer_alignment = QComboBox()
         self.visualizer_alignment.addItems(["Bottom", "Center"])
@@ -104,7 +114,7 @@ class MainWindow(QMainWindow):
         bg_row.addWidget(self.visualizer_bg_color_button)
         visualizer_settings_layout.addRow("Background Color:", bg_row)
 
-        self.visualizer_border_width = QLineEdit("4")
+        self.visualizer_border_width = QLineEdit("1")
         self.visualizer_border_width.setValidator(QIntValidator(0, int(1e6)))
         visualizer_settings_layout.addRow("Border Width:", self.visualizer_border_width)
 
@@ -121,6 +131,10 @@ class MainWindow(QMainWindow):
         border_row.addWidget(self.visualizer_border_color_button)
         visualizer_settings_layout.addRow("Border Color:", border_row)
 
+        self.visualizer_spacing = QLineEdit("5")
+        self.visualizer_spacing.setValidator(QIntValidator(0, int(1e6)))
+        visualizer_settings_layout.addRow("Spacing:", self.visualizer_spacing)
+
         render_view_layout = QHBoxLayout()
         self.preview_checkbox = QCheckBox("Preview Video (30 seconds)")
         self.preview_checkbox.setChecked(True)
@@ -136,7 +150,48 @@ class MainWindow(QMainWindow):
         self.render_button.clicked.connect(self.render_video)
         visualizer_settings_layout.addRow(self.render_button)
 
-        primary_layout.addLayout(visualizer_settings_layout, 1, 0)
+        primary_layout.addLayout(visualizer_settings_layout, 2, 0)
+
+
+        '''
+        Settings for specific items in a second column
+        '''
+        self.selected_visualizer_settings_lable = QLabel("Settings for the selected visualizer")
+        self.selected_visualizer_settings_lable.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        primary_layout.addWidget(self.selected_visualizer_settings_lable, 1, 1)
+
+        class RectangleWidgets:
+            def __init__(self):
+                self.layout = QFormLayout()
+            
+                self.box_height = QLineEdit("50")
+                self.box_height.setValidator(QIntValidator(1, int(1e6)))
+                self.layout.addRow("Box Height:", self.box_height)
+
+                self.box_width = QLineEdit("10")
+                self.box_width.setValidator(QIntValidator(1, int(1e6)))
+                self.layout.addRow("Box Width:", self.box_width)
+
+                self.corner_radius = QLineEdit("0")
+                self.corner_radius.setValidator(QIntValidator(0, int(1e6)))
+                self.layout.addRow("Corner Radius:", self.corner_radius)
+
+                self.super_sampling = QLineEdit("0")
+                self.super_sampling.setValidator(QIntValidator(0, 64))
+                self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth rounded corners.")
+                self.layout.addRow("Super-sampling:", self.super_sampling)
+
+        self.rectangle_widgets = RectangleWidgets()
+        primary_layout.addLayout(self.rectangle_widgets.layout, 2, 1)
+            
+
+        
+        self.circle_visualizer_layout = QFormLayout()
+        # Insert settings just for circles
+
+
+
+
 
         container = QWidget()
         container.setLayout(primary_layout)
@@ -161,6 +216,8 @@ class MainWindow(QMainWindow):
         video_width = int(self.video_width.text())
         video_height = int(self.video_height.text())
         fps = int(self.visualizer_fps.text())
+        x = int(self.visualizer_x.text())
+        y = int(self.visualizer_y.text())
 
         visualizer_type = self.visualizer.currentText()
         alignment = self.visualizer_alignment.currentText().lower()
@@ -176,21 +233,29 @@ class MainWindow(QMainWindow):
         border_color = tuple(map(int, self.visualizer_border_color_field.text().split(',')))
         border_width = int(self.visualizer_border_width.text())
 
+        spacing = int(self.visualizer_spacing.text())
+
         audio_data = AudioData(audio_file_path)
         video_data = VideoData(video_width, video_height, fps, file_path=video_file_path)
 
         visualizer = None
         if visualizer_type == "Rectangle":
+            box_height = int(self.rectangle_widgets.box_height.text())
+            box_width = int(self.rectangle_widgets.box_width.text())
+            corner_radius = int(self.rectangle_widgets.corner_radius.text())
+            super_sample = int(self.rectangle_widgets.super_sampling.text())
+
             visualizer = RectangleVisualizer(
-                audio_data, video_data, 0, video_height - 150,
-                box_height=100, corner_radius=10,
+                audio_data, video_data, x, y,
+                box_height=box_height, box_width=box_width, corner_radius=corner_radius,
+                border_width=border_width, spacing=spacing,
                 bg_color=bg_color, border_color=border_color,
                 alignment=alignment, flow=flow
             )
         elif visualizer_type == "Circle":
             visualizer = CircleVisualizer(
-                audio_data, video_data, 0, video_height - 150,
-                max_radius=20, border_width=border_width, spacing=8,
+                audio_data, video_data, x, y,
+                max_radius=20, border_width=border_width, spacing=spacing,
                 bg_color=bg_color, border_color=border_color,
                 alignment=alignment, flow=flow
             )
