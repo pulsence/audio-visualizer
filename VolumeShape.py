@@ -193,13 +193,15 @@ class CircleVisualizer(Generator):
     def prepare_shapes(self):
         self.circles = []
         for i in range(self.number_of_cirles):
-            x1 = self.x + i * (self.max_diameter + self.spacing) + self.max_radius
-            x2 = x1 + self.border_width
+            x1 = self.x + i * (self.max_diameter + self.spacing)
+            x2 = x1 + self.max_radius
             y1 = self.y
             y2 = y1 + self.border_width
-            if x2 >= self.video_data.video_width:
+
+            if x2 + self.max_radius + self.border_width >= self.video_data.video_width:
                 break
-            self.circles.append([x1, y1, x2, y2])
+            # The last two value are the x of center and radius of circle since y is fixed
+            self.circles.append([x1, y1, x2, y2, x2, self.border_width]) 
 
         if self.flow == 'center' and len(self.circles) % 2 == 0:
             self.circles.pop()
@@ -207,7 +209,7 @@ class CircleVisualizer(Generator):
         self.number_of_cirles = len(self.circles)
 
     '''
-    Draws rectangles aligned to the bottom and flowing from the center outwards.
+    Draws circles aligned to the bottom and flowing from the center outwards.
     '''
     def _draw_bottom_aligned_center_flow(self, frame_index):
         img = Image.new("RGB", (self.video_data.video_width, self.video_data.video_height), (0, 0, 0))
@@ -215,18 +217,34 @@ class CircleVisualizer(Generator):
 
         volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_cirles // 2):
-            self.circles[i][1] = self.circles[i+1][1]
-            self.circles[self.number_of_cirles - i - 1][1] = self.circles[self.number_of_cirles - i - 2][1]
-        self.circles[self.center_index][1] = self.y - int(self.max_box_height * (volume / self.audio_data.max_volume))
+            r = self.circles[i+1][5]
 
+            self.circles[i][0] = self.circles[i][4] - r
+            self.circles[i][1] = self.y - r * 2
+            self.circles[i][2] = self.circles[i][4] + r
+            self.circles[i][3] = self.y
+            self.circles[i][5] = r
+
+            self.circles[self.number_of_cirles - i - 1][0] = self.circles[self.number_of_cirles - i - 1][4] - r
+            self.circles[self.number_of_cirles - i - 1][1] = self.y - r * 2
+            self.circles[self.number_of_cirles - i - 1][2] = self.circles[self.number_of_cirles - i - 1][4] + r
+            self.circles[self.number_of_cirles - i - 1][3] = self.y
+            self.circles[self.number_of_cirles - i - 1][5] = r
+
+        r = int(self.max_radius * (volume / self.audio_data.max_volume))
+        self.circles[self.center_index][0] = self.circles[self.center_index][4] - r
+        self.circles[self.center_index][1] = self.y - r * 2
+        self.circles[self.center_index][2] = self.circles[self.center_index][4] + r
+        self.circles[self.center_index][3] = self.y
+        self.circles[self.center_index][5] = r
         for circle in self.circles:
-            draw.ellipse(circle,
+            draw.ellipse(circle[:4],
                          fill=self.bg_color, outline=self.border_color,
                          width=self.border_width)
         return np.asarray(img)
     
     '''
-    Draws rectangles aligned to the bottom and flowing from the left side to the other.
+    Draws circles aligned to the bottom and flowing from the left side to the other.
     '''
     def _draw_bottom_aligned_side_flow(self, frame_index):
         img = Image.new("RGB", (self.video_data.video_width, self.video_data.video_height), (0, 0, 0))
@@ -234,17 +252,29 @@ class CircleVisualizer(Generator):
 
         volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_cirles - 1):
-            self.circles[self.number_of_cirles - i - 1][1] = self.circles[self.number_of_cirles - i - 2][1]
-        self.circles[0][1] = self.y - int(self.max_box_height * (volume / self.audio_data.max_volume))
+            r = self.circles[self.number_of_cirles - i - 2][5]
+            
+            self.circles[self.number_of_cirles - i - 1][0] = self.circles[self.number_of_cirles - i - 1][4] - r
+            self.circles[self.number_of_cirles - i - 1][1] = self.y - r * 2
+            self.circles[self.number_of_cirles - i - 1][2] = self.circles[self.number_of_cirles - i - 1][4] + r
+            self.circles[self.number_of_cirles - i - 1][3] = self.y
+            self.circles[self.number_of_cirles - i - 1][5] = r
+
+        r = int(self.max_radius * (volume / self.audio_data.max_volume))
+        self.circles[0][0] = self.circles[0][4] - r
+        self.circles[0][1] = self.y - r * 2
+        self.circles[0][2] = self.circles[0][4] + r
+        self.circles[0][3] = self.y
+        self.circles[0][5] = r
 
         for circle in self.circles:
-            draw.ellipse(circle,
+            draw.ellipse(circle[:4],
                          fill=self.bg_color, outline=self.border_color,
                          width=self.border_width)
         return np.asarray(img)
 
     '''
-    Draws rectangles centered vertically and flowing from the left side to the other.
+    Draws circles centered vertically and flowing from the left side to the other.
     '''
     def _draw_center_aligned_side_flow(self, frame_index):
         img = Image.new("RGB", (self.video_data.video_width, self.video_data.video_height), (0, 0, 0))
@@ -252,14 +282,23 @@ class CircleVisualizer(Generator):
 
         volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_cirles - 1):
-            self.circles[self.number_of_cirles - i - 1][1] = self.circles[self.number_of_cirles - i - 2][1]
-            self.circles[self.number_of_cirles - i - 1][3] = self.circles[self.number_of_cirles - i - 2][3]
-        offset = int(self.max_box_height * (volume / self.audio_data.max_volume)) // 2
-        self.circles[0][1] = self.y - offset
-        self.circles[0][3] = self.y + offset
+            r = self.circles[self.number_of_cirles - i - 2][5]
+            
+            self.circles[self.number_of_cirles - i - 1][0] = self.circles[self.number_of_cirles - i - 1][4] - r
+            self.circles[self.number_of_cirles - i - 1][1] = self.y - r
+            self.circles[self.number_of_cirles - i - 1][2] = self.circles[self.number_of_cirles - i - 1][4] + r
+            self.circles[self.number_of_cirles - i - 1][3] = self.y + r
+            self.circles[self.number_of_cirles - i - 1][5] = r
+
+        r = int(self.max_radius * (volume / self.audio_data.max_volume))
+        self.circles[0][0] = self.circles[0][4] - r
+        self.circles[0][1] = self.y - r
+        self.circles[0][2] = self.circles[0][4] + r
+        self.circles[0][3] = self.y + r
+        self.circles[0][5] = r
 
         for circle in self.circles:
-            draw.ellipse(circle,
+            draw.ellipse(circle[:4],
                          fill=self.bg_color, outline=self.border_color,
                          width=self.border_width)
         return np.asarray(img)
@@ -273,27 +312,29 @@ class CircleVisualizer(Generator):
 
         volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_cirles // 2):
-            r2 = (self.circles[i+1][3] - self.circles[i+1][1]) // 2
-            r1 = (self.circles[i][3] - self.circles[i][1]) // 2
-            self.circles[i][1] = self.circles[i+1][1] 
-            self.circles[i][3] = self.circles[i+1][3]
-            self.circles[1][0] = self.circles[1][0] + r1 - r2
-            self.circles[1][2] = self.circles[1][2] - r1 + r2
+            r = self.circles[i+1][5]
 
-            r2 = (self.circles[self.number_of_cirles - i - 2][3] - self.circles[self.number_of_cirles - i - 2][1]) // 2
-            r1 = (self.circles[self.number_of_cirles - i - 1][3] - self.circles[self.number_of_cirles - i - 1][1]) // 2
-            self.circles[self.number_of_cirles - i - 1][1] = self.circles[self.number_of_cirles - i - 2][1]
-            self.circles[self.number_of_cirles - i - 1][3] = self.circles[self.number_of_cirles - i - 2][3]
-            self.circles[self.number_of_cirles - i - 1][0] = self.circles[self.number_of_cirles - i - 1][0] + r1 - r2
-            self.circles[self.number_of_cirles - i - 1][2] = self.circles[self.number_of_cirles - i - 1][2] - r1 + r2
-        radius = int(self.max_radius * (volume / self.audio_data.max_volume)) // 2
-        self.circles[self.center_index][0] = self.x + self.center_index * (self.max_diameter + self.border_width) - radius
-        self.circles[self.center_index][1] = self.y - radius
-        self.circles[self.center_index][2] = self.x + self.center_index * (self.max_diameter + self.border_width) + radius
-        self.circles[self.center_index][3] = self.y + radius
+            self.circles[i][0] = self.circles[i][4] - r
+            self.circles[i][1] = self.y - r
+            self.circles[i][2] = self.circles[i][4] + r
+            self.circles[i][3] = self.y + r
+            self.circles[i][5] = r
+
+            self.circles[self.number_of_cirles - i - 1][0] = self.circles[self.number_of_cirles - i - 1][4] - r
+            self.circles[self.number_of_cirles - i - 1][1] = self.y - r
+            self.circles[self.number_of_cirles - i - 1][2] = self.circles[self.number_of_cirles - i - 1][4] + r
+            self.circles[self.number_of_cirles - i - 1][3] = self.y + r
+            self.circles[self.number_of_cirles - i - 1][5] = r
+        
+        r = int(self.max_radius * (volume / self.audio_data.max_volume))
+        self.circles[self.center_index][0] = self.circles[self.center_index][4] - r
+        self.circles[self.center_index][1] = self.y - r
+        self.circles[self.center_index][2] = self.circles[self.center_index][4] + r
+        self.circles[self.center_index][3] = self.y + r
+        self.circles[self.center_index][5] = r
 
         for circle in self.circles:
-            draw.ellipse(circle,
+            draw.ellipse(circle[:4],
                          fill=self.bg_color, outline=self.border_color,
                          width=self.border_width)
         return np.asarray(img)

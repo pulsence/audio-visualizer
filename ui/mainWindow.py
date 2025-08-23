@@ -130,7 +130,7 @@ class MainWindow(QMainWindow):
         self.visualizer_x.setValidator(QIntValidator(1, 1920))
         form_layout.addRow("Visualizer X:", self.visualizer_x)
 
-        self.visualizer_y = QLineEdit("300")
+        self.visualizer_y = QLineEdit("250")
         self.visualizer_y.setValidator(QIntValidator(1, 1080))
         form_layout.addRow("Visualizer Y:", self.visualizer_y)
 
@@ -229,7 +229,7 @@ class MainWindow(QMainWindow):
             def __init__(self):
                 self.layout = QFormLayout()
             
-                self.radius = QLineEdit("50")
+                self.radius = QLineEdit("25")
                 self.radius.setValidator(QIntValidator(1, int(1e6)))
                 self.layout.addRow("Radius:", self.radius)
 

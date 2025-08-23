@@ -23,7 +23,7 @@ class RenderDialog(QDialog):
         layout = QVBoxLayout()
         
         self.video = QMediaPlayer(source=QUrl.fromLocalFile(render_path),
-                                    loops=True)
+                                    loops=QMediaPlayer.Loops.Infinite)
         self.video.mediaStatusChanged.connect(self._media_status)
 
         self.video_widget = QVideoWidget()
@@ -35,7 +35,6 @@ class RenderDialog(QDialog):
         layout.addWidget(buttons)
 
         self.setLayout(layout)
-        self.video.play()
     
     def _media_status(self, status):
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
