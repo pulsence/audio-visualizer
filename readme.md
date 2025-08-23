@@ -28,7 +28,6 @@ from a center point outwards.
 ### Visualizers
 - Rectangles
     - Use supersampling to improve rounded corners (img = img.resize((width // 2, height // 2), resample=Image.LANCZOS))
-    - Reimpliment each draw function to be frame independent
 - Circles
     - Make circles work (include supersampling)
 - Future visualizers

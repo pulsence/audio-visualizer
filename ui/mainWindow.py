@@ -4,7 +4,8 @@ from PySide6.QtCore import (
 from PySide6.QtWidgets import (
     QMainWindow, QGridLayout, QFormLayout, QHBoxLayout,
     QWidget, QComboBox, QLabel, QLineEdit, QPushButton, QCheckBox,
-    QFileDialog, QColorDialog
+    QFileDialog, QColorDialog,
+    QSizePolicy
 )
 
 from PySide6.QtGui import (
@@ -23,23 +24,51 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Audio Visualizer")
         self.setGeometry(100, 100, 800, 500)
         
+        self.h1_font = QFont()
+        self.h1_font.setBold(True)
+        self.h1_font.setPointSize(24)
+
+        self.h2_font = QFont()
+        self.h2_font.setUnderline(True)
+        self.h2_font.setPointSize(16)
+
         primary_layout = QGridLayout()
 
         self.heading_label = QLabel("Welcome to the Audio Visualizer!")
         self.heading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        font = QFont()
-        font.setBold(True)
-        self.heading_label.setFont(font)
+        self.heading_label.setFont(self.h1_font)
         primary_layout.addWidget(self.heading_label, 0, 0, 1, 2)
 
-        '''
-        General Settings for the visualizer
-        '''
-        self.general_visualizer_settings_lable = QLabel("General Settings")
-        self.general_visualizer_settings_lable.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        primary_layout.addWidget(self.general_visualizer_settings_lable, 1, 0)
+        # 1,0
+        self._prepare_general_settings_elements(primary_layout)
+        # 1,1
+        self._prepare_general_visualizer_elements(primary_layout)
+        # 2,1
+        self._prepare_specific_visualizer_elements(primary_layout)
+        # 3,0
+        self._prepare_render_elements(primary_layout)
 
-        visualizer_settings_layout = QFormLayout()
+
+        container = QWidget()
+        container.setLayout(primary_layout)
+        self.setCentralWidget(container)
+
+        self.render_thread_pool = QThreadPool()
+        self.render_thread_pool.setMaxThreadCount(1)
+        self.rendering = False
+
+    '''
+    General settings in (1,0)
+    '''
+    def _prepare_general_settings_elements(self, layout: QGridLayout, r=1, c=0):
+        main_layout = QGridLayout()
+        form_layout = QFormLayout()
+
+        section_label = QLabel("General Settings")
+        section_label.setFont(self.h2_font)
+        section_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        section_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        main_layout.addWidget(section_label, 0, 0)
 
         audio_file_row = QHBoxLayout()
         self.audio_file_path = QLineEdit("sample_audio.mp3")
@@ -53,7 +82,7 @@ class MainWindow(QMainWindow):
         self.audio_file_dialog.fileSelected.connect(self.audio_file_path.setText)
         self.audio_file_button.clicked.connect(self.audio_file_dialog.open)
         audio_file_row.addWidget(self.audio_file_button)
-        visualizer_settings_layout.addRow("Audio File Path:", audio_file_row)
+        form_layout.addRow("Audio File Path:", audio_file_row)
 
         video_file_row = QHBoxLayout()
         self.video_file_path = QLineEdit("output.mp4")
@@ -67,39 +96,55 @@ class MainWindow(QMainWindow):
         self.video_file_dialog.fileSelected.connect(self.video_file_path.setText)
         self.video_file_button.clicked.connect(self.video_file_dialog.open)
         video_file_row.addWidget(self.video_file_button)
-        visualizer_settings_layout.addRow("Output Video File Path:", video_file_row)
+        form_layout.addRow("Output Video File Path:", video_file_row)
 
         self.visualizer_fps = QLineEdit("16")
         self.visualizer_fps.setValidator(QIntValidator(1, 60))
-        visualizer_settings_layout.addRow("Visual Frames Per Second (FPS):", self.visualizer_fps)
+        form_layout.addRow("Visual Frames Per Second (FPS):", self.visualizer_fps)
 
         self.video_width = QLineEdit("480")
         self.video_width.setValidator(QIntValidator(1, 1920))
-        visualizer_settings_layout.addRow("Video Width:", self.video_width)
+        form_layout.addRow("Video Width:", self.video_width)
 
         self.video_height = QLineEdit("320")
         self.video_height.setValidator(QIntValidator(1, 1080))
-        visualizer_settings_layout.addRow("Video Height:", self.video_height)
+        form_layout.addRow("Video Height:", self.video_height)
 
+        main_layout.addLayout(form_layout, 1, 0)
+        layout.addLayout(main_layout, r, c,)
+
+    '''
+    Settings for general visualization items in (1, 1)
+    '''
+    def _prepare_general_visualizer_elements(self, layout: QGridLayout, r=1, c=1):
+        main_layout = QGridLayout()
+        form_layout = QFormLayout()
+
+        section_label = QLabel("General Visualization Settings")
+        section_label.setFont(self.h2_font)
+        section_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        section_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        main_layout.addWidget(section_label, 0, 0)
+        
         self.visualizer_x = QLineEdit("0")
         self.visualizer_x.setValidator(QIntValidator(1, 1920))
-        visualizer_settings_layout.addRow("Visualizer X:", self.visualizer_x)
+        form_layout.addRow("Visualizer X:", self.visualizer_x)
 
         self.visualizer_y = QLineEdit("300")
         self.visualizer_y.setValidator(QIntValidator(1, 1080))
-        visualizer_settings_layout.addRow("Visualizer Y:", self.visualizer_y)
+        form_layout.addRow("Visualizer Y:", self.visualizer_y)
 
         self.visualizer = QComboBox()
         self.visualizer.addItems(["Rectangle", "Circle"])
-        visualizer_settings_layout.addRow("Visualizer Type:", self.visualizer)
+        form_layout.addRow("Visualizer Type:", self.visualizer)
 
         self.visualizer_alignment = QComboBox()
         self.visualizer_alignment.addItems(["Bottom", "Center"])
-        visualizer_settings_layout.addRow("Alignment:", self.visualizer_alignment)
+        form_layout.addRow("Alignment:", self.visualizer_alignment)
 
         self.visualizer_flow = QComboBox()
         self.visualizer_flow.addItems(["Left to Right", "Center Outward"])
-        visualizer_settings_layout.addRow("Flow:", self.visualizer_flow)
+        form_layout.addRow("Flow:", self.visualizer_flow)
 
         bg_row = QHBoxLayout()
         self.visualizer_bg_color_field = QLineEdit("227, 209, 169")
@@ -112,11 +157,11 @@ class MainWindow(QMainWindow):
         ))
         self.visualizer_bg_color_button.clicked.connect(self.visualizer_bg_color.open)
         bg_row.addWidget(self.visualizer_bg_color_button)
-        visualizer_settings_layout.addRow("Background Color:", bg_row)
+        form_layout.addRow("Background Color:", bg_row)
 
         self.visualizer_border_width = QLineEdit("1")
         self.visualizer_border_width.setValidator(QIntValidator(0, int(1e6)))
-        visualizer_settings_layout.addRow("Border Width:", self.visualizer_border_width)
+        form_layout.addRow("Border Width:", self.visualizer_border_width)
 
         border_row = QHBoxLayout()
         self.visualizer_border_color_field = QLineEdit("227, 209, 169")
@@ -129,36 +174,26 @@ class MainWindow(QMainWindow):
         ))
         self.visualizer_border_color_button.clicked.connect(self.visualizer_border_color.open)
         border_row.addWidget(self.visualizer_border_color_button)
-        visualizer_settings_layout.addRow("Border Color:", border_row)
+        form_layout.addRow("Border Color:", border_row)
 
         self.visualizer_spacing = QLineEdit("5")
         self.visualizer_spacing.setValidator(QIntValidator(0, int(1e6)))
-        visualizer_settings_layout.addRow("Spacing:", self.visualizer_spacing)
+        form_layout.addRow("Spacing:", self.visualizer_spacing)
+        
+        main_layout.addLayout(form_layout, 1, 0)
+        layout.addLayout(main_layout, r, c)
 
-        render_view_layout = QHBoxLayout()
-        self.preview_checkbox = QCheckBox("Preview Video (30 seconds)")
-        self.preview_checkbox.setChecked(True)
-        render_view_layout.addWidget(self.preview_checkbox)
-
-        self.show_output_checkbox = QCheckBox("Show Rendered Video")
-        self.show_output_checkbox.setChecked(True)
-        render_view_layout.addWidget(self.show_output_checkbox)
-
-        visualizer_settings_layout.addRow(render_view_layout)
-
-        self.render_button = QPushButton("Render Video")
-        self.render_button.clicked.connect(self.render_video)
-        visualizer_settings_layout.addRow(self.render_button)
-
-        primary_layout.addLayout(visualizer_settings_layout, 2, 0)
-
-
-        '''
-        Settings for specific items in a second column
-        '''
-        self.selected_visualizer_settings_lable = QLabel("Settings for the selected visualizer")
-        self.selected_visualizer_settings_lable.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        primary_layout.addWidget(self.selected_visualizer_settings_lable, 1, 1)
+    '''
+    Settings for specific visualizes in (2, 1)
+    '''
+    def _prepare_specific_visualizer_elements(self, layout: QGridLayout, r=2, c=1):
+        main_layout = QGridLayout()
+        
+        section_label = QLabel("Selected Visualizer Settings")
+        section_label.setFont(self.h2_font)
+        section_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        section_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        main_layout.addWidget(section_label, 0, 0)
 
         class RectangleWidgets:
             def __init__(self):
@@ -182,24 +217,34 @@ class MainWindow(QMainWindow):
                 self.layout.addRow("Super-sampling:", self.super_sampling)
 
         self.rectangle_widgets = RectangleWidgets()
-        primary_layout.addLayout(self.rectangle_widgets.layout, 2, 1)
+        main_layout.addLayout(self.rectangle_widgets.layout, 1, 0)
+
+        layout.addLayout(main_layout, r, c)
             
 
         
         self.circle_visualizer_layout = QFormLayout()
         # Insert settings just for circles
 
+    '''
+    UI elements to launch a render in (3, 0)
+    '''
+    def _prepare_render_elements(self, layout: QGridLayout, r=3, c=0):
+        render_section_layout = QGridLayout()
 
+        self.preview_checkbox = QCheckBox("Preview Video (30 seconds)")
+        self.preview_checkbox.setChecked(True)
+        render_section_layout.addWidget(self.preview_checkbox, 0, 0)
 
+        self.show_output_checkbox = QCheckBox("Show Rendered Video")
+        self.show_output_checkbox.setChecked(True)
+        render_section_layout.addWidget(self.show_output_checkbox, 0, 1)
 
+        self.render_button = QPushButton("Render Video")
+        self.render_button.clicked.connect(self.render_video)
+        render_section_layout.addWidget(self.render_button, 1, 0, 1, 2)
 
-        container = QWidget()
-        container.setLayout(primary_layout)
-        self.setCentralWidget(container)
-
-        self.render_thread_pool = QThreadPool()
-        self.render_thread_pool.setMaxThreadCount(1)
-        self.rendering = False
+        layout.addLayout(render_section_layout, r, c)
 
     def render_video(self):
         if self.rendering:
