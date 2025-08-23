@@ -21,7 +21,7 @@ class RectangleVisualizer(Generator):
 
         self.box_width = box_width
         self.border_width = border_width
-        self.max_box_height = box_height
+        self.box_height = box_height
         self.spacing = spacing
         self.corner_radius = corner_radius
         self.corners = corners
@@ -75,7 +75,7 @@ class RectangleVisualizer(Generator):
         for i in range(self.number_of_boxes // 2):
             self.rectangles[i][1] = self.rectangles[i+1][1]
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
-        self.rectangles[self.center_index][1] = self.y - int(self.max_box_height * (volume / self.audio_data.max_volume))
+        self.rectangles[self.center_index][1] = self.y - int(self.box_height * (volume / self.audio_data.max_volume))
 
         for rect in self.rectangles:
             draw.rounded_rectangle(rect, self.corner_radius,
@@ -94,7 +94,7 @@ class RectangleVisualizer(Generator):
         volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_boxes - 1):
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
-        self.rectangles[0][1] = self.y - int(self.max_box_height * (volume / self.audio_data.max_volume))
+        self.rectangles[0][1] = self.y - int(self.box_height * (volume / self.audio_data.max_volume))
 
         for rect in self.rectangles:
             draw.rounded_rectangle(rect, self.corner_radius,
@@ -114,7 +114,7 @@ class RectangleVisualizer(Generator):
         for i in range(self.number_of_boxes - 1):
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
             self.rectangles[self.number_of_boxes - i - 1][3] = self.rectangles[self.number_of_boxes - i - 2][3]
-        offset = int(self.max_box_height * (volume / self.audio_data.max_volume)) // 2
+        offset = int(self.box_height * (volume / self.audio_data.max_volume)) // 2
         self.rectangles[0][1] = self.y - offset
         self.rectangles[0][3] = self.y + offset
 
@@ -138,7 +138,7 @@ class RectangleVisualizer(Generator):
             self.rectangles[i][3] = self.rectangles[i+1][3]
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
             self.rectangles[self.number_of_boxes - i - 1][3] = self.rectangles[self.number_of_boxes - i - 2][3]
-        offset = int(self.max_box_height * (volume / self.audio_data.max_volume)) // 2
+        offset = int(self.box_height * (volume / self.audio_data.max_volume)) // 2
         self.rectangles[self.center_index][1] = self.y - offset
         self.rectangles[self.center_index][3] = self.y + offset
 

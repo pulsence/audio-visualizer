@@ -136,6 +136,7 @@ class MainWindow(QMainWindow):
 
         self.visualizer = QComboBox()
         self.visualizer.addItems(["Rectangle", "Circle"])
+        self.visualizer.currentTextChanged.connect(self.visualizer_changed)
         form_layout.addRow("Visualizer Type:", self.visualizer)
 
         self.visualizer_alignment = QComboBox()
@@ -216,15 +217,35 @@ class MainWindow(QMainWindow):
                 self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth rounded corners.")
                 self.layout.addRow("Super-sampling:", self.super_sampling)
 
+                self.controler = QWidget()
+                self.controler.setLayout(self.layout)
+
         self.rectangle_widgets = RectangleWidgets()
-        main_layout.addLayout(self.rectangle_widgets.layout, 1, 0)
-
-        layout.addLayout(main_layout, r, c)
-            
-
+        main_layout.addWidget(self.rectangle_widgets.controler, 1, 0)
         
         self.circle_visualizer_layout = QFormLayout()
         # Insert settings just for circles
+        class CircleWidgets:
+            def __init__(self):
+                self.layout = QFormLayout()
+            
+                self.radius = QLineEdit("50")
+                self.radius.setValidator(QIntValidator(1, int(1e6)))
+                self.layout.addRow("Radius:", self.radius)
+
+                self.super_sampling = QLineEdit("0")
+                self.super_sampling.setValidator(QIntValidator(0, 64))
+                self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth rounded corners.")
+                self.layout.addRow("Super-sampling:", self.super_sampling)
+
+                self.controler = QWidget()
+                self.controler.setLayout(self.layout)
+
+        self.circle_widgets = CircleWidgets()
+        self.circle_widgets.controler.hide()
+        main_layout.addWidget(self.circle_widgets.controler, 1, 0)
+
+        layout.addLayout(main_layout, r, c)
 
     '''
     UI elements to launch a render in (3, 0)
@@ -245,6 +266,14 @@ class MainWindow(QMainWindow):
         render_section_layout.addWidget(self.render_button, 1, 0, 1, 2)
 
         layout.addLayout(render_section_layout, r, c)
+
+    def visualizer_changed(self, visualizer):
+        if visualizer == "Circle":
+            self.rectangle_widgets.controler.hide()
+            self.circle_widgets.controler.show()
+        else:
+            self.rectangle_widgets.controler.show()
+            self.circle_widgets.controler.hide()
 
     def render_video(self):
         if self.rendering:
@@ -298,9 +327,12 @@ class MainWindow(QMainWindow):
                 alignment=alignment, flow=flow
             )
         elif visualizer_type == "Circle":
+            radius = int(self.circle_widgets.radius.text())
+            super_sample = int(self.circle_widgets.super_sampling.text())
+
             visualizer = CircleVisualizer(
                 audio_data, video_data, x, y,
-                max_radius=20, border_width=border_width, spacing=spacing,
+                max_radius=radius, border_width=border_width, spacing=spacing,
                 bg_color=bg_color, border_color=border_color,
                 alignment=alignment, flow=flow
             )
