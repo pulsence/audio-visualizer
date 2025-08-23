@@ -1,3 +1,26 @@
+'''
+MIT License
+
+Copyright (c) 2025 Timothy Eck
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+'''
 from PySide6.QtCore import (
     Qt, QRunnable, QThreadPool, QObject, Signal
 )
@@ -212,10 +235,10 @@ class MainWindow(QMainWindow):
                 self.corner_radius.setValidator(QIntValidator(0, int(1e6)))
                 self.layout.addRow("Corner Radius:", self.corner_radius)
 
-                self.super_sampling = QLineEdit("0")
-                self.super_sampling.setValidator(QIntValidator(0, 64))
-                self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth rounded corners.")
-                self.layout.addRow("Super-sampling:", self.super_sampling)
+                self.super_sampling = QLineEdit("1")
+                self.super_sampling.setValidator(QIntValidator(1, 64))
+                self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth rounded corners. It is only applies if value is greater then 1.")
+                self.layout.addRow("Supersampling:", self.super_sampling)
 
                 self.controler = QWidget()
                 self.controler.setLayout(self.layout)
@@ -233,9 +256,9 @@ class MainWindow(QMainWindow):
                 self.radius.setValidator(QIntValidator(1, int(1e6)))
                 self.layout.addRow("Radius:", self.radius)
 
-                self.super_sampling = QLineEdit("0")
-                self.super_sampling.setValidator(QIntValidator(0, 64))
-                self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth rounded corners.")
+                self.super_sampling = QLineEdit("4")
+                self.super_sampling.setValidator(QIntValidator(1, 64))
+                self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth the circles. It is only applies if value is greater then 1.")
                 self.layout.addRow("Super-sampling:", self.super_sampling)
 
                 self.controler = QWidget()
@@ -320,7 +343,7 @@ class MainWindow(QMainWindow):
             super_sample = int(self.rectangle_widgets.super_sampling.text())
 
             visualizer = RectangleVisualizer(
-                audio_data, video_data, x, y,
+                audio_data, video_data, x, y, super_sampling=super_sample,
                 box_height=box_height, box_width=box_width, corner_radius=corner_radius,
                 border_width=border_width, spacing=spacing,
                 bg_color=bg_color, border_color=border_color,
@@ -331,7 +354,7 @@ class MainWindow(QMainWindow):
             super_sample = int(self.circle_widgets.super_sampling.text())
 
             visualizer = CircleVisualizer(
-                audio_data, video_data, x, y,
+                audio_data, video_data, x, y, super_sampling=super_sample,
                 max_radius=radius, border_width=border_width, spacing=spacing,
                 bg_color=bg_color, border_color=border_color,
                 alignment=alignment, flow=flow
