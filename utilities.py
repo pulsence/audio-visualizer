@@ -80,16 +80,24 @@ class VideoData:
         self.file_path = file_path
 
     def prepare_container(self):
-        self.container = av.open(self.file_path, mode='w')
+        try:
+            self.container = av.open(self.file_path, mode='w')
+        except:
+            return False
         self.stream = self.container.add_stream('h264', rate=self.fps)
         self.stream.width = self.video_width
         self.stream.height = self.video_height
         self.stream.pix_fmt = 'yuv420p'
+        return True
 
     def finalize(self):
         for packet in self.stream.encode():
             self.container.mux(packet)
-        self.container.close()
+        try:
+            self.container.close()
+        except:
+            return False
+        return True
 
 class Generator:
     

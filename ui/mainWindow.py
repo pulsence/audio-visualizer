@@ -25,7 +25,7 @@ from PySide6.QtCore import (
     Qt, QRunnable, QThreadPool, QObject, Signal
 )
 from PySide6.QtWidgets import (
-    QMainWindow, QGridLayout, QFormLayout, QHBoxLayout,
+    QMainWindow, QMessageBox, QGridLayout, QFormLayout, QHBoxLayout,
     QWidget, QComboBox, QLabel, QLineEdit, QPushButton, QCheckBox,
     QFileDialog, QColorDialog,
     QSizePolicy
@@ -40,6 +40,8 @@ from VolumeShape import RectangleVisualizer, CircleVisualizer
 from ui.renderDialog import RenderDialog
 
 import av
+
+import os
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -129,7 +131,7 @@ class MainWindow(QMainWindow):
         self.video_width.setValidator(QIntValidator(1, 1920))
         form_layout.addRow("Video Width:", self.video_width)
 
-        self.video_height = QLineEdit("320")
+        self.video_height = QLineEdit("100")
         self.video_height.setValidator(QIntValidator(1, 1080))
         form_layout.addRow("Video Height:", self.video_height)
 
@@ -150,11 +152,11 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(section_label, 0, 0)
         
         self.visualizer_x = QLineEdit("0")
-        self.visualizer_x.setValidator(QIntValidator(1, 1920))
+        self.visualizer_x.setValidator(QIntValidator(0, 1e6))
         form_layout.addRow("Visualizer X:", self.visualizer_x)
 
-        self.visualizer_y = QLineEdit("250")
-        self.visualizer_y.setValidator(QIntValidator(1, 1080))
+        self.visualizer_y = QLineEdit("50")
+        self.visualizer_y.setValidator(QIntValidator(0, 1e6))
         form_layout.addRow("Visualizer Y:", self.visualizer_y)
 
         self.visualizer = QComboBox()
@@ -298,6 +300,41 @@ class MainWindow(QMainWindow):
             self.rectangle_widgets.controler.show()
             self.circle_widgets.controler.hide()
 
+    def validate_render_settings(self):
+        try:
+            video_width = int(self.video_width.text())
+            video_height = int(self.video_height.text())
+            fps = int(self.visualizer_fps.text())
+            x = int(self.visualizer_x.text())
+            y = int(self.visualizer_y.text())
+
+            bg_color = tuple(map(int, self.visualizer_bg_color_field.text().split(',')))
+            border_color = tuple(map(int, self.visualizer_border_color_field.text().split(',')))
+            border_width = int(self.visualizer_border_width.text())
+
+            spacing = int(self.visualizer_spacing.text())
+
+            box_height = int(self.rectangle_widgets.box_height.text())
+            box_width = int(self.rectangle_widgets.box_width.text())
+            corner_radius = int(self.rectangle_widgets.corner_radius.text())
+            super_sample = int(self.rectangle_widgets.super_sampling.text())
+
+            radius = int(self.circle_widgets.radius.text())
+            super_sample = int(self.circle_widgets.super_sampling.text())
+        except:
+            return False
+
+        if not os.path.isfile(self.audio_file_path.text()):
+            return False
+        
+        ext = os.path.splitext(self.audio_file_path.text())[1]
+        if ext == '':
+            self.audio_file_button.setText(self.audio_file_path.text() + ".mp4")
+        elif not ext == ".mp4":
+            return False
+        
+        return True
+
     def render_video(self):
         if self.rendering:
             return
@@ -305,6 +342,15 @@ class MainWindow(QMainWindow):
         self.rendering = True
         self.render_button.setText("Rendering...")
         self.render_button.setEnabled(False)
+
+        if not self.validate_render_settings():
+            self.rendering = False
+            self.render_button.setEnabled(True)
+            self.render_button.setText("Render Video")
+            message = QMessageBox(QMessageBox.Icon.Critical, "Settings Error",
+                                  "One of your settings are invalid. The render cannot run. Please double check the values inputed.")
+            message.exec()
+            return
 
         audio_file_path = self.audio_file_path.text()
         video_file_path = self.video_file_path.text()
@@ -362,6 +408,7 @@ class MainWindow(QMainWindow):
         
         render_worker = RenderWorker(audio_data, video_data, visualizer, preview)
         render_worker.signals.finished.connect(self.render_finished)
+        render_worker.signals.error.connect(self.render_failed)
         self.render_thread_pool.start(render_worker)
     
     def render_finished(self):
@@ -372,6 +419,14 @@ class MainWindow(QMainWindow):
         if self.show_output_checkbox.isChecked():
             player = RenderDialog(self.video_file_path.text())
             player.exec()
+    
+    def render_failed(self, msg):
+        self.rendering = False
+        self.render_button.setEnabled(True)
+        self.render_button.setText("Render Video")
+        message = QMessageBox(QMessageBox.Icon.Critical, "Error rendering",
+                              f"There was an error rendering the video. The error message is: {msg}")
+        message.exec()
 
 class RenderWorker(QRunnable):
     def __init__(self, audio_data, video_data, visualizer, preview):
@@ -383,15 +438,18 @@ class RenderWorker(QRunnable):
 
         class RenderSignals(QObject):
             finished = Signal()
+            error = Signal(str)
         self.signals = RenderSignals()
 
     def run(self):
-        self.audio_data.load_audio_data()
+        if not self.audio_data.load_audio_data():
+            self.signals.error.emit("Error opening audio file.")
         self.audio_data.chunk_audio(self.video_data.fps)
         self.audio_data.analyze_volume()
 
 
-        self.video_data.prepare_container()
+        if not self.video_data.prepare_container():
+            self.signals.error.emit("Error opening video file.")
         self.visualizer.prepare_shapes()
 
         ''' If preview is True, limit to 30 seconds of video. '''
@@ -405,5 +463,6 @@ class RenderWorker(QRunnable):
             for packet in self.video_data.stream.encode(frame):
                 self.video_data.container.mux(packet)
         
-        self.video_data.finalize()
+        if not self.video_data.finalize():
+            self.signals.error.emit("Error closing video file.")
         self.signals.finished.emit()
