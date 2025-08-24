@@ -78,8 +78,8 @@ class CircleVisualizer(Visualizer):
         for i in range(self.number_of_cirles):
             x1 = self.x + i * (self.max_diameter + self.spacing)
             x2 = x1 + self.max_radius
-            y1 = self.y
-            y2 = y1 + self.border_width
+            y1 = self.y - self.border_width
+            y2 = self.y 
 
             if x2 + self.max_radius + self.border_width >= self.video_data.video_width * self.super_sampling:
                 break

@@ -33,11 +33,11 @@ from PySide6.QtGui import (
 
 from ui import View
 
-class RectangleChromeVisualizerSettings:
+class RectangleChromaVisualizerSettings:
     box_height = 0
     corner_radius = 0
 
-class RectangleChromeVisualizerView(View):
+class RectangleChromaVisualizerView(View):
     '''
     Each Visualizer is to produce a QWidget with an attached Layout that contains all the
     required gui elements to collect require settings for this visualizer.
@@ -70,8 +70,8 @@ class RectangleChromeVisualizerView(View):
     '''
     Reads the widget values to prepare the visualizer.
     '''
-    def read_view_values(self) -> RectangleChromeVisualizerSettings:
-        settings = RectangleChromeVisualizerSettings()
+    def read_view_values(self) -> RectangleChromaVisualizerSettings:
+        settings = RectangleChromaVisualizerSettings()
 
         settings.box_height = int(self.box_height.text())
         settings.corner_radius = int(self.corner_radius.text())

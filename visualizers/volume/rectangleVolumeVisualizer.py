@@ -84,8 +84,8 @@ class RectangleVisualizer(Visualizer):
         for i in range(self.number_of_boxes):
             x1 = self.x + i * (self.box_width + self.spacing)
             x2 = x1 + self.box_width
-            y1 = self.y
-            y2 = y1 + self.border_width
+            y1 = self.y - self.border_width
+            y2 = self.y 
             if x2 + self.border_width >= self.video_data.video_width * self.super_sampling:
                 break
             self.rectangles.append([x1, y1, x2, y2])

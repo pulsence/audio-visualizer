@@ -48,7 +48,7 @@ from ui import (
     Fonts, RenderDialog,
     RectangleVolumeVisualizerView, RectangleVolumeVisualizerSettings,
     CircleVolumeVisualizerView, CircleVolumeVisualizerSettings,
-    RectangleChromeVisualizerView, RectangleChromeVisualizerSettings,
+    RectangleChromaVisualizerView, RectangleChromaVisualizerSettings,
     CircleChromeVisualizerView, CircleChromeVisualizerSettings,
     GeneralSettingsView, GeneralSettings,
     GeneralVisualizerView, GeneralVisualizerSettings
@@ -121,13 +121,13 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.rectangleVolumeVisualizerView.get_view_in_widget(), 1, 0)
         self.visualizer_views.append(self.rectangleVolumeVisualizerView)
         
-        self.circleValumeVisualizerView = CircleVolumeVisualizerView()
-        self.circleValumeVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.circleValumeVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.circleValumeVisualizerView)
+        self.circleVolumeVisualizerView = CircleVolumeVisualizerView()
+        self.circleVolumeVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.circleVolumeVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.circleVolumeVisualizerView)
 
-        self.rectangleChromaVisualizerView = RectangleChromeVisualizerView()
-        self.rectangleChromaVisualizerView.get_view_in_widget().show()
+        self.rectangleChromaVisualizerView = RectangleChromaVisualizerView()
+        self.rectangleChromaVisualizerView.get_view_in_widget().hide()
         main_layout.addWidget(self.rectangleChromaVisualizerView.get_view_in_widget(), 1, 0)
         self.visualizer_views.append(self.rectangleChromaVisualizerView)
         
@@ -165,13 +165,13 @@ class MainWindow(QMainWindow):
         visualizer = VisualizerOptions(visualizer)
 
         if visualizer == VisualizerOptions.VOLUME_CIRCLE:
-            self.circleValumeVisualizerView.get_view_in_widget().show()
+            self.circleVolumeVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.VOLUME_RECTANGLE:
             self.rectangleVolumeVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.CHROMA_RECTANGLE:
             self.rectangleChromaVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.CHROMA_CIRCLE:
-            self.circleChromaVisualizerView.get_view_in_widget().show()
+            widget = self.circleChromaVisualizerView.get_view_in_widget().show()
 
     def validate_render_settings(self):
         if not self.generalSettingsView.validate_view():
@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
         
         if VisualizerOptions.VOLUME_RECTANGLE and not self.rectangleVolumeVisualizerView.validate_view():
             return False
-        elif VisualizerOptions.VOLUME_CIRCLE and not self.circleValumeVisualizerView.validate_view():
+        elif VisualizerOptions.VOLUME_CIRCLE and not self.circleVolumeVisualizerView.validate_view():
             return False
         elif VisualizerOptions.CHROMA_RECTANGLE and not self.rectangleChromaVisualizerView.validate_view():
             return False
@@ -231,7 +231,7 @@ class MainWindow(QMainWindow):
                 alignment=visualizer_settings.alignment, flow=settings.flow
             )
         elif visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_CIRCLE:
-            settings = self.circleValumeVisualizerView.read_view_values()
+            settings = self.circleVolumeVisualizerView.read_view_values()
 
             visualizer = volume.CircleVisualizer(
                 audio_data, video_data, visualizer_settings.x, visualizer_settings.y,

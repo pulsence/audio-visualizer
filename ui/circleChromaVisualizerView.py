@@ -23,12 +23,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 
-from PySide6.QtWidgets import (
-    QFormLayout, QLabel
+from PySide6.QtCore import (
+    Qt
 )
 
-from PySide6.QtGui import (
-    QIntValidator
+from PySide6.QtWidgets import (
+    QLabel, QSizePolicy
 )
 
 from ui import View
@@ -44,9 +44,12 @@ class CircleChromeVisualizerView(View):
     def __init__(self):
         super().__init__()
 
-        label = QLabel("There are not specific settings for the Chroma Circle visualizer.")
+        label = QLabel("There are no specific settings for the Chroma Circle visualizer.")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.layout.addWidget(label, 0, 0)
-    
+        self.controler.setLayout(self.layout)
+
     '''
     Verifies the values of the widgets are valid for this visualizer.
     '''

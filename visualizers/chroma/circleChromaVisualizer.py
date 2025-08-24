@@ -68,8 +68,8 @@ class CircleVisualizer(Visualizer):
         for i in range(self.number_of_cirles):
             x1 = self.x + i * (self.max_diameter + self.spacing)
             x2 = x1 + self.max_radius
-            y1 = self.y
-            y2 = y1 + self.border_width
+            y1 = self.y - self.border_width
+            y2 = self.y 
 
             # The last value is the x of center since y is fixed
             self.circles.append([x1, y1, x2, y2, x2]) 

@@ -37,7 +37,7 @@ from .generalVisualizerView import GeneralVisualizerView, GeneralVisualizerSetti
 # Visualizer Specific Views
 from .rectangleVolumeVisualizerView import RectangleVolumeVisualizerView, RectangleVolumeVisualizerSettings
 from .circleVolumeVisualizerView import CircleVolumeVisualizerView, CircleVolumeVisualizerSettings
-from .rectangleChromaVisualizerView import RectangleChromeVisualizerView, RectangleChromeVisualizerSettings
+from .rectangleChromaVisualizerView import RectangleChromaVisualizerView, RectangleChromaVisualizerSettings
 from .circleChromaVisualizerView import CircleChromeVisualizerView, CircleChromeVisualizerSettings
 
 from .renderDialog import RenderDialog
