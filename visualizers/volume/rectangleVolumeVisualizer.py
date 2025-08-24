@@ -25,15 +25,7 @@ SOFTWARE.
 import numpy as np
 from PIL import Image, ImageDraw
 
-from PySide6.QtWidgets import (
-    QWidget, QFormLayout, QLineEdit
-)
-
-from PySide6.QtGui import (
-    QIntValidator
-)
-
-from ..genericVisualizer import Visualizer, VisualizerView
+from visualizers import Visualizer
 
 class RectangleVisualizer(Visualizer):
     '''
@@ -201,53 +193,3 @@ class RectangleVisualizer(Visualizer):
         
         return np.asarray(img)
     
-
-class RectangleVisualizerView(VisualizerView):
-    '''
-    Each Visualizer is to produce a QWidget with an attached Layout that contains all the
-    required gui elements to collect require settings for this visualizer.
-    '''
-    def setup_setting_widgets(self) -> QWidget:
-        self.layout = QFormLayout()
-    
-        self.box_height = QLineEdit("50")
-        self.box_height.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Box Height:", self.box_height)
-
-        self.box_width = QLineEdit("10")
-        self.box_width.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Box Width:", self.box_width)
-
-        self.corner_radius = QLineEdit("0")
-        self.corner_radius.setValidator(QIntValidator(0, int(1e6)))
-        self.layout.addRow("Corner Radius:", self.corner_radius)
-
-        self.super_sampling = QLineEdit("1")
-        self.super_sampling.setValidator(QIntValidator(1, 64))
-        self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth rounded corners. It is only applies if value is greater then 1.")
-        self.layout.addRow("Supersampling:", self.super_sampling)
-
-        self.controler = QWidget()
-        self.controler.setLayout(self.layout)
-        return self.controler
-
-    def get_controler_widget(self) -> QWidget:
-        return self.controler
-    
-    '''
-    Verifies the values of the widgets are valid for this visualizer.
-    '''
-    def verify_widget_values(self) -> bool:
-        try:
-            box_height = int(self.box_height.text())
-            box_width = int(self.box_width.text())
-            corner_radius = int(self.corner_radius.text())
-            super_sample = int(self.super_sampling.text())
-        except:
-            return False
-        return True
-    '''
-    Reads the widget values to prepare the visualizer.
-    '''
-    def read_widget_values(self, visualizer: RectangleVisualizer):
-        raise NotImplementedError("Subclasses should implement this method.")

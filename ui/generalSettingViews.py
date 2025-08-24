@@ -22,5 +22,34 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 
-from .rectangleVolumeVisualizer import RectangleVisualizer
-from .circleVolumeVisualizer import CircleVisualizer
+from PySide6.QtWidgets import (
+    QLayout, QWidget, QBoxLayout, QHBoxLayout,
+    QLineEdit
+)
+
+from ui import View
+
+class GeneralSettingsView(View):
+    '''
+    Returns the widgets of this view nested within a single layout.
+    '''
+    def get_view_in_layout(self) -> QLayout:
+        raise NotImplementedError("Subclasses should implement this method.")
+    
+    '''
+    Returns the widgets of this view nested within a single parent widget.
+    '''
+    def get_view_in_widget(self) -> QWidget:
+        raise NotImplementedError("Subclasses should implement this method.")
+    
+    '''
+    Verifies that the input values in the view are valide.
+    '''
+    def validate_view(self) -> bool:
+        raise NotImplementedError("Subclasses should implement this method.")
+    
+    '''
+    Transforms the input values in the view into a python object.
+    '''
+    def read_view_values(self) -> object:
+        raise NotImplementedError("Subclasses should implement this method.")

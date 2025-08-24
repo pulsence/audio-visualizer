@@ -22,3 +22,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 from .mainWindow import MainWindow
+from .renderDialog import RenderDialog
+from .generalView import View
+from .generalSettingViews import GeneralSettingsView
+
+from .rectangleVisualizerView import RectangleVisualizerView
+from .circleVisualizerView import CircleVisualizerView

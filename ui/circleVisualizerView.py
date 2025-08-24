@@ -1,3 +1,4 @@
+
 '''
 MIT License
 
@@ -20,63 +21,49 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-
-Parent Class for different visualizer generators.
 '''
 
 from PySide6.QtWidgets import (
-    QWidget
+    QFormLayout, QLineEdit
 )
 
-from .utilities import AudioData, VideoData
+from PySide6.QtGui import (
+    QIntValidator
+)
 
-class Visualizer:
-    
-    def __init__(self, audio_data: AudioData, video_data: VideoData, x, y, super_sampling):
-        self.audio_data = audio_data
-        self.video_data = video_data
-        self.super_sampling = super_sampling
-        self.x = x * self.super_sampling 
-        self.y = y * self.super_sampling 
+from .generalView import View
 
-   
-    '''
-    Prepares the shapes for the visualizer.
-    This method should be implemented by subclasses to define how shapes are prepared.
-    '''
-    def prepare_shapes(self):
-        raise NotImplementedError("Subclasses should implement this method.")
-
-    '''
-    Generates a single frame of the video for a specific audio frame.
-    This method should be implemented by subclasses to define how each frame is generated.
-    '''
-    def generate_frame(self, frame_index: int):
-        raise NotImplementedError("Subclasses should implement this method.")
-
-'''
-Each Visualizer should have a paired view to prepare gui elements for the Visualizer.
-''' 
-class VisualizerView:
+class CircleVisualizerView(View):
     '''
     Each Visualizer is to produce a QWidget with an attached Layout that contains all the
     required gui elements to collect require settings for this visualizer.
     '''
-    def setup_setting_widgets(self) -> QWidget:
-        raise NotImplementedError("Subclasses should implement this method.")
+    def __init__(self, show=True):
+        super().__init__(show=show)
 
-    '''
-    Returns the master control widget than embeds the settings widgets returned from set_setting_widgets().
-    '''
-    def get_view_in_widget(self) -> QWidget:
-        raise NotImplementedError("Subclasses should implement this method.")
-    
+        self.layout = QFormLayout()
+            
+        self.radius = QLineEdit("25")
+        self.radius.setValidator(QIntValidator(1, int(1e6)))
+        self.layout.addRow("Radius:", self.radius)
+
+        self.super_sampling = QLineEdit("4")
+        self.super_sampling.setValidator(QIntValidator(1, 64))
+        self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth the circles. It is only applies if value is greater then 1.")
+        self.layout.addRow("Super-sampling:", self.super_sampling)
+
+        self.controler.setLayout(self.layout)
+
     '''
     Verifies the values of the widgets are valid for this visualizer.
     '''
     def validate_view(self) -> bool:
-        raise NotImplementedError("Subclasses should implement this method.")
+        try:
+            radius = int(self.radius.text())
+            super_sample = int(self.super_sampling.text())
+        except:
+            return False
+        return True
     
     '''
     Reads the widget values to prepare the visualizer.

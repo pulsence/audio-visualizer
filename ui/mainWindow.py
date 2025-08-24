@@ -37,10 +37,12 @@ from PySide6.QtGui import (
 
 from visualizers.utilities import AudioData, VideoData
 from visualizers.volume import (
-    RectangleVisualizer, RectangleVisualizerView,
-    CircleVisualizer, CircleVisualizerView
+    RectangleVisualizer, CircleVisualizer
 )
-from ui.renderDialog import RenderDialog
+
+from .renderDialog import RenderDialog
+from .rectangleVisualizerView import RectangleVisualizerView
+from .circleVisualizerView import CircleVisualizerView
 
 import av
 
@@ -164,7 +166,7 @@ class MainWindow(QMainWindow):
 
         self.visualizer = QComboBox()
         self.visualizer.addItems(["Rectangle", "Circle"])
-        self.visualizer.currentTextChanged.connect(self.visualizer_changed)
+        self.visualizer.currentTextChanged.connect(self.visualizer_selection_changed)
         form_layout.addRow("Visualizer Type:", self.visualizer)
 
         self.visualizer_alignment = QComboBox()
@@ -224,13 +226,14 @@ class MainWindow(QMainWindow):
         section_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         main_layout.addWidget(section_label, 0, 0)
 
+        self.visualizer_views = []
         self.rectangleVisualizerView = RectangleVisualizerView()
-        main_layout.addWidget(self.rectangleVisualizerView.setup_setting_widgets(), 1, 0)
+        main_layout.addWidget(self.rectangleVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.rectangleVisualizerView)
         
-        self.circleVisualizerView = CircleVisualizerView()
-        widget = self.circleVisualizerView.setup_setting_widgets()
-        widget.hide()
-        main_layout.addWidget(widget, 1, 0)
+        self.circleVisualizerView = CircleVisualizerView(show=False)
+        main_layout.addWidget(self.circleVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.circleVisualizerView)
 
         layout.addLayout(main_layout, r, c)
 
@@ -254,13 +257,14 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(render_section_layout, r, c)
 
-    def visualizer_changed(self, visualizer):
+    def visualizer_selection_changed(self, visualizer):
+        for view in self.visualizer_views:
+            view.get_view_in_widget().hide()
+
         if visualizer == "Circle":
-            self.rectangleVisualizerView.get_controler_widget().hide()
-            self.circleVisualizerView.get_controler_widget().show()
+            self.circleVisualizerView.get_view_in_widget().show()
         else:
-            self.rectangleVisualizerView.get_controler_widget().show()
-            self.circleVisualizerView.get_controler_widget().hide()
+            self.rectangleVisualizerView.get_view_in_widget().show()
 
     def validate_render_settings(self):
         try:
@@ -278,9 +282,9 @@ class MainWindow(QMainWindow):
         except:
             return False
 
-        if not self.rectangleVisualizerView.verify_widget_values():
+        if not self.rectangleVisualizerView.validate_view():
             return False
-        if not self.circleVisualizerView.verify_widget_values():
+        if not self.circleVisualizerView.validate_view():
             return False
 
         if not os.path.isfile(self.audio_file_path.text()):
