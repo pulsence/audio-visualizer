@@ -91,11 +91,11 @@ class GeneralSettingsView(View):
         video_file_row.addWidget(self.video_file_button)
         form_layout.addRow("Output Video File Path:", video_file_row)
 
-        self.visualizer_fps = QLineEdit("16")
+        self.visualizer_fps = QLineEdit("12")
         self.visualizer_fps.setValidator(QIntValidator(1, 60))
         form_layout.addRow("Visual Frames Per Second (FPS):", self.visualizer_fps)
 
-        self.video_width = QLineEdit("480")
+        self.video_width = QLineEdit("720")
         self.video_width.setValidator(QIntValidator(1, 1920))
         form_layout.addRow("Video Width:", self.video_width)
 

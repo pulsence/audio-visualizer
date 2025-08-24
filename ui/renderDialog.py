@@ -37,15 +37,18 @@ from PySide6.QtMultimedia import (
     QMediaPlayer
 )
 
+from visualizers.utilities import VideoData
+
 class RenderDialog(QDialog):
-    def __init__(self, render_path):
+    def __init__(self, video_data: VideoData):
         super().__init__()
 
+        self.video_data = video_data
         self.setWindowTitle("Viewing Render")
 
         layout = QVBoxLayout()
         
-        self.video = QMediaPlayer(source=QUrl.fromLocalFile(render_path),
+        self.video = QMediaPlayer(source=QUrl.fromLocalFile(video_data.file_path),
                                     loops=QMediaPlayer.Loops.Infinite)
         self.video.mediaStatusChanged.connect(self._media_status)
 
@@ -61,6 +64,6 @@ class RenderDialog(QDialog):
     
     def _media_status(self, status):
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
-            self.video_widget.setMaximumSize(QSize(480, 360))
+            self.video_widget.setMaximumSize(QSize(self.video_data.video_width, self.video_data.video_height))
             self.adjustSize()
             self.video.play()

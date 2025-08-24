@@ -268,13 +268,13 @@ class MainWindow(QMainWindow):
         render_worker.signals.error.connect(self.render_failed)
         self.render_thread_pool.start(render_worker)
     
-    def render_finished(self, output_path):
+    def render_finished(self, video_data: VideoData):
         self.rendering = False
         self.render_button.setEnabled(True)
         self.render_button.setText("Render Video")
 
         if self.show_output_checkbox.isChecked():
-            player = RenderDialog(output_path)
+            player = RenderDialog(video_data)
             player.exec()
     
     def render_failed(self, msg):
@@ -294,7 +294,7 @@ class RenderWorker(QRunnable):
         self.preview = preview
 
         class RenderSignals(QObject):
-            finished = Signal(str)
+            finished = Signal(VideoData)
             error = Signal(str)
         self.signals = RenderSignals()
 
@@ -322,4 +322,4 @@ class RenderWorker(QRunnable):
         
         if not self.video_data.finalize():
             self.signals.error.emit("Error closing video file.")
-        self.signals.finished.emit(self.video_data.file_path)
+        self.signals.finished.emit(self.video_data)
