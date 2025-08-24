@@ -35,8 +35,11 @@ from PySide6.QtGui import (
     QIntValidator, QFont
 )
 
-from utilities import AudioData, VideoData
-from VolumeShape import RectangleVisualizer, CircleVisualizer
+from visualizers.utilities import AudioData, VideoData
+from visualizers.volume import (
+    RectangleVisualizer, RectangleVisualizerView,
+    CircleVisualizer, CircleVisualizerView
+)
 from ui.renderDialog import RenderDialog
 
 import av
@@ -221,54 +224,13 @@ class MainWindow(QMainWindow):
         section_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         main_layout.addWidget(section_label, 0, 0)
 
-        class RectangleWidgets:
-            def __init__(self):
-                self.layout = QFormLayout()
-            
-                self.box_height = QLineEdit("50")
-                self.box_height.setValidator(QIntValidator(1, int(1e6)))
-                self.layout.addRow("Box Height:", self.box_height)
-
-                self.box_width = QLineEdit("10")
-                self.box_width.setValidator(QIntValidator(1, int(1e6)))
-                self.layout.addRow("Box Width:", self.box_width)
-
-                self.corner_radius = QLineEdit("0")
-                self.corner_radius.setValidator(QIntValidator(0, int(1e6)))
-                self.layout.addRow("Corner Radius:", self.corner_radius)
-
-                self.super_sampling = QLineEdit("1")
-                self.super_sampling.setValidator(QIntValidator(1, 64))
-                self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth rounded corners. It is only applies if value is greater then 1.")
-                self.layout.addRow("Supersampling:", self.super_sampling)
-
-                self.controler = QWidget()
-                self.controler.setLayout(self.layout)
-
-        self.rectangle_widgets = RectangleWidgets()
-        main_layout.addWidget(self.rectangle_widgets.controler, 1, 0)
+        self.rectangleVisualizerView = RectangleVisualizerView()
+        main_layout.addWidget(self.rectangleVisualizerView.setup_setting_widgets(), 1, 0)
         
-        self.circle_visualizer_layout = QFormLayout()
-        # Insert settings just for circles
-        class CircleWidgets:
-            def __init__(self):
-                self.layout = QFormLayout()
-            
-                self.radius = QLineEdit("25")
-                self.radius.setValidator(QIntValidator(1, int(1e6)))
-                self.layout.addRow("Radius:", self.radius)
-
-                self.super_sampling = QLineEdit("4")
-                self.super_sampling.setValidator(QIntValidator(1, 64))
-                self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth the circles. It is only applies if value is greater then 1.")
-                self.layout.addRow("Super-sampling:", self.super_sampling)
-
-                self.controler = QWidget()
-                self.controler.setLayout(self.layout)
-
-        self.circle_widgets = CircleWidgets()
-        self.circle_widgets.controler.hide()
-        main_layout.addWidget(self.circle_widgets.controler, 1, 0)
+        self.circleVisualizerView = CircleVisualizerView()
+        widget = self.circleVisualizerView.setup_setting_widgets()
+        widget.hide()
+        main_layout.addWidget(widget, 1, 0)
 
         layout.addLayout(main_layout, r, c)
 
@@ -294,11 +256,11 @@ class MainWindow(QMainWindow):
 
     def visualizer_changed(self, visualizer):
         if visualizer == "Circle":
-            self.rectangle_widgets.controler.hide()
-            self.circle_widgets.controler.show()
+            self.rectangleVisualizerView.get_controler_widget().hide()
+            self.circleVisualizerView.get_controler_widget().show()
         else:
-            self.rectangle_widgets.controler.show()
-            self.circle_widgets.controler.hide()
+            self.rectangleVisualizerView.get_controler_widget().show()
+            self.circleVisualizerView.get_controler_widget().hide()
 
     def validate_render_settings(self):
         try:
@@ -313,23 +275,20 @@ class MainWindow(QMainWindow):
             border_width = int(self.visualizer_border_width.text())
 
             spacing = int(self.visualizer_spacing.text())
-
-            box_height = int(self.rectangle_widgets.box_height.text())
-            box_width = int(self.rectangle_widgets.box_width.text())
-            corner_radius = int(self.rectangle_widgets.corner_radius.text())
-            super_sample = int(self.rectangle_widgets.super_sampling.text())
-
-            radius = int(self.circle_widgets.radius.text())
-            super_sample = int(self.circle_widgets.super_sampling.text())
         except:
+            return False
+
+        if not self.rectangleVisualizerView.verify_widget_values():
+            return False
+        if not self.circleVisualizerView.verify_widget_values():
             return False
 
         if not os.path.isfile(self.audio_file_path.text()):
             return False
         
-        ext = os.path.splitext(self.audio_file_path.text())[1]
+        ext = os.path.splitext(self.video_file_path.text())[1]
         if ext == '':
-            self.audio_file_button.setText(self.audio_file_path.text() + ".mp4")
+            self.audio_file_button.setText(self.video_file_path.text() + ".mp4")
         elif not ext == ".mp4":
             return False
         
@@ -383,10 +342,10 @@ class MainWindow(QMainWindow):
 
         visualizer = None
         if visualizer_type == "Rectangle":
-            box_height = int(self.rectangle_widgets.box_height.text())
-            box_width = int(self.rectangle_widgets.box_width.text())
-            corner_radius = int(self.rectangle_widgets.corner_radius.text())
-            super_sample = int(self.rectangle_widgets.super_sampling.text())
+            box_height = int(self.rectangleVisualizerView.box_height.text())
+            box_width = int(self.rectangleVisualizerView.box_width.text())
+            corner_radius = int(self.rectangleVisualizerView.corner_radius.text())
+            super_sample = int(self.rectangleVisualizerView.super_sampling.text())
 
             visualizer = RectangleVisualizer(
                 audio_data, video_data, x, y, super_sampling=super_sample,
@@ -396,8 +355,8 @@ class MainWindow(QMainWindow):
                 alignment=alignment, flow=flow
             )
         elif visualizer_type == "Circle":
-            radius = int(self.circle_widgets.radius.text())
-            super_sample = int(self.circle_widgets.super_sampling.text())
+            radius = int(self.circleVisualizerView.radius.text())
+            super_sample = int(self.circleVisualizerView.super_sampling.text())
 
             visualizer = CircleVisualizer(
                 audio_data, video_data, x, y, super_sampling=super_sample,
@@ -442,10 +401,10 @@ class RenderWorker(QRunnable):
         self.signals = RenderSignals()
 
     def run(self):
-        if not self.audio_data.load_audio_data():
+        if not self.audio_data.load_audio_data(self.preview):
             self.signals.error.emit("Error opening audio file.")
         self.audio_data.chunk_audio(self.video_data.fps)
-        self.audio_data.analyze_volume()
+        self.audio_data.analyze_audio()
 
 
         if not self.video_data.prepare_container():

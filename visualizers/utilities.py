@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-Parent Class for different visualizer generators.
+Utility functions
 '''
 import librosa
 import numpy as np
@@ -42,13 +42,18 @@ class AudioData:
         self.max_volume = float('-inf')
         self.min_volume = float('inf')
 
+        self.chromagrams = []
+
     '''
     Loads the audio data from the set file path.
     Returns True if successful, False otherwise.
     '''
-    def load_audio_data(self):
+    def load_audio_data(self, preview=False):
         try:
-            self.audio_samples, self.sample_rate = librosa.load(self.file_path)
+            if not preview:
+                self.audio_samples, self.sample_rate = librosa.load(self.file_path)
+            else:
+                self.audio_samples, self.sample_rate = librosa.load(self.file_path, duration=30)
         except:
             return False
         return True
@@ -65,12 +70,18 @@ class AudioData:
             end = start + samples_per_frame
             self.audio_frames.append(self.audio_samples[start:end])
 
-    def analyze_volume(self):
+    def analyze_audio(self):
         for frame in self.audio_frames:
             avg_volume = np.mean(np.abs(frame))
             self.average_volumes.append(avg_volume)
             self.max_volume = max(self.max_volume, avg_volume)
             self.min_volume = min(self.min_volume, avg_volume)
+
+            raw_chromagram = librosa.feature.chroma_stft(y=frame, sr=self.sample_rate)
+            chromagram = []
+            for row in raw_chromagram:
+                chromagram.append(np.mean(row))
+            self.chromagrams.append(chromagram)
 
 class VideoData:
     def __init__(self, video_width, video_height, fps, file_path="output.mp4"):
@@ -98,26 +109,3 @@ class VideoData:
         except:
             return False
         return True
-
-class Generator:
-    
-    def __init__(self, audio_data: AudioData, video_data: VideoData, x, y, super_sampling):
-        self.audio_data = audio_data
-        self.video_data = video_data
-        self.super_sampling = super_sampling
-        self.x = x * self.super_sampling 
-        self.y = y * self.super_sampling 
-
-    '''
-    Prepares the shapes for the visualizer.
-    This method should be implemented by subclasses to define how shapes are prepared.
-    '''
-    def prepare_shapes(self):
-        raise NotImplementedError("Subclasses should implement this method.")
-
-    '''
-    Generates a single frame of the video for a specific audio frame.
-    This method should be implemented by subclasses to define how each frame is generated.
-    '''
-    def generate_frame(self, frame_index: int):
-        raise NotImplementedError("Subclasses should implement this method.")
