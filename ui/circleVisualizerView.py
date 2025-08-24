@@ -31,26 +31,24 @@ from PySide6.QtGui import (
     QIntValidator
 )
 
-from .generalView import View
+from ui import View
+
+class CircleVisualizerSettings:
+    radius = 0
 
 class CircleVisualizerView(View):
     '''
     Each Visualizer is to produce a QWidget with an attached Layout that contains all the
     required gui elements to collect require settings for this visualizer.
     '''
-    def __init__(self, show=True):
-        super().__init__(show=show)
+    def __init__(self):
+        super().__init__()
 
         self.layout = QFormLayout()
             
         self.radius = QLineEdit("25")
         self.radius.setValidator(QIntValidator(1, int(1e6)))
         self.layout.addRow("Radius:", self.radius)
-
-        self.super_sampling = QLineEdit("4")
-        self.super_sampling.setValidator(QIntValidator(1, 64))
-        self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth the circles. It is only applies if value is greater then 1.")
-        self.layout.addRow("Super-sampling:", self.super_sampling)
 
         self.controler.setLayout(self.layout)
 
@@ -60,7 +58,6 @@ class CircleVisualizerView(View):
     def validate_view(self) -> bool:
         try:
             radius = int(self.radius.text())
-            super_sample = int(self.super_sampling.text())
         except:
             return False
         return True
@@ -68,5 +65,9 @@ class CircleVisualizerView(View):
     '''
     Reads the widget values to prepare the visualizer.
     '''
-    def read_view_values(self):
-        raise NotImplementedError("Subclasses should implement this method.")
+    def read_view_values(self) -> CircleVisualizerSettings:
+        settings = CircleVisualizerSettings()
+
+        settings.radius = int(self.radius.text())
+
+        return settings

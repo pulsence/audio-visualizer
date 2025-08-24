@@ -31,15 +31,20 @@ from PySide6.QtGui import (
     QIntValidator
 )
 
-from .generalView import View
+from ui import View
+
+class RectangleVisualizerSettings:
+    box_height = 0
+    box_width = 0
+    corner_radius = 0
 
 class RectangleVisualizerView(View):
     '''
     Each Visualizer is to produce a QWidget with an attached Layout that contains all the
     required gui elements to collect require settings for this visualizer.
     '''
-    def __init__(self, show=True):
-        super().__init__(show=show)
+    def __init__(self):
+        super().__init__()
 
         self.layout = QFormLayout()
     
@@ -54,11 +59,6 @@ class RectangleVisualizerView(View):
         self.corner_radius = QLineEdit("0")
         self.corner_radius.setValidator(QIntValidator(0, int(1e6)))
         self.layout.addRow("Corner Radius:", self.corner_radius)
-
-        self.super_sampling = QLineEdit("1")
-        self.super_sampling.setValidator(QIntValidator(1, 64))
-        self.super_sampling.setToolTip("This is used to antialias the individual shapes. This will help smooth rounded corners. It is only applies if value is greater then 1.")
-        self.layout.addRow("Supersampling:", self.super_sampling)
         
         self.controler.setLayout(self.layout)
     
@@ -70,12 +70,17 @@ class RectangleVisualizerView(View):
             box_height = int(self.box_height.text())
             box_width = int(self.box_width.text())
             corner_radius = int(self.corner_radius.text())
-            super_sample = int(self.super_sampling.text())
         except:
             return False
         return True
     '''
     Reads the widget values to prepare the visualizer.
     '''
-    def read_view_values(self) -> object:
-        raise NotImplementedError("Subclasses should implement this method.")
+    def read_view_values(self) -> RectangleVisualizerSettings:
+        settings = RectangleVisualizerView()
+
+        settings.box_height = int(self.box_height.text())
+        settings.box_width = int(self.box_width.text())
+        settings.corner_radius = int(self.corner_radius.text())
+
+        return settings

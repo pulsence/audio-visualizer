@@ -29,12 +29,9 @@ from PySide6.QtWidgets import (
 
 class View:
 
-    def __init__(self, show=True):
+    def __init__(self):
         self.layout = QGridLayout()
         self.controler = QWidget()
-
-        if show:
-            self.controler.show()
 
     '''
     Returns the widgets of this view nested within a single layout.

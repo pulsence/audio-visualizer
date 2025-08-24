@@ -54,32 +54,3 @@ class Visualizer:
     '''
     def generate_frame(self, frame_index: int):
         raise NotImplementedError("Subclasses should implement this method.")
-
-'''
-Each Visualizer should have a paired view to prepare gui elements for the Visualizer.
-''' 
-class VisualizerView:
-    '''
-    Each Visualizer is to produce a QWidget with an attached Layout that contains all the
-    required gui elements to collect require settings for this visualizer.
-    '''
-    def setup_setting_widgets(self) -> QWidget:
-        raise NotImplementedError("Subclasses should implement this method.")
-
-    '''
-    Returns the master control widget than embeds the settings widgets returned from set_setting_widgets().
-    '''
-    def get_view_in_widget(self) -> QWidget:
-        raise NotImplementedError("Subclasses should implement this method.")
-    
-    '''
-    Verifies the values of the widgets are valid for this visualizer.
-    '''
-    def validate_view(self) -> bool:
-        raise NotImplementedError("Subclasses should implement this method.")
-    
-    '''
-    Reads the widget values to prepare the visualizer.
-    '''
-    def read_view_values(self):
-        raise NotImplementedError("Subclasses should implement this method.")

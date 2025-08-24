@@ -63,14 +63,14 @@ class RectangleVisualizer(Visualizer):
 
         if flow == 'center':
             if alignment == 'center':
-                self.draw_frame = self._draw_center_aligned_center_flow
+                self.generate_frame = self._draw_center_aligned_center_flow
             else:
-                self.draw_frame = self._draw_bottom_aligned_center_flow
+                self.generate_frame = self._draw_bottom_aligned_center_flow
         else:
             if alignment == 'center':
-                self.draw_frame = self._draw_center_aligned_side_flow
+                self.generate_frame = self._draw_center_aligned_side_flow
             else:
-                self.draw_frame = self._draw_bottom_aligned_side_flow
+                self.generate_frame = self._draw_bottom_aligned_side_flow
 
     def prepare_shapes(self):
         self.rectangles = []

@@ -22,5 +22,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 
-from .genericVisualizer import Visualizer
+from PySide6.QtGui import (
+    QFont
+)
 
+class Fonts:
+    h1_font = QFont()
+    h2_font = QFont()
