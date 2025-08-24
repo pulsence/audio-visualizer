@@ -56,7 +56,7 @@ from ui import (
 
 import av
 
-import os
+import time
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -158,6 +158,11 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(render_section_layout, r, c)
 
+        self.render_status_label = QLabel()
+        self.render_status_label.hide()
+        layout.addWidget(self.render_status_label, r, c+1)
+
+
     def visualizer_selection_changed(self, visualizer):
         for view in self.visualizer_views:
             view.get_view_in_widget().hide()
@@ -198,10 +203,15 @@ class MainWindow(QMainWindow):
         self.render_button.setText("Rendering...")
         self.render_button.setEnabled(False)
 
+        self.render_status_label.show()
+        self.render_status_label.setText("Setting up render...")
+
         if not self.validate_render_settings():
             self.rendering = False
             self.render_button.setEnabled(True)
             self.render_button.setText("Render Video")
+            self.render_status_label.hide()
+
             message = QMessageBox(QMessageBox.Icon.Critical, "Settings Error",
                                   "One of your settings are invalid. The render cannot run. Please double check the values inputed.")
             message.exec()
@@ -266,12 +276,14 @@ class MainWindow(QMainWindow):
         render_worker = RenderWorker(audio_data, video_data, visualizer, preview)
         render_worker.signals.finished.connect(self.render_finished)
         render_worker.signals.error.connect(self.render_failed)
+        render_worker.signals.status.connect(self.render_status_update)
         self.render_thread_pool.start(render_worker)
     
     def render_finished(self, video_data: VideoData):
         self.rendering = False
         self.render_button.setEnabled(True)
         self.render_button.setText("Render Video")
+        self.render_status_label.hide()
 
         if self.show_output_checkbox.isChecked():
             player = RenderDialog(video_data)
@@ -281,9 +293,14 @@ class MainWindow(QMainWindow):
         self.rendering = False
         self.render_button.setEnabled(True)
         self.render_button.setText("Render Video")
+        self.render_status_label.hide()
+
         message = QMessageBox(QMessageBox.Icon.Critical, "Error rendering",
                               f"There was an error rendering the video. The error message is: {msg}")
         message.exec()
+
+    def render_status_update(self, msg):
+        self.render_status_label.setText(msg)
 
 class RenderWorker(QRunnable):
     def __init__(self, audio_data: AudioData, video_data: VideoData, visualizer: Visualizer, preview: bool):
@@ -296,30 +313,41 @@ class RenderWorker(QRunnable):
         class RenderSignals(QObject):
             finished = Signal(VideoData)
             error = Signal(str)
+            status = Signal(str)
         self.signals = RenderSignals()
 
     def run(self):
+        self.signals.status.emit("Opening audio file...")
         if not self.audio_data.load_audio_data(self.preview):
             self.signals.error.emit("Error opening audio file.")
+            
+        self.signals.status.emit("Analyzing audio data...")
         self.audio_data.chunk_audio(self.video_data.fps)
         self.audio_data.analyze_audio()
 
-
+        self.signals.status.emit("Preparing video environment...")
         if not self.video_data.prepare_container():
             self.signals.error.emit("Error opening video file.")
         self.visualizer.prepare_shapes()
 
         ''' If preview is True, limit to 30 seconds of video. '''
-        max_frames = min(len(self.audio_data.audio_frames), self.video_data.fps * 30 if self.preview else len(self.audio_data.audio_frames))
+        frames = len(self.audio_data.audio_frames)
+        if self.preview:
+            frames = min(len(self.audio_data.audio_frames), self.video_data.fps * 30 if self.preview else len(self.audio_data.audio_frames))
 
-        for i in range(len(self.audio_data.audio_frames)):
-            if i > max_frames:
-                break
+        self.signals.status.emit("Rendering video (0 %) ...")
+        for i in range(frames):
             img = self.visualizer.generate_frame(i)
             frame = av.VideoFrame.from_ndarray(img, format="rgb24")
             for packet in self.video_data.stream.encode(frame):
                 self.video_data.container.mux(packet)
+            
+            if int(time.time()) % 5 == 0:
+                prog = int((i / frames) * 100)
+                self.signals.status.emit(f"Rendering video ({prog} %) ...")
+                
         
+        self.signals.status.emit("Render finished, saving file...")
         if not self.video_data.finalize():
             self.signals.error.emit("Error closing video file.")
         self.signals.finished.emit(self.video_data)
