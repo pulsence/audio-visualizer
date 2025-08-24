@@ -48,8 +48,8 @@ class CircleVisualizer(Visualizer):
         self.border_width = border_width * self.super_sampling
         self.spacing = spacing * self.super_sampling
 
-        maxVRadius = (video_data.video_height - border_width * 2) * super_sampling // 2
-        maxHRadius = ((video_data.video_width - (self.spacing - self.border_width) * 12) * self.super_sampling // 24) 
+        maxVRadius = (video_data.video_height * self.super_sampling  - border_width * 2) // 2
+        maxHRadius = ((video_data.video_width * self.super_sampling - self.spacing * 11 - self.border_width * 24)  // 24) 
         self.max_radius = min(maxVRadius, maxHRadius)
         self.max_diameter = self.max_radius * 2
 
@@ -66,7 +66,7 @@ class CircleVisualizer(Visualizer):
     def prepare_shapes(self):
         self.circles = []
         for i in range(self.number_of_cirles):
-            x1 = self.x + i * (self.max_diameter + self.spacing)
+            x1 = self.x + i * (self.max_diameter + self.spacing + self.border_width)
             x2 = x1 + self.max_radius
             y1 = self.y - self.border_width
             y2 = self.y 

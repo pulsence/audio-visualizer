@@ -57,7 +57,7 @@ class CircleVisualizer(Visualizer):
         if number_of_cirles != -1:
             self.number_of_cirles = number_of_cirles
         else:
-            self.number_of_cirles = video_data.video_width * super_sampling // (self.max_diameter + self.spacing)
+            self.number_of_cirles = video_data.video_width * super_sampling // (self.max_diameter + self.spacing + self.border_width * 2)
 
         self.alignment = alignment
         self.flow = flow
@@ -76,7 +76,7 @@ class CircleVisualizer(Visualizer):
     def prepare_shapes(self):
         self.circles = []
         for i in range(self.number_of_cirles):
-            x1 = self.x + i * (self.max_diameter + self.spacing)
+            x1 = self.x + i * (self.max_diameter + self.spacing + self.border_width)
             x2 = x1 + self.max_radius
             y1 = self.y - self.border_width
             y2 = self.y 
