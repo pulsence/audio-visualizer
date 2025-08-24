@@ -24,8 +24,12 @@ SOFTWARE.
 import numpy as np
 from PIL import Image, ImageDraw
 
-from .. import Visualizer
+from visualizers import Visualizer
 
+from visualizers.utilities import (
+    VideoData, AudioData, VisualizerAlignment,
+    VisualizerFlow, VisualizerOptions
+)
 
 class CircleVisualizer(Visualizer):
     '''
@@ -39,7 +43,7 @@ class CircleVisualizer(Visualizer):
     def __init__(self, audio_data, video_data, x, y, max_radius = 10, border_width = 1, 
                  super_sampling = 1, spacing = 5,
                  number_of_cirles = -1, bg_color = (255, 255, 255), border_color = (255, 255, 255),
-                 alignment = 'bottom', flow = 'sideways'):
+                 alignment = VisualizerAlignment.BOTTOM, flow = VisualizerFlow.LEFT_TO_RIGHT):
         super().__init__(audio_data, video_data, x, y, super_sampling)
 
         self.max_radius = max_radius * self.super_sampling
@@ -58,13 +62,13 @@ class CircleVisualizer(Visualizer):
         self.alignment = alignment
         self.flow = flow
 
-        if flow == 'center':
-            if alignment == 'center':
+        if flow == VisualizerFlow.OUT_FROM_CENTER:
+            if alignment == VisualizerAlignment.CENTER:
                 self.generate_frame = self._draw_center_aligned_center_flow
             else:
                 self.generate_frame = self._draw_bottom_aligned_center_flow
         else:
-            if alignment == 'center':
+            if alignment == VisualizerAlignment.CENTER:
                 self.generate_frame = self._draw_center_aligned_side_flow
             else:
                 self.generate_frame = self._draw_bottom_aligned_side_flow
@@ -82,7 +86,7 @@ class CircleVisualizer(Visualizer):
             # The last two value are the x of center and radius of circle since y is fixed
             self.circles.append([x1, y1, x2, y2, x2, self.border_width]) 
 
-        if self.flow == 'center' and len(self.circles) % 2 == 0:
+        if self.flow == VisualizerFlow.OUT_FROM_CENTER and len(self.circles) % 2 == 0:
             self.circles.pop()
             self.center_index = len(self.circles) // 2
         self.number_of_cirles = len(self.circles)
@@ -94,7 +98,6 @@ class CircleVisualizer(Visualizer):
         img = Image.new("RGB", (self.video_data.video_width * self.super_sampling, self.video_data.video_height * self.super_sampling), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_cirles // 2):
             r = self.circles[i+1][5]
 
@@ -110,6 +113,7 @@ class CircleVisualizer(Visualizer):
             self.circles[self.number_of_cirles - i - 1][3] = self.y
             self.circles[self.number_of_cirles - i - 1][5] = r
 
+        volume = self.audio_data.average_volumes[frame_index]
         r = int(self.max_radius * (volume / self.audio_data.max_volume))
         self.circles[self.center_index][0] = self.circles[self.center_index][4] - r
         self.circles[self.center_index][1] = self.y - r * 2
@@ -134,7 +138,6 @@ class CircleVisualizer(Visualizer):
         img = Image.new("RGB", (self.video_data.video_width * self.super_sampling, self.video_data.video_height * self.super_sampling), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_cirles - 1):
             r = self.circles[self.number_of_cirles - i - 2][5]
             
@@ -144,6 +147,7 @@ class CircleVisualizer(Visualizer):
             self.circles[self.number_of_cirles - i - 1][3] = self.y
             self.circles[self.number_of_cirles - i - 1][5] = r
 
+        volume = self.audio_data.average_volumes[frame_index]
         r = int(self.max_radius * (volume / self.audio_data.max_volume))
         self.circles[0][0] = self.circles[0][4] - r
         self.circles[0][1] = self.y - r * 2
@@ -169,7 +173,6 @@ class CircleVisualizer(Visualizer):
         img = Image.new("RGB", (self.video_data.video_width * self.super_sampling, self.video_data.video_height * self.super_sampling), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_cirles - 1):
             r = self.circles[self.number_of_cirles - i - 2][5]
             
@@ -179,6 +182,7 @@ class CircleVisualizer(Visualizer):
             self.circles[self.number_of_cirles - i - 1][3] = self.y + r
             self.circles[self.number_of_cirles - i - 1][5] = r
 
+        volume = self.audio_data.average_volumes[frame_index]
         r = int(self.max_radius * (volume / self.audio_data.max_volume))
         self.circles[0][0] = self.circles[0][4] - r
         self.circles[0][1] = self.y - r
@@ -204,7 +208,6 @@ class CircleVisualizer(Visualizer):
         img = Image.new("RGB", (self.video_data.video_width * self.super_sampling, self.video_data.video_height * self.super_sampling), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_cirles // 2):
             r = self.circles[i+1][5]
 
@@ -220,6 +223,7 @@ class CircleVisualizer(Visualizer):
             self.circles[self.number_of_cirles - i - 1][3] = self.y + r
             self.circles[self.number_of_cirles - i - 1][5] = r
         
+        volume = self.audio_data.average_volumes[frame_index]
         r = int(self.max_radius * (volume / self.audio_data.max_volume))
         self.circles[self.center_index][0] = self.circles[self.center_index][4] - r
         self.circles[self.center_index][1] = self.y - r

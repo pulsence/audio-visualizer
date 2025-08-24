@@ -29,6 +29,34 @@ import numpy as np
 
 import av
 
+from enum import Enum
+
+class VisualizerFlow(Enum):
+    LEFT_TO_RIGHT = "Left to Right"
+    OUT_FROM_CENTER = "Out from Center"
+
+    @staticmethod
+    def list():
+        return list(map(lambda v: v.value, VisualizerFlow))
+
+class VisualizerAlignment(Enum):
+    BOTTOM = "Bottom"
+    CENTER = "Center"
+
+    @staticmethod
+    def list():
+        return list(map(lambda v: v.value, VisualizerAlignment))
+
+class VisualizerOptions(Enum):
+    VOLUME_RECTANGLE = "Volume: Rectangle"
+    VOLUME_CIRCLE = "Volume: Circle"
+    CHROMA_RECTANGLE = "Chroma: Rectangle"
+    CHROMA_CIRCLE = "Chroma: Circle"
+
+    @staticmethod
+    def list():
+        return list(map(lambda v: v.value, VisualizerOptions))
+
 class AudioData:
     def __init__(self, file_path):
         self.file_path = file_path

@@ -1,3 +1,4 @@
+
 '''
 MIT License
 
@@ -21,24 +22,40 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
-from .generalView import View
 
-from .utilities import Fonts
+from PySide6.QtWidgets import (
+    QFormLayout, QLabel
+)
 
-Fonts.h1_font.setPointSize(24)
-Fonts.h1_font.setBold(True)
-Fonts.h2_font.setPointSize(16)
-Fonts.h2_font.setUnderline(True)
+from PySide6.QtGui import (
+    QIntValidator
+)
 
-# General UI Views
-from .generalSettingViews import GeneralSettingsView, GeneralSettings
-from .generalVisualizerView import GeneralVisualizerView, GeneralVisualizerSettings
+from ui import View
 
-# Visualizer Specific Views
-from .rectangleVolumeVisualizerView import RectangleVolumeVisualizerView, RectangleVolumeVisualizerSettings
-from .circleVolumeVisualizerView import CircleVolumeVisualizerView, CircleVolumeVisualizerSettings
-from .rectangleChromaVisualizerView import RectangleChromeVisualizerView, RectangleChromeVisualizerSettings
-from .circleChromaVisualizerView import CircleChromeVisualizerView, CircleChromeVisualizerSettings
+class CircleChromeVisualizerSettings:
+    radius = 0
 
-from .renderDialog import RenderDialog
-from .mainWindow import MainWindow
+class CircleChromeVisualizerView(View):
+    '''
+    Each Visualizer is to produce a QWidget with an attached Layout that contains all the
+    required gui elements to collect require settings for this visualizer.
+    '''
+    def __init__(self):
+        super().__init__()
+
+        label = QLabel("There are not specific settings for the Chroma Circle visualizer.")
+        self.layout.addWidget(label, 0, 0)
+    
+    '''
+    Verifies the values of the widgets are valid for this visualizer.
+    '''
+    def validate_view(self) -> bool:
+        return True
+    '''
+    Reads the widget values to prepare the visualizer.
+    '''
+    def read_view_values(self) -> CircleChromeVisualizerSettings:
+        settings = CircleChromeVisualizerSettings()
+
+        return settings

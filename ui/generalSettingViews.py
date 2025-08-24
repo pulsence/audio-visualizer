@@ -23,18 +23,18 @@ SOFTWARE.
 '''
 
 from PySide6.QtCore import (
-    Qt, QRunnable, QThreadPool, QObject, Signal
+    Qt
 )
 
 from PySide6.QtWidgets import (
     QLayout, QGridLayout, QFormLayout, QHBoxLayout,
-    QWidget, QComboBox, QLabel, QLineEdit, QPushButton, QCheckBox,
-    QFileDialog, QColorDialog,
+    QLabel, QLineEdit, QPushButton,
+    QFileDialog,
     QSizePolicy
 )
 
 from PySide6.QtGui import (
-    QIntValidator, QFont
+    QIntValidator
 )
 
 import os

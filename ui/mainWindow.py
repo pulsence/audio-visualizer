@@ -38,16 +38,18 @@ from PySide6.QtGui import (
 
 from visualizers import Visualizer
 
-from visualizers.utilities import AudioData, VideoData
+from visualizers.utilities import AudioData, VideoData, VisualizerOptions
 
-from visualizers.volume import (
-    RectangleVisualizer, CircleVisualizer
+from visualizers import (
+    volume, chroma
 )
 
 from ui import (
     Fonts, RenderDialog,
-    RectangleVisualizerView, RectangleVisualizerSettings,
-    CircleVisualizerView,
+    RectangleVolumeVisualizerView, RectangleVolumeVisualizerSettings,
+    CircleVolumeVisualizerView, CircleVolumeVisualizerSettings,
+    RectangleChromeVisualizerView, RectangleChromeVisualizerSettings,
+    CircleChromeVisualizerView, CircleChromeVisualizerSettings,
     GeneralSettingsView, GeneralSettings,
     GeneralVisualizerView, GeneralVisualizerSettings
 )
@@ -114,15 +116,25 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(section_label, 0, 0)
 
         self.visualizer_views = []
-        self.rectangleVisualizerView = RectangleVisualizerView()
-        self.rectangleVisualizerView.get_view_in_widget().show()
-        main_layout.addWidget(self.rectangleVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.rectangleVisualizerView)
+        self.rectangleVolumeVisualizerView = RectangleVolumeVisualizerView()
+        self.rectangleVolumeVisualizerView.get_view_in_widget().show()
+        main_layout.addWidget(self.rectangleVolumeVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.rectangleVolumeVisualizerView)
         
-        self.circleVisualizerView = CircleVisualizerView()
-        self.circleVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.circleVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.circleVisualizerView)
+        self.circleValumeVisualizerView = CircleVolumeVisualizerView()
+        self.circleValumeVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.circleValumeVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.circleValumeVisualizerView)
+
+        self.rectangleChromaVisualizerView = RectangleChromeVisualizerView()
+        self.rectangleChromaVisualizerView.get_view_in_widget().show()
+        main_layout.addWidget(self.rectangleChromaVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.rectangleChromaVisualizerView)
+        
+        self.circleChromaVisualizerView = CircleChromeVisualizerView()
+        self.circleChromaVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.circleChromaVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.circleChromaVisualizerView)
 
         layout.addLayout(main_layout, r, c)
 
@@ -150,19 +162,30 @@ class MainWindow(QMainWindow):
         for view in self.visualizer_views:
             view.get_view_in_widget().hide()
 
-        if visualizer == "Circle":
-            self.circleVisualizerView.get_view_in_widget().show()
-        else:
-            self.rectangleVisualizerView.get_view_in_widget().show()
+        visualizer = VisualizerOptions(visualizer)
+
+        if visualizer == VisualizerOptions.VOLUME_CIRCLE:
+            self.circleValumeVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.VOLUME_RECTANGLE:
+            self.rectangleVolumeVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.CHROMA_RECTANGLE:
+            self.rectangleChromaVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.CHROMA_CIRCLE:
+            self.circleChromaVisualizerView.get_view_in_widget().show()
 
     def validate_render_settings(self):
         if not self.generalSettingsView.validate_view():
             return False
         if not self.generalVisualizerView.validate_view():
             return False
-        if not self.rectangleVisualizerView.validate_view():
+        
+        if VisualizerOptions.VOLUME_RECTANGLE and not self.rectangleVolumeVisualizerView.validate_view():
             return False
-        if not self.circleVisualizerView.validate_view():
+        elif VisualizerOptions.VOLUME_CIRCLE and not self.circleValumeVisualizerView.validate_view():
+            return False
+        elif VisualizerOptions.CHROMA_RECTANGLE and not self.rectangleChromaVisualizerView.validate_view():
+            return False
+        elif VisualizerOptions.CHROMA_CIRCLE and not self.circleChromaVisualizerView.validate_view():
             return False
         
         return True
@@ -195,30 +218,51 @@ class MainWindow(QMainWindow):
                                general_settings.fps, file_path=general_settings.video_file_path)
 
         visualizer = None
-        if visualizer_settings.visualizer_type == "Rectangle":
-            settings = self.rectangleVisualizerView.read_view_values()
+        if visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_RECTANGLE:
+            settings = self.rectangleVolumeVisualizerView.read_view_values()
 
-            visualizer = RectangleVisualizer(
+            visualizer = volume.RectangleVisualizer(
                 audio_data, video_data, visualizer_settings.x, visualizer_settings.y, 
                 super_sampling=visualizer_settings.super_sampling,
                 box_height=settings.box_height, box_width=settings.box_width,
                 corner_radius=settings.corner_radius,
                 border_width=visualizer_settings.border_width, spacing=visualizer_settings.spacing,
                 bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment, flow=visualizer_settings.flow
+                alignment=visualizer_settings.alignment, flow=settings.flow
             )
-        elif visualizer_settings.visualizer_type == "Circle":
-            settings = self.circleVisualizerView.read_view_values()
+        elif visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_CIRCLE:
+            settings = self.circleValumeVisualizerView.read_view_values()
 
-            visualizer = CircleVisualizer(
+            visualizer = volume.CircleVisualizer(
                 audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
                 super_sampling=visualizer_settings.super_sampling,
                 max_radius=settings.radius, border_width=visualizer_settings.border_width, 
                 spacing=visualizer_settings.spacing,
                 bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment, flow=visualizer_settings.flow
+                alignment=visualizer_settings.alignment, flow=settings.flow
             )
-        
+        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_RECTANGLE:
+            settings = self.rectangleChromaVisualizerView.read_view_values()
+
+            visualizer = chroma.RectangleVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y, 
+                super_sampling=visualizer_settings.super_sampling,
+                box_height=settings.box_height,
+                corner_radius=settings.corner_radius,
+                border_width=visualizer_settings.border_width, spacing=visualizer_settings.spacing,
+                bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
+                alignment=visualizer_settings.alignment
+            )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_CIRCLE:
+            visualizer = chroma.CircleVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                super_sampling=visualizer_settings.super_sampling,
+                border_width=visualizer_settings.border_width, 
+                spacing=visualizer_settings.spacing,
+                bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
+                alignment=visualizer_settings.alignment
+            )
+
         render_worker = RenderWorker(audio_data, video_data, visualizer, preview)
         render_worker.signals.finished.connect(self.render_finished)
         render_worker.signals.error.connect(self.render_failed)

@@ -23,27 +23,27 @@ SOFTWARE.
 '''
 
 from PySide6.QtCore import (
-    Qt, QRunnable, QThreadPool, QObject, Signal
+    Qt
 )
 
 from PySide6.QtWidgets import (
-    QLayout, QGridLayout, QFormLayout, QHBoxLayout,
-    QWidget, QComboBox, QLabel, QLineEdit, QPushButton, QCheckBox,
-    QFileDialog, QColorDialog,
+    QFormLayout, QHBoxLayout,
+    QWidget, QComboBox, QLabel, QLineEdit, QPushButton,
+    QColorDialog,
     QSizePolicy
 )
 
 from PySide6.QtGui import (
-    QIntValidator, QFont
+    QIntValidator
 )
 
 from ui import View, Fonts
 
-class GeneralVisualizerSettings:
-    visualizer_type = ""
-    alignment = ""
+from visualizers import utilities
 
-    flow = ""
+class GeneralVisualizerSettings:
+    visualizer_type = utilities.VisualizerOptions.VOLUME_RECTANGLE
+    alignment = utilities.VisualizerAlignment.BOTTOM
 
     x = 0
     y = 0
@@ -78,17 +78,13 @@ class GeneralVisualizerView(View):
         form_layout.addRow("Visualizer Y:", self.visualizer_y)
 
         self.visualizer = QComboBox()
-        self.visualizer.addItems(["Rectangle", "Circle"])
+        self.visualizer.addItems(utilities.VisualizerOptions.list())
         self.visualizer.currentTextChanged.connect(parent.visualizer_selection_changed)
         form_layout.addRow("Visualizer Type:", self.visualizer)
 
         self.visualizer_alignment = QComboBox()
-        self.visualizer_alignment.addItems(["Bottom", "Center"])
+        self.visualizer_alignment.addItems(utilities.VisualizerAlignment.list())
         form_layout.addRow("Alignment:", self.visualizer_alignment)
-
-        self.visualizer_flow = QComboBox()
-        self.visualizer_flow.addItems(["Left to Right", "Center Outward"])
-        form_layout.addRow("Flow:", self.visualizer_flow)
 
         bg_row = QHBoxLayout()
         self.visualizer_bg_color_field = QLineEdit("227, 209, 169")
@@ -155,14 +151,8 @@ class GeneralVisualizerView(View):
     def read_view_values(self) -> GeneralVisualizerSettings:
         settings = GeneralVisualizerSettings()
 
-        settings.visualizer_type = self.visualizer.currentText()
-        settings.alignment = self.visualizer_alignment.currentText().lower()
-
-        settings.flow = self.visualizer_flow.currentText()
-        if settings.flow == "Left to Right":
-            settings.flow = "sideways"
-        elif settings.flow == "Center Outward":
-            settings.flow = "center"
+        settings.visualizer_type = utilities.VisualizerOptions(self.visualizer.currentText())
+        settings.alignment = utilities.VisualizerAlignment(self.visualizer_alignment.currentText())
 
         settings.x = int(self.visualizer_x.text())
         settings.y = int(self.visualizer_y.text())

@@ -27,6 +27,11 @@ from PIL import Image, ImageDraw
 
 from visualizers import Visualizer
 
+from visualizers.utilities import (
+    VideoData, AudioData, VisualizerAlignment,
+    VisualizerFlow, VisualizerOptions
+)
+
 class RectangleVisualizer(Visualizer):
     '''
     number_of_boxes: If set to -1, it will calculate the number of boxes based on the video width,
@@ -37,10 +42,12 @@ class RectangleVisualizer(Visualizer):
     flow: 'sideways' or 'center' to determine how the sound visualization flows.
     super_sampling: When value is greater than 1 supersampling anti-aliasing is applied.
     '''
-    def __init__(self, audio_data, video_data, x, y, box_height = 50, box_width = 10, border_width = 1, 
+    def __init__(self, audio_data: AudioData, video_data: VideoData, x, y,
+                 box_height = 50, box_width = 10, border_width = 1, 
                  spacing = 5, super_sampling = 1, number_of_boxes = -1, 
-                 corner_radius = 0, corners = (True, True, True, True), bg_color = (255, 255, 255), border_color = (255, 255, 255),
-                 alignment = 'bottom', flow = 'sideways'):
+                 corner_radius = 0, corners = (True, True, True, True),
+                 bg_color = (255, 255, 255), border_color = (255, 255, 255),
+                 alignment = VisualizerAlignment.BOTTOM, flow = VisualizerFlow.LEFT_TO_RIGHT):
         super().__init__(audio_data, video_data, x, y, super_sampling)
 
         self.box_width = box_width * self.super_sampling
@@ -61,13 +68,13 @@ class RectangleVisualizer(Visualizer):
         self.alignment = alignment
         self.flow = flow
 
-        if flow == 'center':
-            if alignment == 'center':
+        if flow == VisualizerFlow.OUT_FROM_CENTER:
+            if alignment == VisualizerAlignment.CENTER:
                 self.generate_frame = self._draw_center_aligned_center_flow
             else:
                 self.generate_frame = self._draw_bottom_aligned_center_flow
         else:
-            if alignment == 'center':
+            if alignment == VisualizerAlignment.CENTER:
                 self.generate_frame = self._draw_center_aligned_side_flow
             else:
                 self.generate_frame = self._draw_bottom_aligned_side_flow
@@ -83,7 +90,7 @@ class RectangleVisualizer(Visualizer):
                 break
             self.rectangles.append([x1, y1, x2, y2])
 
-        if self.flow == 'center' and len(self.rectangles) % 2 == 0:
+        if self.flow == VisualizerFlow.OUT_FROM_CENTER and len(self.rectangles) % 2 == 0:
             self.rectangles.pop()  # Remove the last rectangle to keep it odd for centering
             self.center_index = len(self.rectangles) // 2
         self.number_of_boxes = len(self.rectangles)
@@ -95,10 +102,10 @@ class RectangleVisualizer(Visualizer):
         img = Image.new("RGB", (self.video_data.video_width * self.super_sampling, self.video_data.video_height * self.super_sampling), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_boxes // 2):
             self.rectangles[i][1] = self.rectangles[i+1][1]
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
+        volume = self.audio_data.average_volumes[frame_index]
         self.rectangles[self.center_index][1] = self.y - int(self.box_height * (volume / self.audio_data.max_volume))
 
         for rect in self.rectangles:
@@ -120,9 +127,9 @@ class RectangleVisualizer(Visualizer):
         img = Image.new("RGB", (self.video_data.video_width * self.super_sampling, self.video_data.video_height * self.super_sampling), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_boxes - 1):
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
+        volume = self.audio_data.average_volumes[frame_index]
         self.rectangles[0][1] = self.y - int(self.box_height * (volume / self.audio_data.max_volume))
 
         for rect in self.rectangles:
@@ -144,10 +151,11 @@ class RectangleVisualizer(Visualizer):
         img = Image.new("RGB", (self.video_data.video_width * self.super_sampling, self.video_data.video_height * self.super_sampling), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        volume = self.audio_data.average_volumes[frame_index]
+
         for i in range(self.number_of_boxes - 1):
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
             self.rectangles[self.number_of_boxes - i - 1][3] = self.rectangles[self.number_of_boxes - i - 2][3]
+        volume = self.audio_data.average_volumes[frame_index]
         offset = int(self.box_height * (volume / self.audio_data.max_volume)) // 2
         self.rectangles[0][1] = self.y - offset
         self.rectangles[0][3] = self.y + offset
@@ -171,12 +179,12 @@ class RectangleVisualizer(Visualizer):
         img = Image.new("RGB", (self.video_data.video_width * self.super_sampling, self.video_data.video_height * self.super_sampling), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        volume = self.audio_data.average_volumes[frame_index]
         for i in range(self.number_of_boxes // 2):
             self.rectangles[i][1] = self.rectangles[i+1][1]
             self.rectangles[i][3] = self.rectangles[i+1][3]
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
             self.rectangles[self.number_of_boxes - i - 1][3] = self.rectangles[self.number_of_boxes - i - 2][3]
+        volume = self.audio_data.average_volumes[frame_index]
         offset = int(self.box_height * (volume / self.audio_data.max_volume)) // 2
         self.rectangles[self.center_index][1] = self.y - offset
         self.rectangles[self.center_index][3] = self.y + offset
