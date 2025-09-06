@@ -91,12 +91,8 @@ class AudioData:
     Each frame contains a number of samples equal to the sample rate divided by fps.
     '''
     def chunk_audio(self, fps):
-        samples_per_frame = self.sample_rate // fps
-        frames = self.audio_samples.size // samples_per_frame
-        for i in range(frames):
-            start = i * samples_per_frame
-            end = start + samples_per_frame
-            self.audio_frames.append(self.audio_samples[start:end])
+        frames = (self.audio_samples.size // self.sample_rate) * fps
+        self.audio_frames = np.array_split(self.audio_samples, frames)
 
     def analyze_audio(self):
         for frame in self.audio_frames:
