@@ -49,6 +49,7 @@ class GeneralSettings:
     bitrate = None
     crf = None
     hardware_accel = False
+    include_audio = False
 
     audio_file_path = ""
     video_file_path = ""
@@ -120,6 +121,10 @@ class GeneralSettingsView(View):
         self.hardware_accel = QCheckBox("Hardware Acceleration (if available)")
         form_layout.addRow("", self.hardware_accel)
 
+        self.include_audio = QCheckBox("Include Audio in Output")
+        self.include_audio.setChecked(True)
+        form_layout.addRow("", self.include_audio)
+
         self.layout.addLayout(form_layout, 1, 0)
 
     '''
@@ -185,6 +190,7 @@ class GeneralSettingsView(View):
         settings.crf = int(crf_text) if crf_text else None
 
         settings.hardware_accel = self.hardware_accel.isChecked()
+        settings.include_audio = self.include_audio.isChecked()
 
         settings.audio_file_path = self.audio_file_path.text()
         settings.video_file_path = self.video_file_path.text()

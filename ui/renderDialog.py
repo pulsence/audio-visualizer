@@ -22,11 +22,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 from PySide6.QtCore import (
-    QUrl, QSize
+    QUrl, QSize, Qt
 )
 
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QVBoxLayout
+    QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout, QLabel, QSlider
 )
 
 from PySide6.QtMultimediaWidgets import (
@@ -34,12 +34,14 @@ from PySide6.QtMultimediaWidgets import (
 )
 
 from PySide6.QtMultimedia import (
-    QMediaPlayer
+    QMediaPlayer, QAudioOutput
 )
 
 from visualizers.utilities import VideoData
 
 class RenderDialog(QDialog):
+    _last_volume = 100
+
     def __init__(self, video_data: VideoData):
         super().__init__()
 
@@ -54,7 +56,21 @@ class RenderDialog(QDialog):
 
         self.video_widget = QVideoWidget()
         self.video.setVideoOutput(self.video_widget)
+        self.audio_output = QAudioOutput()
+        self.video.setAudioOutput(self.audio_output)
         layout.addWidget(self.video_widget)
+
+        volume_row = QHBoxLayout()
+        volume_label = QLabel("Volume")
+        volume_row.addWidget(volume_label)
+        self.volume_slider = QSlider()
+        self.volume_slider.setOrientation(Qt.Orientation.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(RenderDialog._last_volume)
+        self.audio_output.setVolume(RenderDialog._last_volume / 100)
+        self.volume_slider.valueChanged.connect(self._volume_changed)
+        volume_row.addWidget(self.volume_slider)
+        layout.addLayout(volume_row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
@@ -67,3 +83,33 @@ class RenderDialog(QDialog):
             self.video_widget.setMaximumSize(QSize(self.video_data.video_width, self.video_data.video_height))
             self.adjustSize()
             self.video.play()
+
+    def _cleanup_player(self):
+        try:
+            self.video.stop()
+        except Exception:
+            pass
+        try:
+            self.video.setSource(QUrl())
+        except Exception:
+            pass
+        try:
+            self.video.setVideoOutput(None)
+        except Exception:
+            pass
+        try:
+            self.video.setAudioOutput(None)
+        except Exception:
+            pass
+
+    def _volume_changed(self, value: int):
+        RenderDialog._last_volume = value
+        self.audio_output.setVolume(value / 100)
+
+    def reject(self):
+        self._cleanup_player()
+        super().reject()
+
+    def closeEvent(self, event):
+        self._cleanup_player()
+        event.accept()

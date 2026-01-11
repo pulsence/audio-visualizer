@@ -59,6 +59,7 @@ from ui import (
 import av
 import json
 import time
+from fractions import Fraction
 from pathlib import Path
 
 class MainWindow(QMainWindow):
@@ -375,7 +376,13 @@ class MainWindow(QMainWindow):
         else:
             self._show_output_for_last_render = force_show_output
 
-        render_worker = RenderWorker(audio_data, video_data, visualizer, preview_seconds)
+        render_worker = RenderWorker(
+            audio_data,
+            video_data,
+            visualizer,
+            preview_seconds,
+            include_audio=general_settings.include_audio,
+        )
         render_worker.signals.finished.connect(self.render_finished)
         render_worker.signals.error.connect(self.render_failed)
         render_worker.signals.status.connect(self.render_status_update)
@@ -471,6 +478,7 @@ class MainWindow(QMainWindow):
                 "bitrate": general.bitrate,
                 "crf": general.crf,
                 "hardware_accel": general.hardware_accel,
+                "include_audio": general.include_audio,
             },
             "visualizer": {
                 "visualizer_type": visualizer.visualizer_type.value,
@@ -517,6 +525,8 @@ class MainWindow(QMainWindow):
                 self.generalSettingsView.crf.setText("")
             if "hardware_accel" in general:
                 self.generalSettingsView.hardware_accel.setChecked(bool(general["hardware_accel"]))
+            if "include_audio" in general:
+                self.generalSettingsView.include_audio.setChecked(bool(general["include_audio"]))
 
         if visualizer:
             if "visualizer_type" in visualizer:
@@ -657,12 +667,18 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 class RenderWorker(QRunnable):
-    def __init__(self, audio_data: AudioData, video_data: VideoData, visualizer: Visualizer, preview_seconds=None):
+    def __init__(self, audio_data: AudioData, video_data: VideoData, visualizer: Visualizer,
+                 preview_seconds=None, include_audio=False):
         super().__init__()
         self.audio_data = audio_data
         self.video_data = video_data
         self.visualizer = visualizer
         self.preview_seconds = preview_seconds
+        self.include_audio = include_audio
+        self.audio_input_container = None
+        self.audio_input_stream = None
+        self.audio_output_stream = None
+        self.audio_resampler = None
 
         class RenderSignals(QObject):
             finished = Signal(VideoData)
@@ -684,6 +700,12 @@ class RenderWorker(QRunnable):
         if not self.video_data.prepare_container():
             self.signals.error.emit("Error opening video file.")
             return
+
+        if self.include_audio:
+            self.signals.status.emit("Preparing audio mux...")
+            if not self._prepare_audio_mux():
+                self.signals.error.emit("Error preparing audio stream.")
+                return
         self.visualizer.prepare_shapes()
 
         frames = len(self.audio_data.audio_frames)
@@ -703,7 +725,78 @@ class RenderWorker(QRunnable):
                 
         
         self.signals.status.emit("Render finished, saving file...")
+        if self.include_audio:
+            self.signals.status.emit("Muxing audio...")
+            if not self._mux_audio():
+                self.signals.error.emit("Error muxing audio.")
+                return
         if not self.video_data.finalize():
             self.signals.error.emit("Error closing video file.")
             return
         self.signals.finished.emit(self.video_data)
+
+    def _prepare_audio_mux(self) -> bool:
+        try:
+            self.audio_input_container = av.open(self.audio_data.file_path)
+        except Exception:
+            return False
+
+        for stream in self.audio_input_container.streams:
+            if stream.type == "audio":
+                self.audio_input_stream = stream
+                break
+        if self.audio_input_stream is None:
+            return False
+
+        try:
+            self.audio_output_stream = self.video_data.container.add_stream("aac", rate=self.audio_input_stream.rate)
+        except Exception:
+            return False
+
+        self.audio_output_stream.layout = self.audio_input_stream.layout.name
+        self.audio_output_stream.sample_rate = self.audio_input_stream.rate
+        self.audio_output_stream.time_base = Fraction(1, self.audio_output_stream.rate)
+
+        resample_format = "fltp"
+        if self.audio_output_stream.format is not None and self.audio_output_stream.format.name:
+            resample_format = self.audio_output_stream.format.name
+        self.audio_resampler = av.audio.resampler.AudioResampler(
+            format=resample_format,
+            layout=self.audio_output_stream.layout.name,
+            rate=self.audio_output_stream.rate,
+        )
+        return True
+
+    def _mux_audio(self) -> bool:
+        if self.audio_input_container is None or self.audio_input_stream is None:
+            return False
+        if self.audio_output_stream is None or self.audio_resampler is None:
+            return False
+
+        samples_written = 0
+        stop_at_time = False
+        for packet in self.audio_input_container.demux(self.audio_input_stream):
+            if stop_at_time:
+                break
+            for frame in packet.decode():
+                if self.preview_seconds is not None and frame.pts is not None:
+                    time_seconds = float(frame.pts * frame.time_base)
+                    if time_seconds >= self.preview_seconds:
+                        stop_at_time = True
+                        break
+                for resampled in self.audio_resampler.resample(frame):
+                    if resampled.pts is None:
+                        resampled.pts = samples_written
+                        resampled.time_base = self.audio_output_stream.time_base
+                    samples_written += resampled.samples
+                    for out_packet in self.audio_output_stream.encode(resampled):
+                        self.video_data.container.mux(out_packet)
+
+        for out_packet in self.audio_output_stream.encode():
+            self.video_data.container.mux(out_packet)
+
+        try:
+            self.audio_input_container.close()
+        except Exception:
+            return False
+        return True
