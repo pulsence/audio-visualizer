@@ -77,12 +77,12 @@ class AudioData:
     Loads the audio data from the set file path.
     Returns True if successful, False otherwise.
     '''
-    def load_audio_data(self, preview=False):
+    def load_audio_data(self, duration_seconds=None):
         try:
-            if not preview:
+            if duration_seconds is None:
                 self.audio_samples, self.sample_rate = librosa.load(self.file_path)
             else:
-                self.audio_samples, self.sample_rate = librosa.load(self.file_path, duration=30)
+                self.audio_samples, self.sample_rate = librosa.load(self.file_path, duration=duration_seconds)
         except:
             return False
         return True

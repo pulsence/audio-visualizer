@@ -89,6 +89,8 @@ class MainWindow(QMainWindow):
         self.render_thread_pool = QThreadPool()
         self.render_thread_pool.setMaxThreadCount(1)
         self.rendering = False
+        self._show_output_for_last_render = True
+        self._active_preview = False
 
         self._load_last_settings_if_present()
 
@@ -155,9 +157,13 @@ class MainWindow(QMainWindow):
         self.show_output_checkbox.setChecked(True)
         render_section_layout.addWidget(self.show_output_checkbox, 0, 1)
 
+        self.preview_button = QPushButton("Live Preview (5s)")
+        self.preview_button.clicked.connect(self.render_preview)
+        render_section_layout.addWidget(self.preview_button, 1, 0)
+
         self.render_button = QPushButton("Render Video")
         self.render_button.clicked.connect(self.render_video)
-        render_section_layout.addWidget(self.render_button, 1, 0, 1, 2)
+        render_section_layout.addWidget(self.render_button, 1, 1)
 
         self.save_project_button = QPushButton("Save Project")
         self.save_project_button.clicked.connect(self.save_project)
@@ -207,43 +213,14 @@ class MainWindow(QMainWindow):
         
         return True
 
-    def render_video(self):
-        if self.rendering:
-            return
-        
-        self.rendering = True
-        self.render_button.setText("Rendering...")
-        self.render_button.setEnabled(False)
+    def _preview_output_path(self) -> str:
+        return str(Path(__file__).resolve().parent.parent / "preview_output.mp4")
 
-        self.render_status_label.show()
-        self.render_status_label.setText("Setting up render...")
-
-        if not self.validate_render_settings():
-            self.rendering = False
-            self.render_button.setEnabled(True)
-            self.render_button.setText("Render Video")
-            self.render_status_label.hide()
-
-            message = QMessageBox(QMessageBox.Icon.Critical, "Settings Error",
-                                  "One of your settings are invalid. The render cannot run. Please double check the values inputed.")
-            message.exec()
-            return
-
-        general_settings = self.generalSettingsView.read_view_values()
-
-        preview = self.preview_checkbox.isChecked()
-
-        visualizer_settings = self.generalVisualizerView.read_view_values()
-
-        audio_data = AudioData(general_settings.audio_file_path)
-        video_data = VideoData(general_settings.video_width, general_settings.video_height,
-                               general_settings.fps, file_path=general_settings.video_file_path)
-
-        visualizer = None
+    def _create_visualizer(self, audio_data: AudioData, video_data: VideoData, visualizer_settings: GeneralVisualizerSettings):
         if visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_RECTANGLE:
             settings = self.rectangleVolumeVisualizerView.read_view_values()
 
-            visualizer = volume.RectangleVisualizer(
+            return volume.RectangleVisualizer(
                 audio_data, video_data, visualizer_settings.x, visualizer_settings.y, 
                 super_sampling=visualizer_settings.super_sampling,
                 box_height=settings.box_height, box_width=settings.box_width,
@@ -255,7 +232,7 @@ class MainWindow(QMainWindow):
         elif visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_CIRCLE:
             settings = self.circleVolumeVisualizerView.read_view_values()
 
-            visualizer = volume.CircleVisualizer(
+            return volume.CircleVisualizer(
                 audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
                 super_sampling=visualizer_settings.super_sampling,
                 max_radius=settings.radius, border_width=visualizer_settings.border_width, 
@@ -266,7 +243,7 @@ class MainWindow(QMainWindow):
         elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_RECTANGLE:
             settings = self.rectangleChromaVisualizerView.read_view_values()
 
-            visualizer = chroma.RectangleVisualizer(
+            return chroma.RectangleVisualizer(
                 audio_data, video_data, visualizer_settings.x, visualizer_settings.y, 
                 super_sampling=visualizer_settings.super_sampling,
                 box_height=settings.box_height,
@@ -276,7 +253,7 @@ class MainWindow(QMainWindow):
                 alignment=visualizer_settings.alignment
             )
         elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_CIRCLE:
-            visualizer = chroma.CircleVisualizer(
+            return chroma.CircleVisualizer(
                 audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
                 super_sampling=visualizer_settings.super_sampling,
                 border_width=visualizer_settings.border_width, 
@@ -284,32 +261,80 @@ class MainWindow(QMainWindow):
                 bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
                 alignment=visualizer_settings.alignment
             )
+        return None
 
-        render_worker = RenderWorker(audio_data, video_data, visualizer, preview)
+    def _reset_render_controls(self):
+        self.rendering = False
+        self.render_button.setEnabled(True)
+        self.preview_button.setEnabled(True)
+        self.render_button.setText("Render Video")
+        self.preview_button.setText("Live Preview (5s)")
+        self.render_status_label.hide()
+        self._active_preview = False
+
+    def _start_render(self, preview_seconds=None, output_path=None, force_show_output=None):
+        if self.rendering:
+            return
+        
+        self.rendering = True
+        self._active_preview = preview_seconds is not None and output_path == self._preview_output_path()
+        self.render_button.setEnabled(False)
+        self.preview_button.setEnabled(False)
+        if self._active_preview:
+            self.preview_button.setText("Previewing...")
+        else:
+            self.render_button.setText("Rendering...")
+
+        self.render_status_label.show()
+        self.render_status_label.setText("Setting up render...")
+
+        if not self.validate_render_settings():
+            self._reset_render_controls()
+
+            message = QMessageBox(QMessageBox.Icon.Critical, "Settings Error",
+                                  "One of your settings are invalid. The render cannot run. Please double check the values inputed.")
+            message.exec()
+            return
+
+        general_settings = self.generalSettingsView.read_view_values()
+        visualizer_settings = self.generalVisualizerView.read_view_values()
+
+        audio_data = AudioData(general_settings.audio_file_path)
+        file_path = output_path or general_settings.video_file_path
+        video_data = VideoData(general_settings.video_width, general_settings.video_height,
+                               general_settings.fps, file_path=file_path)
+
+        visualizer = self._create_visualizer(audio_data, video_data, visualizer_settings)
+
+        if force_show_output is None:
+            self._show_output_for_last_render = self.show_output_checkbox.isChecked()
+        else:
+            self._show_output_for_last_render = force_show_output
+
+        render_worker = RenderWorker(audio_data, video_data, visualizer, preview_seconds)
         render_worker.signals.finished.connect(self.render_finished)
         render_worker.signals.error.connect(self.render_failed)
         render_worker.signals.status.connect(self.render_status_update)
         self.render_thread_pool.start(render_worker)
+
+    def render_video(self):
+        preview_seconds = 30 if self.preview_checkbox.isChecked() else None
+        self._start_render(preview_seconds=preview_seconds)
+
+    def render_preview(self):
+        self._start_render(preview_seconds=5, output_path=self._preview_output_path(), force_show_output=True)
     
     def render_finished(self, video_data: VideoData):
-        self.rendering = False
-        self.render_button.setEnabled(True)
-        self.render_button.setText("Render Video")
-        self.render_status_label.hide()
-
-        if self.show_output_checkbox.isChecked():
+        if self._show_output_for_last_render:
             player = RenderDialog(video_data)
             player.exec()
+        self._reset_render_controls()
     
     def render_failed(self, msg):
-        self.rendering = False
-        self.render_button.setEnabled(True)
-        self.render_button.setText("Render Video")
-        self.render_status_label.hide()
-
         message = QMessageBox(QMessageBox.Icon.Critical, "Error rendering",
                               f"There was an error rendering the video. The error message is: {msg}")
         message.exec()
+        self._reset_render_controls()
 
     def render_status_update(self, msg):
         self.render_status_label.setText(msg)
@@ -486,12 +511,12 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 class RenderWorker(QRunnable):
-    def __init__(self, audio_data: AudioData, video_data: VideoData, visualizer: Visualizer, preview: bool):
+    def __init__(self, audio_data: AudioData, video_data: VideoData, visualizer: Visualizer, preview_seconds=None):
         super().__init__()
         self.audio_data = audio_data
         self.video_data = video_data
         self.visualizer = visualizer
-        self.preview = preview
+        self.preview_seconds = preview_seconds
 
         class RenderSignals(QObject):
             finished = Signal(VideoData)
@@ -501,7 +526,7 @@ class RenderWorker(QRunnable):
 
     def run(self):
         self.signals.status.emit("Opening audio file...")
-        if not self.audio_data.load_audio_data(self.preview):
+        if not self.audio_data.load_audio_data(self.preview_seconds):
             self.signals.error.emit("Error opening audio file.")
             return
             
@@ -515,10 +540,9 @@ class RenderWorker(QRunnable):
             return
         self.visualizer.prepare_shapes()
 
-        ''' If preview is True, limit to 30 seconds of video. '''
         frames = len(self.audio_data.audio_frames)
-        if self.preview:
-            frames = min(len(self.audio_data.audio_frames), self.video_data.fps * 30 if self.preview else len(self.audio_data.audio_frames))
+        if self.preview_seconds is not None:
+            frames = min(len(self.audio_data.audio_frames), self.video_data.fps * self.preview_seconds)
 
         self.signals.status.emit("Rendering video (0 %) ...")
         for i in range(frames):
