@@ -20,3 +20,7 @@ Current the program can create videos from an audio file visualizing the audio v
 Install Python 3 (3.13 was version this was developed in).
 Run 'pip install -r requirements.txt' to install required packages.
 Run `python -m audio_visualizer` from the project root.
+
+## Run Scripts
+- Windows: `run.bat`
+- Bash (Linux/macOS): `run.sh`
