@@ -27,42 +27,40 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtGui import (
-    QIntValidator, QDoubleValidator
+    QIntValidator
 )
 
-from audio_visualizer.ui import View
+from audio_visualizer.ui.views.general.generalView import View
 
-class ForceRectangleChromaVisualizerSettings:
-    box_height = 0
-    corner_radius = 0
-    color_mode = "Single"
-    gradient_start = (0, 0, 0)
-    gradient_end = (0, 0, 0)
-    band_colors = []
-    gravity = 0.0
-    force_strength = 0.0
+class LineChromaVisualizerSettings:
+    max_height = 0
+    line_thickness = 0
+    smoothness = 0
+    color_mode = ""
+    gradient_start = None
+    gradient_end = None
+    band_colors = None
 
-class ForceRectangleChromaVisualizerView(View):
+class LineChromaVisualizerView(View):
+    '''
+    Collect settings for smooth line chroma visualizer.
+    '''
     def __init__(self):
         super().__init__()
 
         self.layout = QFormLayout()
 
-        self.box_height = QLineEdit("50")
-        self.box_height.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Box Height:", self.box_height)
+        self.max_height = QLineEdit("50")
+        self.max_height.setValidator(QIntValidator(1, int(1e6)))
+        self.layout.addRow("Max Height:", self.max_height)
 
-        self.corner_radius = QLineEdit("0")
-        self.corner_radius.setValidator(QIntValidator(0, int(1e6)))
-        self.layout.addRow("Corner Radius:", self.corner_radius)
+        self.line_thickness = QLineEdit("2")
+        self.line_thickness.setValidator(QIntValidator(1, int(1e6)))
+        self.layout.addRow("Line Thickness:", self.line_thickness)
 
-        self.gravity = QLineEdit("0.05")
-        self.gravity.setValidator(QDoubleValidator(0.0, 10.0, 4))
-        self.layout.addRow("Gravity:", self.gravity)
-
-        self.force_strength = QLineEdit("1.0")
-        self.force_strength.setValidator(QDoubleValidator(0.0, 100.0, 4))
-        self.layout.addRow("Force Strength:", self.force_strength)
+        self.smoothness = QLineEdit("8")
+        self.smoothness.setValidator(QIntValidator(2, int(1e6)))
+        self.layout.addRow("Curve Smoothness:", self.smoothness)
 
         self.color_mode = QComboBox()
         self.color_mode.addItems(["Single", "Gradient", "Per-band"])
@@ -110,33 +108,48 @@ class ForceRectangleChromaVisualizerView(View):
         self.gradient_start.textChanged.connect(lambda _: self._update_swatch(self.gradient_start, self.gradient_start_swatch))
         self.gradient_end.textChanged.connect(lambda _: self._update_swatch(self.gradient_end, self.gradient_end_swatch))
 
+    '''
+    Verifies the values of the widgets are valid for this visualizer.
+    '''
     def validate_view(self) -> bool:
         try:
-            int(self.box_height.text())
-            int(self.corner_radius.text())
-            float(self.gravity.text())
-            float(self.force_strength.text())
-            if self.color_mode.currentText() == "Gradient":
+            max_height = int(self.max_height.text())
+            line_thickness = int(self.line_thickness.text())
+            smoothness = int(self.smoothness.text())
+            color_mode = self.color_mode.currentText()
+        except:
+            return False
+        if max_height <= 0 or line_thickness <= 0 or smoothness < 2:
+            return False
+        try:
+            if color_mode == "Gradient":
                 self._parse_color(self.gradient_start.text())
                 self._parse_color(self.gradient_end.text())
-            elif self.color_mode.currentText() == "Per-band":
+            elif color_mode == "Per-band":
                 colors = self._parse_band_colors(self.band_colors.text())
                 if len(colors) != 12:
                     return False
-        except:
+        except Exception:
             return False
         return True
 
-    def read_view_values(self) -> ForceRectangleChromaVisualizerSettings:
-        settings = ForceRectangleChromaVisualizerSettings()
-        settings.box_height = int(self.box_height.text())
-        settings.corner_radius = int(self.corner_radius.text())
-        settings.gravity = float(self.gravity.text())
-        settings.force_strength = float(self.force_strength.text())
+    '''
+    Reads the widget values to prepare the visualizer.
+    '''
+    def read_view_values(self) -> LineChromaVisualizerSettings:
+        settings = LineChromaVisualizerSettings()
+        settings.max_height = int(self.max_height.text())
+        settings.line_thickness = int(self.line_thickness.text())
+        settings.smoothness = int(self.smoothness.text())
         settings.color_mode = self.color_mode.currentText()
-        settings.gradient_start = self._parse_color_optional(self.gradient_start.text())
-        settings.gradient_end = self._parse_color_optional(self.gradient_end.text())
-        settings.band_colors = self._parse_band_colors(self.band_colors.text())
+        settings.gradient_start = None
+        settings.gradient_end = None
+        settings.band_colors = []
+        if settings.color_mode == "Gradient":
+            settings.gradient_start = self._parse_color(self.gradient_start.text())
+            settings.gradient_end = self._parse_color(self.gradient_end.text())
+        elif settings.color_mode == "Per-band":
+            settings.band_colors = self._parse_band_colors(self.band_colors.text())
         return settings
 
     @staticmethod
@@ -150,26 +163,21 @@ class ForceRectangleChromaVisualizerView(View):
                 raise ValueError("Color components must be 0-255.")
         return values
 
-    @staticmethod
-    def _parse_color_optional(text: str):
-        if not text.strip():
-            return (0, 0, 0)
-        return ForceRectangleChromaVisualizerView._parse_color(text)
-
-    @staticmethod
-    def _parse_band_colors(text: str):
+    def _parse_band_colors(self, text: str):
         if not text.strip():
             return []
         colors = []
         for chunk in text.split("|"):
-            colors.append(ForceRectangleChromaVisualizerView._parse_color(chunk))
+            colors.append(self._parse_color(chunk))
         return colors
 
     @staticmethod
     def _update_swatch(field: QLineEdit, swatch: QLabel):
         try:
-            color = ForceRectangleChromaVisualizerView._parse_color(field.text())
+            color = LineChromaVisualizerView._parse_color(field.text())
         except Exception:
             swatch.setStyleSheet("border: 1px solid #888; background: transparent;")
             return
         swatch.setStyleSheet(f"border: 1px solid #888; background: rgb({color[0]}, {color[1]}, {color[2]});")
+
+

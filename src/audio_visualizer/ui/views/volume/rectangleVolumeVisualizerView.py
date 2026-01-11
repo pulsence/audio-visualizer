@@ -1,3 +1,4 @@
+
 '''
 MIT License
 
@@ -30,49 +31,41 @@ from PySide6.QtGui import (
     QIntValidator
 )
 
-from audio_visualizer.ui import View
+from audio_visualizer.ui.views.general.generalView import View
+
 from audio_visualizer.visualizers.utilities import VisualizerFlow
 
-class CombinedVisualizerSettings:
+class RectangleVolumeVisualizerSettings:
     box_height = 0
     box_width = 0
     corner_radius = 0
     flow = VisualizerFlow.LEFT_TO_RIGHT
-    chroma_box_height = 0
-    chroma_corner_radius = 0
 
-class CombinedVisualizerView(View):
+class RectangleVolumeVisualizerView(View):
     '''
-    Settings for the combined volume + chroma visualizer.
+    Each Visualizer is to produce a QWidget with an attached Layout that contains all the
+    required gui elements to collect require settings for this visualizer.
     '''
     def __init__(self):
         super().__init__()
 
         self.layout = QFormLayout()
-
+    
         self.visualizer_flow = QComboBox()
         self.visualizer_flow.addItems(VisualizerFlow.list())
-        self.layout.addRow("Volume Flow:", self.visualizer_flow)
+        self.layout.addRow("Flow:", self.visualizer_flow)
 
         self.box_height = QLineEdit("50")
         self.box_height.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Volume Box Height:", self.box_height)
+        self.layout.addRow("Box Height:", self.box_height)
 
         self.box_width = QLineEdit("10")
         self.box_width.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Volume Box Width:", self.box_width)
+        self.layout.addRow("Box Width:", self.box_width)
 
         self.corner_radius = QLineEdit("0")
         self.corner_radius.setValidator(QIntValidator(0, int(1e6)))
-        self.layout.addRow("Volume Corner Radius:", self.corner_radius)
-
-        self.chroma_box_height = QLineEdit("50")
-        self.chroma_box_height.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Chroma Box Height:", self.chroma_box_height)
-
-        self.chroma_corner_radius = QLineEdit("0")
-        self.chroma_corner_radius.setValidator(QIntValidator(0, int(1e6)))
-        self.layout.addRow("Chroma Corner Radius:", self.chroma_corner_radius)
+        self.layout.addRow("Corner Radius:", self.corner_radius)
         
         self.controler.setLayout(self.layout)
     
@@ -84,24 +77,22 @@ class CombinedVisualizerView(View):
             box_height = int(self.box_height.text())
             box_width = int(self.box_width.text())
             corner_radius = int(self.corner_radius.text())
-            chroma_box_height = int(self.chroma_box_height.text())
-            chroma_corner_radius = int(self.chroma_corner_radius.text())
         except:
             return False
         return True
-
     '''
     Reads the widget values to prepare the visualizer.
     '''
-    def read_view_values(self) -> CombinedVisualizerSettings:
-        settings = CombinedVisualizerSettings()
+    def read_view_values(self) -> RectangleVolumeVisualizerSettings:
+        settings = RectangleVolumeVisualizerSettings()
 
         settings.box_height = int(self.box_height.text())
         settings.box_width = int(self.box_width.text())
         settings.corner_radius = int(self.corner_radius.text())
+
         settings.flow = VisualizerFlow(self.visualizer_flow.currentText())
-        settings.chroma_box_height = int(self.chroma_box_height.text())
-        settings.chroma_corner_radius = int(self.chroma_corner_radius.text())
 
         return settings
+
+
 

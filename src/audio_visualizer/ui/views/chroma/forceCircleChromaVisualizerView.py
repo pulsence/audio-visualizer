@@ -1,4 +1,3 @@
-
 '''
 MIT License
 
@@ -27,23 +26,33 @@ from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QComboBox, QHBoxLayout, QPushButton, QColorDialog, QLabel
 )
 
-from audio_visualizer.ui import View
+from PySide6.QtGui import (
+    QDoubleValidator
+)
 
-class CircleChromeVisualizerSettings:
+from audio_visualizer.ui.views.general.generalView import View
+
+class ForceCircleChromaVisualizerSettings:
     color_mode = "Single"
     gradient_start = (0, 0, 0)
     gradient_end = (0, 0, 0)
     band_colors = []
+    gravity = 0.0
+    force_strength = 0.0
 
-class CircleChromeVisualizerView(View):
-    '''
-    Each Visualizer is to produce a QWidget with an attached Layout that contains all the
-    required gui elements to collect require settings for this visualizer.
-    '''
+class ForceCircleChromaVisualizerView(View):
     def __init__(self):
         super().__init__()
 
         self.layout = QFormLayout()
+
+        self.gravity = QLineEdit("0.05")
+        self.gravity.setValidator(QDoubleValidator(0.0, 10.0, 4))
+        self.layout.addRow("Gravity:", self.gravity)
+
+        self.force_strength = QLineEdit("1.0")
+        self.force_strength.setValidator(QDoubleValidator(0.0, 100.0, 4))
+        self.layout.addRow("Force Strength:", self.force_strength)
 
         self.color_mode = QComboBox()
         self.color_mode.addItems(["Single", "Gradient", "Per-band"])
@@ -91,30 +100,29 @@ class CircleChromeVisualizerView(View):
         self.gradient_start.textChanged.connect(lambda _: self._update_swatch(self.gradient_start, self.gradient_start_swatch))
         self.gradient_end.textChanged.connect(lambda _: self._update_swatch(self.gradient_end, self.gradient_end_swatch))
 
-    '''
-    Verifies the values of the widgets are valid for this visualizer.
-    '''
     def validate_view(self) -> bool:
         try:
+            float(self.gravity.text())
+            float(self.force_strength.text())
             if self.color_mode.currentText() == "Gradient":
                 self._parse_color(self.gradient_start.text())
                 self._parse_color(self.gradient_end.text())
             elif self.color_mode.currentText() == "Per-band":
-                self._parse_band_colors(self.band_colors.text())
+                colors = self._parse_band_colors(self.band_colors.text())
+                if len(colors) != 12:
+                    return False
         except:
             return False
         return True
-    '''
-    Reads the widget values to prepare the visualizer.
-    '''
-    def read_view_values(self) -> CircleChromeVisualizerSettings:
-        settings = CircleChromeVisualizerSettings()
 
+    def read_view_values(self) -> ForceCircleChromaVisualizerSettings:
+        settings = ForceCircleChromaVisualizerSettings()
+        settings.gravity = float(self.gravity.text())
+        settings.force_strength = float(self.force_strength.text())
         settings.color_mode = self.color_mode.currentText()
         settings.gradient_start = self._parse_color_optional(self.gradient_start.text())
         settings.gradient_end = self._parse_color_optional(self.gradient_end.text())
         settings.band_colors = self._parse_band_colors(self.band_colors.text())
-
         return settings
 
     @staticmethod
@@ -132,7 +140,7 @@ class CircleChromeVisualizerView(View):
     def _parse_color_optional(text: str):
         if not text.strip():
             return (0, 0, 0)
-        return CircleChromeVisualizerView._parse_color(text)
+        return ForceCircleChromaVisualizerView._parse_color(text)
 
     @staticmethod
     def _parse_band_colors(text: str):
@@ -140,15 +148,16 @@ class CircleChromeVisualizerView(View):
             return []
         colors = []
         for chunk in text.split("|"):
-            colors.append(CircleChromeVisualizerView._parse_color(chunk))
+            colors.append(ForceCircleChromaVisualizerView._parse_color(chunk))
         return colors
 
     @staticmethod
     def _update_swatch(field: QLineEdit, swatch: QLabel):
         try:
-            color = CircleChromeVisualizerView._parse_color(field.text())
+            color = ForceCircleChromaVisualizerView._parse_color(field.text())
         except Exception:
             swatch.setStyleSheet("border: 1px solid #888; background: transparent;")
             return
         swatch.setStyleSheet(f"border: 1px solid #888; background: rgb({color[0]}, {color[1]}, {color[2]});")
+
 

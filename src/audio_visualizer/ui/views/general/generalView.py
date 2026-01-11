@@ -23,50 +23,39 @@ SOFTWARE.
 '''
 
 from PySide6.QtWidgets import (
-    QFormLayout, QLineEdit
+    QLayout, QWidget, QGridLayout
 )
 
-from PySide6.QtGui import (
-    QIntValidator
-)
 
-from audio_visualizer.ui import View
+class View:
 
-class WaveformVisualizerSettings:
-    line_thickness = 0
-
-class WaveformVisualizerView(View):
-    '''
-    Collect settings for waveform visualizer.
-    '''
     def __init__(self):
-        super().__init__()
+        self.layout = QGridLayout()
+        self.controler = QWidget()
 
-        self.layout = QFormLayout()
-
-        self.line_thickness = QLineEdit("2")
-        self.line_thickness.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Line Thickness:", self.line_thickness)
-        
-        self.controler.setLayout(self.layout)
+    '''
+    Returns the widgets of this view nested within a single layout.
+    '''
+    def get_view_in_layout(self) -> QLayout:
+        return self.layout
     
     '''
-    Verifies the values of the widgets are valid for this visualizer.
+    Returns the widgets of this view nested within a single parent widget.
+    '''
+    def get_view_in_widget(self) -> QWidget:
+        return self.controler
+    
+    '''
+    Verifies that the input values in the view are valide.
     '''
     def validate_view(self) -> bool:
-        try:
-            line_thickness = int(self.line_thickness.text())
-        except:
-            return False
-        return True
-
+        raise NotImplementedError("Subclasses should implement this method.")
+    
     '''
-    Reads the widget values to prepare the visualizer.
+    Transforms the input values in the view into a python object.
     '''
-    def read_view_values(self) -> WaveformVisualizerSettings:
-        settings = WaveformVisualizerSettings()
+    def read_view_values(self) -> object:
+        raise NotImplementedError("Subclasses should implement this method.")
 
-        settings.line_thickness = int(self.line_thickness.text())
 
-        return settings
 

@@ -37,7 +37,8 @@ from PySide6.QtGui import (
     QIntValidator
 )
 
-from audio_visualizer.ui import View, Fonts
+from audio_visualizer.ui.views.general.generalView import View
+from audio_visualizer.ui.views.general.utilities import Fonts
 
 from audio_visualizer.visualizers import utilities
 
@@ -200,4 +201,7 @@ class GeneralVisualizerView(View):
         settings.super_sampling = int(self.super_sampling.text())
 
         return settings
+
+
+
 

@@ -40,7 +40,7 @@ import os
 
 from audio_visualizer.app_paths import get_data_dir
 from .generalView import View
-from audio_visualizer.ui import Fonts
+from audio_visualizer.ui.views.general.utilities import Fonts
 
 class GeneralSettings:
     video_width = 0
@@ -212,4 +212,7 @@ class GeneralSettingsView(View):
         settings.video_file_path = self.video_file_path.text()
 
         return settings
+
+
+
 

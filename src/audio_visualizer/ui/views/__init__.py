@@ -1,0 +1,30 @@
+from .general.generalView import View
+from .general.utilities import Fonts
+
+Fonts.h1_font.setPointSize(24)
+Fonts.h1_font.setBold(True)
+Fonts.h2_font.setPointSize(16)
+Fonts.h2_font.setUnderline(True)
+
+# General UI Views
+from .general.generalSettingViews import GeneralSettingsView, GeneralSettings
+from .general.generalVisualizerView import GeneralVisualizerView, GeneralVisualizerSettings
+from .general.waveformVisualizerView import WaveformVisualizerView, WaveformVisualizerSettings
+from .general.combinedVisualizerView import CombinedVisualizerView, CombinedVisualizerSettings
+
+# Visualizer Specific Views
+from .volume.rectangleVolumeVisualizerView import RectangleVolumeVisualizerView, RectangleVolumeVisualizerSettings
+from .volume.circleVolumeVisualizerView import CircleVolumeVisualizerView, CircleVolumeVisualizerSettings
+from .volume.lineVolumeVisualizerView import LineVolumeVisualizerView, LineVolumeVisualizerSettings
+from .volume.forceLineVolumeVisualizerView import ForceLineVolumeVisualizerView, ForceLineVolumeVisualizerSettings
+
+from .chroma.rectangleChromaVisualizerView import RectangleChromaVisualizerView, RectangleChromaVisualizerSettings
+from .chroma.circleChromaVisualizerView import CircleChromeVisualizerView, CircleChromeVisualizerSettings
+from .chroma.lineChromaVisualizerView import LineChromaVisualizerView, LineChromaVisualizerSettings
+from .chroma.lineChromaBandsVisualizerView import LineChromaBandsVisualizerView, LineChromaBandsVisualizerSettings
+from .chroma.forceRectangleChromaVisualizerView import ForceRectangleChromaVisualizerView, ForceRectangleChromaVisualizerSettings
+from .chroma.forceCircleChromaVisualizerView import ForceCircleChromaVisualizerView, ForceCircleChromaVisualizerSettings
+from .chroma.forceLineChromaVisualizerView import ForceLineChromaVisualizerView, ForceLineChromaVisualizerSettings
+from .chroma.forceLinesChromaVisualizerView import ForceLinesChromaVisualizerView, ForceLinesChromaVisualizerSettings
+
+

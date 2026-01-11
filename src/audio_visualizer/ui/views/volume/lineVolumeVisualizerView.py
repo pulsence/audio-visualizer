@@ -1,4 +1,3 @@
-
 '''
 MIT License
 
@@ -31,30 +30,39 @@ from PySide6.QtGui import (
     QIntValidator
 )
 
-from audio_visualizer.ui import View
+from audio_visualizer.ui.views.general.generalView import View
 from audio_visualizer.visualizers.utilities import VisualizerFlow
 
-class CircleVolumeVisualizerSettings:
-    radius = 0
+class LineVolumeVisualizerSettings:
+    max_height = 0
+    line_thickness = 0
     flow = VisualizerFlow.LEFT_TO_RIGHT
+    smoothness = 0
 
-class CircleVolumeVisualizerView(View):
+class LineVolumeVisualizerView(View):
     '''
-    Each Visualizer is to produce a QWidget with an attached Layout that contains all the
-    required gui elements to collect require settings for this visualizer.
+    Collect settings for smooth line volume visualizer.
     '''
     def __init__(self):
         super().__init__()
 
         self.layout = QFormLayout()
-        
+
+        self.max_height = QLineEdit("50")
+        self.max_height.setValidator(QIntValidator(1, int(1e6)))
+        self.layout.addRow("Max Height:", self.max_height)
+
+        self.line_thickness = QLineEdit("2")
+        self.line_thickness.setValidator(QIntValidator(1, int(1e6)))
+        self.layout.addRow("Line Thickness:", self.line_thickness)
+
+        self.smoothness = QLineEdit("8")
+        self.smoothness.setValidator(QIntValidator(2, int(1e6)))
+        self.layout.addRow("Curve Smoothness:", self.smoothness)
+
         self.visualizer_flow = QComboBox()
         self.visualizer_flow.addItems(VisualizerFlow.list())
         self.layout.addRow("Flow:", self.visualizer_flow)
-
-        self.radius = QLineEdit("25")
-        self.radius.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Radius:", self.radius)
 
         self.controler.setLayout(self.layout)
 
@@ -63,18 +71,22 @@ class CircleVolumeVisualizerView(View):
     '''
     def validate_view(self) -> bool:
         try:
-            radius = int(self.radius.text())
+            max_height = int(self.max_height.text())
+            line_thickness = int(self.line_thickness.text())
+            smoothness = int(self.smoothness.text())
         except:
             return False
-        return True
-    
+        return max_height > 0 and line_thickness > 0 and smoothness >= 2
+
     '''
     Reads the widget values to prepare the visualizer.
     '''
-    def read_view_values(self) -> CircleVolumeVisualizerSettings:
-        settings = CircleVolumeVisualizerSettings()
-
-        settings.radius = int(self.radius.text())
+    def read_view_values(self) -> LineVolumeVisualizerSettings:
+        settings = LineVolumeVisualizerSettings()
+        settings.max_height = int(self.max_height.text())
+        settings.line_thickness = int(self.line_thickness.text())
         settings.flow = VisualizerFlow(self.visualizer_flow.currentText())
-
+        settings.smoothness = int(self.smoothness.text())
         return settings
+
+

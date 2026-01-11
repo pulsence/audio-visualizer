@@ -31,7 +31,7 @@ from PySide6.QtGui import (
     QIntValidator
 )
 
-from audio_visualizer.ui import View
+from audio_visualizer.ui.views.general.generalView import View
 
 class RectangleChromaVisualizerSettings:
     box_height = 0
@@ -170,4 +170,6 @@ class RectangleChromaVisualizerView(View):
             swatch.setStyleSheet("border: 1px solid #888; background: transparent;")
             return
         swatch.setStyleSheet(f"border: 1px solid #888; background: rgb({color[0]}, {color[1]}, {color[2]});")
+
+
 

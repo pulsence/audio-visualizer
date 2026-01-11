@@ -31,17 +31,14 @@ from PySide6.QtGui import (
     QIntValidator
 )
 
-from audio_visualizer.ui import View
-
+from audio_visualizer.ui.views.general.generalView import View
 from audio_visualizer.visualizers.utilities import VisualizerFlow
 
-class RectangleVolumeVisualizerSettings:
-    box_height = 0
-    box_width = 0
-    corner_radius = 0
+class CircleVolumeVisualizerSettings:
+    radius = 0
     flow = VisualizerFlow.LEFT_TO_RIGHT
 
-class RectangleVolumeVisualizerView(View):
+class CircleVolumeVisualizerView(View):
     '''
     Each Visualizer is to produce a QWidget with an attached Layout that contains all the
     required gui elements to collect require settings for this visualizer.
@@ -50,47 +47,36 @@ class RectangleVolumeVisualizerView(View):
         super().__init__()
 
         self.layout = QFormLayout()
-    
+        
         self.visualizer_flow = QComboBox()
         self.visualizer_flow.addItems(VisualizerFlow.list())
         self.layout.addRow("Flow:", self.visualizer_flow)
 
-        self.box_height = QLineEdit("50")
-        self.box_height.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Box Height:", self.box_height)
+        self.radius = QLineEdit("25")
+        self.radius.setValidator(QIntValidator(1, int(1e6)))
+        self.layout.addRow("Radius:", self.radius)
 
-        self.box_width = QLineEdit("10")
-        self.box_width.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Box Width:", self.box_width)
-
-        self.corner_radius = QLineEdit("0")
-        self.corner_radius.setValidator(QIntValidator(0, int(1e6)))
-        self.layout.addRow("Corner Radius:", self.corner_radius)
-        
         self.controler.setLayout(self.layout)
-    
+
     '''
     Verifies the values of the widgets are valid for this visualizer.
     '''
     def validate_view(self) -> bool:
         try:
-            box_height = int(self.box_height.text())
-            box_width = int(self.box_width.text())
-            corner_radius = int(self.corner_radius.text())
+            radius = int(self.radius.text())
         except:
             return False
         return True
+    
     '''
     Reads the widget values to prepare the visualizer.
     '''
-    def read_view_values(self) -> RectangleVolumeVisualizerSettings:
-        settings = RectangleVolumeVisualizerSettings()
+    def read_view_values(self) -> CircleVolumeVisualizerSettings:
+        settings = CircleVolumeVisualizerSettings()
 
-        settings.box_height = int(self.box_height.text())
-        settings.box_width = int(self.box_width.text())
-        settings.corner_radius = int(self.corner_radius.text())
-
+        settings.radius = int(self.radius.text())
         settings.flow = VisualizerFlow(self.visualizer_flow.currentText())
 
         return settings
+
 

@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 from PySide6.QtWidgets import QApplication
-from audio_visualizer.ui import MainWindow
+from audio_visualizer.ui.mainWindow import MainWindow
 
 def main():
     app = QApplication([])

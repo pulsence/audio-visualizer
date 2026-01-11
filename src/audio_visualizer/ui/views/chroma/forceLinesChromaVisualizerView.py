@@ -23,43 +23,45 @@ SOFTWARE.
 '''
 
 from PySide6.QtWidgets import (
-    QFormLayout, QLineEdit, QComboBox, QHBoxLayout, QPushButton, QColorDialog, QLabel,
+    QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QColorDialog, QLabel,
     QTabWidget, QWidget
 )
 
 from PySide6.QtGui import (
-    QIntValidator
+    QIntValidator, QDoubleValidator
 )
 
-from audio_visualizer.ui import View
-from audio_visualizer.visualizers.utilities import VisualizerFlow
+from audio_visualizer.ui.views.general.generalView import View
 
-class LineChromaBandsVisualizerSettings:
-    max_height = 0
+class ForceLinesChromaVisualizerSettings:
     line_thickness = 0
+    points_count = 0
     smoothness = 0
-    flow = VisualizerFlow.LEFT_TO_RIGHT
-    band_colors = None
+    tension = 0.0
+    damping = 0.0
+    force_strength = 0.0
+    gravity = 0.0
     band_spacing = 0
+    band_colors = None
 
-class LineChromaBandsVisualizerView(View):
+class ForceLinesChromaVisualizerView(View):
     '''
-    Collect settings for per-band chroma line visualizer.
+    Collect settings for force-based chroma lines visualizer.
     '''
     def __init__(self):
         super().__init__()
 
         self.layout = QFormLayout()
 
-        self.max_height = QLineEdit("50")
-        self.max_height.setValidator(QIntValidator(1, int(1e6)))
-        self.layout.addRow("Max Height:", self.max_height)
-
         self.line_thickness = QLineEdit("2")
         self.line_thickness.setValidator(QIntValidator(1, int(1e6)))
         self.layout.addRow("Line Thickness:", self.line_thickness)
 
-        self.smoothness = QLineEdit("8")
+        self.points_count = QLineEdit("80")
+        self.points_count.setValidator(QIntValidator(3, int(1e6)))
+        self.layout.addRow("Points Count:", self.points_count)
+
+        self.smoothness = QLineEdit("6")
         self.smoothness.setValidator(QIntValidator(2, int(1e6)))
         self.layout.addRow("Curve Smoothness:", self.smoothness)
 
@@ -67,9 +69,21 @@ class LineChromaBandsVisualizerView(View):
         self.band_spacing.setValidator(QIntValidator(0, int(1e6)))
         self.layout.addRow("Band Spacing:", self.band_spacing)
 
-        self.visualizer_flow = QComboBox()
-        self.visualizer_flow.addItems(VisualizerFlow.list())
-        self.layout.addRow("Flow:", self.visualizer_flow)
+        self.tension = QLineEdit("0.08")
+        self.tension.setValidator(QDoubleValidator(0.0, 10.0, 4))
+        self.layout.addRow("Tension:", self.tension)
+
+        self.damping = QLineEdit("0.02")
+        self.damping.setValidator(QDoubleValidator(0.0, 10.0, 4))
+        self.layout.addRow("Damping:", self.damping)
+
+        self.force_strength = QLineEdit("1.0")
+        self.force_strength.setValidator(QDoubleValidator(0.0, 100.0, 4))
+        self.layout.addRow("Force Strength:", self.force_strength)
+
+        self.gravity = QLineEdit("0.02")
+        self.gravity.setValidator(QDoubleValidator(0.0, 10.0, 4))
+        self.layout.addRow("Gravity:", self.gravity)
 
         self.band_color_fields = []
         self.band_color_swatches = []
@@ -110,37 +124,33 @@ class LineChromaBandsVisualizerView(View):
 
         self.controler.setLayout(self.layout)
 
-    '''
-    Verifies the values of the widgets are valid for this visualizer.
-    '''
     def validate_view(self) -> bool:
         try:
-            max_height = int(self.max_height.text())
-            line_thickness = int(self.line_thickness.text())
-            smoothness = int(self.smoothness.text())
-            band_spacing = int(self.band_spacing.text())
-        except:
-            return False
-        if max_height <= 0 or line_thickness <= 0 or smoothness < 2 or band_spacing < 0:
-            return False
-        try:
+            int(self.line_thickness.text())
+            int(self.points_count.text())
+            int(self.smoothness.text())
+            int(self.band_spacing.text())
+            float(self.tension.text())
+            float(self.damping.text())
+            float(self.force_strength.text())
+            float(self.gravity.text())
             colors = self._parse_band_colors()
             if len(colors) != 12:
                 return False
-        except Exception:
+        except:
             return False
         return True
 
-    '''
-    Reads the widget values to prepare the visualizer.
-    '''
-    def read_view_values(self) -> LineChromaBandsVisualizerSettings:
-        settings = LineChromaBandsVisualizerSettings()
-        settings.max_height = int(self.max_height.text())
+    def read_view_values(self) -> ForceLinesChromaVisualizerSettings:
+        settings = ForceLinesChromaVisualizerSettings()
         settings.line_thickness = int(self.line_thickness.text())
+        settings.points_count = int(self.points_count.text())
         settings.smoothness = int(self.smoothness.text())
         settings.band_spacing = int(self.band_spacing.text())
-        settings.flow = VisualizerFlow(self.visualizer_flow.currentText())
+        settings.tension = float(self.tension.text())
+        settings.damping = float(self.damping.text())
+        settings.force_strength = float(self.force_strength.text())
+        settings.gravity = float(self.gravity.text())
         settings.band_colors = self._parse_band_colors()
         return settings
 
@@ -164,8 +174,10 @@ class LineChromaBandsVisualizerView(View):
     @staticmethod
     def _update_swatch(field: QLineEdit, swatch: QLabel):
         try:
-            color = LineChromaBandsVisualizerView._parse_color(field.text())
+            color = ForceLinesChromaVisualizerView._parse_color(field.text())
         except Exception:
             swatch.setStyleSheet("border: 1px solid #888; background: transparent;")
             return
         swatch.setStyleSheet(f"border: 1px solid #888; background: rgb({color[0]}, {color[1]}, {color[2]});")
+
+

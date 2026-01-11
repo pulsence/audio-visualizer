@@ -23,27 +23,28 @@ SOFTWARE.
 '''
 
 from PySide6.QtWidgets import (
-    QFormLayout, QLineEdit
+    QFormLayout, QLineEdit, QComboBox
 )
 
 from PySide6.QtGui import (
     QIntValidator, QDoubleValidator
 )
 
-from audio_visualizer.ui import View
+from audio_visualizer.ui.views.general.generalView import View
+from audio_visualizer.visualizers.utilities import VisualizerFlow
 
-class ForceLineChromaVisualizerSettings:
+class ForceLineVolumeVisualizerSettings:
     line_thickness = 0
     points_count = 0
     tension = 0.0
     damping = 0.0
-    force_strength = 0.0
+    impulse_strength = 0.0
     gravity = 0.0
-    smoothness = 0
+    flow = VisualizerFlow.LEFT_TO_RIGHT
 
-class ForceLineChromaVisualizerView(View):
+class ForceLineVolumeVisualizerView(View):
     '''
-    Collect settings for force-based chroma line visualizer.
+    Collect settings for force-based volume line visualizer.
     '''
     def __init__(self):
         super().__init__()
@@ -54,29 +55,29 @@ class ForceLineChromaVisualizerView(View):
         self.line_thickness.setValidator(QIntValidator(1, int(1e6)))
         self.layout.addRow("Line Thickness:", self.line_thickness)
 
-        self.points_count = QLineEdit("80")
+        self.points_count = QLineEdit("160")
         self.points_count.setValidator(QIntValidator(3, int(1e6)))
         self.layout.addRow("Points Count:", self.points_count)
-
-        self.smoothness = QLineEdit("6")
-        self.smoothness.setValidator(QIntValidator(2, int(1e6)))
-        self.layout.addRow("Curve Smoothness:", self.smoothness)
 
         self.tension = QLineEdit("0.08")
         self.tension.setValidator(QDoubleValidator(0.0, 10.0, 4))
         self.layout.addRow("Tension:", self.tension)
 
-        self.damping = QLineEdit("0.02")
+        self.damping = QLineEdit("0.001")
         self.damping.setValidator(QDoubleValidator(0.0, 10.0, 4))
         self.layout.addRow("Damping:", self.damping)
 
-        self.force_strength = QLineEdit("1.0")
-        self.force_strength.setValidator(QDoubleValidator(0.0, 100.0, 4))
-        self.layout.addRow("Force Strength:", self.force_strength)
+        self.impulse_strength = QLineEdit("8.0")
+        self.impulse_strength.setValidator(QDoubleValidator(0.0, 100.0, 4))
+        self.layout.addRow("Impulse Strength:", self.impulse_strength)
 
         self.gravity = QLineEdit("0.02")
         self.gravity.setValidator(QDoubleValidator(0.0, 10.0, 4))
         self.layout.addRow("Gravity:", self.gravity)
+
+        self.visualizer_flow = QComboBox()
+        self.visualizer_flow.addItems(VisualizerFlow.list())
+        self.layout.addRow("Impulse Flow:", self.visualizer_flow)
 
         self.controler.setLayout(self.layout)
 
@@ -84,22 +85,23 @@ class ForceLineChromaVisualizerView(View):
         try:
             int(self.line_thickness.text())
             int(self.points_count.text())
-            int(self.smoothness.text())
             float(self.tension.text())
             float(self.damping.text())
-            float(self.force_strength.text())
+            float(self.impulse_strength.text())
             float(self.gravity.text())
         except:
             return False
         return True
 
-    def read_view_values(self) -> ForceLineChromaVisualizerSettings:
-        settings = ForceLineChromaVisualizerSettings()
+    def read_view_values(self) -> ForceLineVolumeVisualizerSettings:
+        settings = ForceLineVolumeVisualizerSettings()
         settings.line_thickness = int(self.line_thickness.text())
         settings.points_count = int(self.points_count.text())
-        settings.smoothness = int(self.smoothness.text())
         settings.tension = float(self.tension.text())
         settings.damping = float(self.damping.text())
-        settings.force_strength = float(self.force_strength.text())
+        settings.impulse_strength = float(self.impulse_strength.text())
         settings.gravity = float(self.gravity.text())
+        settings.flow = VisualizerFlow(self.visualizer_flow.currentText())
         return settings
+
+

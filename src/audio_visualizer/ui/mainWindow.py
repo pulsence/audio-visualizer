@@ -52,8 +52,8 @@ from audio_visualizer.visualizers import (
     volume, chroma, waveform, combined
 )
 
-from audio_visualizer.ui import (
-    Fonts, RenderDialog,
+from audio_visualizer.ui.views import (
+    Fonts,
     RectangleVolumeVisualizerView, RectangleVolumeVisualizerSettings,
     CircleVolumeVisualizerView, CircleVolumeVisualizerSettings,
     LineVolumeVisualizerView, LineVolumeVisualizerSettings,
@@ -71,6 +71,7 @@ from audio_visualizer.ui import (
     GeneralSettingsView, GeneralSettings,
     GeneralVisualizerView, GeneralVisualizerSettings
 )
+from audio_visualizer.ui.renderDialog import RenderDialog
 
 import av
 import json
