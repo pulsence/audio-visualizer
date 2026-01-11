@@ -22,18 +22,26 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 from PySide6.QtCore import (
-    Qt, QRunnable, QThreadPool, QObject, Signal, QTimer
+    Qt, QRunnable, QThreadPool, QObject, Signal, QTimer, QSize, QUrl
 )
 
 from PySide6.QtWidgets import (
     QMainWindow, QMessageBox, QGridLayout, QFormLayout, QHBoxLayout,
     QWidget, QComboBox, QLabel, QLineEdit, QPushButton, QCheckBox,
-    QFileDialog, QColorDialog, QProgressBar,
+    QFileDialog, QColorDialog, QProgressBar, QVBoxLayout, QGroupBox, QSlider,
     QSizePolicy
 )
 
 from PySide6.QtGui import (
     QIntValidator, QFont
+)
+
+from PySide6.QtMultimediaWidgets import (
+    QVideoWidget
+)
+
+from PySide6.QtMultimedia import (
+    QMediaPlayer, QAudioOutput
 )
 
 from audio_visualizer.visualizers import Visualizer
@@ -68,7 +76,6 @@ import av
 import json
 import logging
 import time
-import shiboken6
 from fractions import Fraction
 from pathlib import Path
 
@@ -96,6 +103,8 @@ class MainWindow(QMainWindow):
         self._prepare_general_visualizer_elements(primary_layout)
         # 2,1
         self._prepare_specific_visualizer_elements(primary_layout)
+        # 2,0
+        self._prepare_preview_panel_elements(primary_layout)
         # 3,0
         self._prepare_render_elements(primary_layout)
 
@@ -109,7 +118,6 @@ class MainWindow(QMainWindow):
         self.rendering = False
         self._show_output_for_last_render = True
         self._active_preview = False
-        self._preview_dialog = None
         self._active_render_worker = None
         self._pending_preview_refresh = False
         self._preview_update_timer = QTimer(self)
@@ -222,6 +230,38 @@ class MainWindow(QMainWindow):
     '''
     UI elements to launch a render in (3, 0)
     '''
+    def _prepare_preview_panel_elements(self, layout: QGridLayout, r=2, c=0):
+        preview_group = QGroupBox("Live Preview")
+        preview_layout = QVBoxLayout()
+
+        self.preview_panel_body = QWidget()
+        body_layout = QVBoxLayout()
+        self.preview_video_widget = QVideoWidget()
+        body_layout.addWidget(self.preview_video_widget)
+
+        volume_row = QHBoxLayout()
+        volume_label = QLabel("Preview Volume")
+        volume_row.addWidget(volume_label)
+        self.preview_volume_slider = QSlider()
+        self.preview_volume_slider.setOrientation(Qt.Orientation.Horizontal)
+        self.preview_volume_slider.setRange(0, 100)
+        self.preview_volume_slider.setValue(0)
+        volume_row.addWidget(self.preview_volume_slider)
+        body_layout.addLayout(volume_row)
+
+        self.preview_panel_body.setLayout(body_layout)
+        preview_layout.addWidget(self.preview_panel_body)
+        preview_group.setLayout(preview_layout)
+        layout.addWidget(preview_group, r, c)
+
+        self._preview_player = QMediaPlayer()
+        self._preview_audio_output = QAudioOutput()
+        self._preview_player.setAudioOutput(self._preview_audio_output)
+        self._preview_player.setVideoOutput(self.preview_video_widget)
+        self._preview_player.setLoops(QMediaPlayer.Loops.Infinite)
+        self.preview_volume_slider.valueChanged.connect(self._preview_volume_changed)
+        self._preview_volume_changed(self.preview_volume_slider.value())
+
     def _prepare_render_elements(self, layout: QGridLayout, r=3, c=0):
         render_section_layout = QGridLayout()
 
@@ -229,13 +269,14 @@ class MainWindow(QMainWindow):
         self.preview_checkbox.setChecked(True)
         render_section_layout.addWidget(self.preview_checkbox, 0, 0)
 
+        self.preview_panel_toggle = QCheckBox("Show Live Preview Panel")
+        self.preview_panel_toggle.setChecked(True)
+        self.preview_panel_toggle.stateChanged.connect(self._toggle_preview_panel)
+        render_section_layout.addWidget(self.preview_panel_toggle, 0, 1)
+
         self.show_output_checkbox = QCheckBox("Show Rendered Video")
         self.show_output_checkbox.setChecked(True)
-        render_section_layout.addWidget(self.show_output_checkbox, 0, 1)
-
-        self.preview_button = QPushButton("Live Preview (5s)")
-        self.preview_button.clicked.connect(self.render_preview)
-        render_section_layout.addWidget(self.preview_button, 1, 0)
+        render_section_layout.addWidget(self.show_output_checkbox, 1, 0)
 
         self.render_button = QPushButton("Render Video")
         self.render_button.clicked.connect(self.render_video)
@@ -559,7 +600,6 @@ class MainWindow(QMainWindow):
         self.rendering = False
         self._set_controls_enabled(True)
         self.render_button.setText("Render Video")
-        self.preview_button.setText("Live Preview (5s)")
         self.render_status_label.hide()
         self.render_progress_bar.hide()
         self.cancel_button.hide()
@@ -573,12 +613,10 @@ class MainWindow(QMainWindow):
         self.rendering = True
         self._active_preview = preview_seconds is not None and output_path == self._preview_output_path()
         if self._active_preview:
-            dialog = self._get_preview_dialog()
-            if dialog is not None and dialog.isVisible():
-                dialog.close()
+            self._reset_preview_player()
         self._set_controls_enabled(False)
         if self._active_preview:
-            self.preview_button.setText("Previewing...")
+            self.render_button.setText("Previewing...")
         else:
             self.render_button.setText("Rendering...")
 
@@ -646,19 +684,11 @@ class MainWindow(QMainWindow):
         self._start_render(preview_seconds=5, output_path=self._preview_output_path(), force_show_output=True)
     
     def render_finished(self, video_data: VideoData):
-        if self._show_output_for_last_render:
-            if self._active_preview:
-                dialog = self._get_preview_dialog()
-                if dialog is not None and dialog.isVisible():
-                    dialog.close()
-                self._preview_dialog = RenderDialog(video_data)
-                self._preview_dialog.setWindowModality(Qt.WindowModality.NonModal)
-                self._preview_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-                self._preview_dialog.destroyed.connect(lambda _: setattr(self, "_preview_dialog", None))
-                self._preview_dialog.show()
-            else:
-                player = RenderDialog(video_data)
-                player.exec()
+        if self._active_preview:
+            self._show_preview_in_panel(video_data)
+        elif self._show_output_for_last_render:
+            player = RenderDialog(video_data)
+            player.exec()
         self._active_render_worker = None
         self._reset_render_controls()
         if self._pending_preview_refresh:
@@ -669,6 +699,7 @@ class MainWindow(QMainWindow):
                               f"There was an error rendering the video. The error message is: {msg}\n\nLog file: {self._log_path}")
         message.exec()
         self._active_render_worker = None
+        self._reset_preview_player()
         self._reset_render_controls()
 
     def render_status_update(self, msg):
@@ -724,15 +755,13 @@ class MainWindow(QMainWindow):
             checkbox.stateChanged.connect(self._schedule_live_preview_update)
 
     def _schedule_live_preview_update(self):
-        dialog = self._get_preview_dialog()
-        if not self._active_preview and (dialog is None or not dialog.isVisible()):
+        if not self.preview_panel_toggle.isChecked():
             return
         self._pending_preview_refresh = True
         self._preview_update_timer.start()
 
     def _trigger_live_preview_update(self):
-        dialog = self._get_preview_dialog()
-        if not self._active_preview and (dialog is None or not dialog.isVisible()):
+        if not self.preview_panel_toggle.isChecked():
             self._pending_preview_refresh = False
             return
         if self.rendering:
@@ -749,13 +778,37 @@ class MainWindow(QMainWindow):
             show_validation_errors=False,
         )
 
-    def _get_preview_dialog(self):
-        if self._preview_dialog is None:
-            return None
-        if not shiboken6.isValid(self._preview_dialog):
-            self._preview_dialog = None
-            return None
-        return self._preview_dialog
+    def _toggle_preview_panel(self, _checked):
+        visible = self.preview_panel_toggle.isChecked()
+        self.preview_panel_body.setVisible(visible)
+        if not visible:
+            self._reset_preview_player()
+
+    def _preview_volume_changed(self, value: int):
+        if self._preview_audio_output is not None:
+            self._preview_audio_output.setVolume(value / 100)
+
+    def _reset_preview_player(self):
+        if self._preview_player is None:
+            return
+        try:
+            self._preview_player.stop()
+        except Exception:
+            pass
+        try:
+            self._preview_player.setSource(QUrl())
+        except Exception:
+            pass
+
+    def _show_preview_in_panel(self, video_data: VideoData):
+        if not self.preview_panel_toggle.isChecked():
+            return
+        try:
+            self.preview_video_widget.setMaximumSize(QSize(video_data.video_width, video_data.video_height))
+        except Exception:
+            pass
+        self._preview_player.setSource(QUrl.fromLocalFile(video_data.file_path))
+        self._preview_player.play()
 
     def _default_settings_path(self) -> Path:
         return get_config_dir() / "last_settings.json"
