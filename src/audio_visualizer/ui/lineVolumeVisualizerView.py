@@ -37,6 +37,7 @@ class LineVolumeVisualizerSettings:
     max_height = 0
     line_thickness = 0
     flow = VisualizerFlow.LEFT_TO_RIGHT
+    smoothness = 0
 
 class LineVolumeVisualizerView(View):
     '''
@@ -55,6 +56,10 @@ class LineVolumeVisualizerView(View):
         self.line_thickness.setValidator(QIntValidator(1, int(1e6)))
         self.layout.addRow("Line Thickness:", self.line_thickness)
 
+        self.smoothness = QLineEdit("8")
+        self.smoothness.setValidator(QIntValidator(2, int(1e6)))
+        self.layout.addRow("Curve Smoothness:", self.smoothness)
+
         self.visualizer_flow = QComboBox()
         self.visualizer_flow.addItems(VisualizerFlow.list())
         self.layout.addRow("Flow:", self.visualizer_flow)
@@ -68,9 +73,10 @@ class LineVolumeVisualizerView(View):
         try:
             max_height = int(self.max_height.text())
             line_thickness = int(self.line_thickness.text())
+            smoothness = int(self.smoothness.text())
         except:
             return False
-        return max_height > 0 and line_thickness > 0
+        return max_height > 0 and line_thickness > 0 and smoothness >= 2
 
     '''
     Reads the widget values to prepare the visualizer.
@@ -80,4 +86,5 @@ class LineVolumeVisualizerView(View):
         settings.max_height = int(self.max_height.text())
         settings.line_thickness = int(self.line_thickness.text())
         settings.flow = VisualizerFlow(self.visualizer_flow.currentText())
+        settings.smoothness = int(self.smoothness.text())
         return settings

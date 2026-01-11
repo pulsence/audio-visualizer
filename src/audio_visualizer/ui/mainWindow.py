@@ -315,7 +315,8 @@ class MainWindow(QMainWindow):
                 max_height=settings.max_height, line_thickness=settings.line_thickness,
                 spacing=visualizer_settings.spacing,
                 color=visualizer_settings.bg_color,
-                alignment=visualizer_settings.alignment, flow=settings.flow
+                alignment=visualizer_settings.alignment, flow=settings.flow,
+                smoothness=settings.smoothness
             )
         elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_RECTANGLE:
             settings = self.rectangleChromaVisualizerView.read_view_values()
@@ -356,7 +357,12 @@ class MainWindow(QMainWindow):
                 super_sampling=visualizer_settings.super_sampling,
                 max_height=settings.max_height, line_thickness=settings.line_thickness,
                 color=visualizer_settings.bg_color,
-                alignment=visualizer_settings.alignment
+                alignment=visualizer_settings.alignment,
+                smoothness=settings.smoothness,
+                color_mode=settings.color_mode,
+                gradient_start=settings.gradient_start,
+                gradient_end=settings.gradient_end,
+                band_colors=settings.band_colors,
             )
         elif visualizer_settings.visualizer_type == VisualizerOptions.WAVEFORM:
             settings = self.waveformVisualizerView.read_view_values()
@@ -403,6 +409,10 @@ class MainWindow(QMainWindow):
         
         self.rendering = True
         self._active_preview = preview_seconds is not None and output_path == self._preview_output_path()
+        if self._active_preview:
+            dialog = self._get_preview_dialog()
+            if dialog is not None and dialog.isVisible():
+                dialog.close()
         self._set_controls_enabled(False)
         if self._active_preview:
             self.preview_button.setText("Previewing...")
@@ -613,6 +623,7 @@ class MainWindow(QMainWindow):
                 "max_height": settings.max_height,
                 "line_thickness": settings.line_thickness,
                 "flow": settings.flow.value,
+                "smoothness": settings.smoothness,
             }
         elif selected == VisualizerOptions.CHROMA_RECTANGLE:
             settings = self.rectangleChromaVisualizerView.read_view_values()
@@ -637,6 +648,11 @@ class MainWindow(QMainWindow):
             specific = {
                 "max_height": settings.max_height,
                 "line_thickness": settings.line_thickness,
+                "smoothness": settings.smoothness,
+                "color_mode": settings.color_mode,
+                "gradient_start": list(settings.gradient_start) if settings.gradient_start else None,
+                "gradient_end": list(settings.gradient_end) if settings.gradient_end else None,
+                "band_colors": [list(color) for color in settings.band_colors],
             }
         elif selected == VisualizerOptions.WAVEFORM:
             settings = self.waveformVisualizerView.read_view_values()
@@ -760,6 +776,8 @@ class MainWindow(QMainWindow):
                 self.lineVolumeVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
             if "flow" in specific:
                 self.lineVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
+            if "smoothness" in specific:
+                self.lineVolumeVisualizerView.smoothness.setText(str(specific["smoothness"]))
         elif current_type == VisualizerOptions.CHROMA_RECTANGLE.value:
             if "box_height" in specific:
                 self.rectangleChromaVisualizerView.box_height.setText(str(specific["box_height"]))
@@ -809,6 +827,19 @@ class MainWindow(QMainWindow):
                 self.lineChromaVisualizerView.max_height.setText(str(specific["max_height"]))
             if "line_thickness" in specific:
                 self.lineChromaVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
+            if "smoothness" in specific:
+                self.lineChromaVisualizerView.smoothness.setText(str(specific["smoothness"]))
+            if "color_mode" in specific:
+                self.lineChromaVisualizerView.color_mode.setCurrentText(specific["color_mode"])
+            if "gradient_start" in specific and specific["gradient_start"]:
+                gs = specific["gradient_start"]
+                self.lineChromaVisualizerView.gradient_start.setText(f"{gs[0]}, {gs[1]}, {gs[2]}")
+            if "gradient_end" in specific and specific["gradient_end"]:
+                ge = specific["gradient_end"]
+                self.lineChromaVisualizerView.gradient_end.setText(f"{ge[0]}, {ge[1]}, {ge[2]}")
+            if "band_colors" in specific and specific["band_colors"]:
+                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
+                self.lineChromaVisualizerView.band_colors.setText("|".join(colors))
 
         if "preview" in ui_state:
             self.preview_checkbox.setChecked(bool(ui_state["preview"]))
