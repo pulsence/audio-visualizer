@@ -1,13 +1,43 @@
 # Overview
-The purpose of this project is to produce a visualization of any audio source in a video format. You can select an audio file and then generate a visual representation based upon the volume profile of the audio. Other off-the-shelf visualization generators work by pitch (and so work only with music) or involved paid services. This program enables you to generate basic audio visualizes for free.
+This app turns any audio file into a video visualization. It was built for creating audiograms from spoken content, but works for music and general audio as well. The output video can be layered over images or footage in any editor.
 
-This program was created with the use case of making "audiograms" from podcast voice content. With a video produced by this program, one can easily overlay it on top of a video or image in any
-video editing program.
+This project is provided as-is under the MIT License. It is maintained for personal use, but shared in case it helps others.
 
-This program comes with no support or warranty. It is licensed under the MIT License. I do not  intend to take feature requests and will be maintaining it for my personal use. I make it freely available since it could be of some use to others.
+## Features
+- Render videos from audio with configurable FPS, size, codec, and colors.
+- Live preview panel in the main UI (toggleable).
+- Per-visualizer settings with saved project presets.
+- Volume and chroma (pitch class) visualizers, including "force" variants.
 
-## Current Capabilities
-Current the program can create videos from an audio file visualizing the audio volume and chromagraph (pitch scale) across time as rectangles or circles. In both cases the shapes can be align along a bottom axis or center axis. The direction of flow can be either left to right or out from the center when visualizing volume.
+## Feature Table
+| Area | Highlights |
+| --- | --- |
+| Rendering | MP4 output, configurable FPS/size/codec, optional audio mux |
+| Preview | Embedded live preview panel, toggleable, auto-updates on changes |
+| Volume Visualizers | Rectangle, Circle, Smooth Line, Force Line |
+| Chroma Visualizers | Rectangle, Circle, Smooth Line, Lines, Force Rectangle/Circle/Line/Lines |
+| Combined | Volume + Chroma rectangle mode |
+| Projects | Save/load presets to JSON |
+
+## Visualizers
+Volume:
+- Rectangle (left-to-right or center-out flow).
+- Circle (left-to-right or center-out flow).
+- Smooth Line (flowed line).
+- Force Line (mass-spring rope with impulse injection).
+
+Chroma:
+- Rectangle (12 bands).
+- Circle (12 bands).
+- Smooth Line (single curve across 12 bands).
+- Lines (12 independent smooth lines).
+- Force Rectangle (gravity + chroma force).
+- Force Circle (gravity + chroma force).
+- Force Line (single rope with 12 anchor forces).
+- Force Lines (12 independent force ropes).
+
+Combined:
+- Rectangle (volume + chroma in one view).
 
 # Dependencies:
 - av
