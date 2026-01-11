@@ -41,7 +41,7 @@ from visualizers import Visualizer
 from visualizers.utilities import AudioData, VideoData, VisualizerOptions
 
 from visualizers import (
-    volume, chroma
+    volume, chroma, waveform, combined
 )
 
 from ui import (
@@ -50,6 +50,8 @@ from ui import (
     CircleVolumeVisualizerView, CircleVolumeVisualizerSettings,
     RectangleChromaVisualizerView, RectangleChromaVisualizerSettings,
     CircleChromeVisualizerView, CircleChromeVisualizerSettings,
+    WaveformVisualizerView, WaveformVisualizerSettings,
+    CombinedVisualizerView, CombinedVisualizerSettings,
     GeneralSettingsView, GeneralSettings,
     GeneralVisualizerView, GeneralVisualizerSettings
 )
@@ -141,6 +143,16 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.circleChromaVisualizerView.get_view_in_widget(), 1, 0)
         self.visualizer_views.append(self.circleChromaVisualizerView)
 
+        self.waveformVisualizerView = WaveformVisualizerView()
+        self.waveformVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.waveformVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.waveformVisualizerView)
+
+        self.combinedVisualizerView = CombinedVisualizerView()
+        self.combinedVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.combinedVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.combinedVisualizerView)
+
         layout.addLayout(main_layout, r, c)
 
     '''
@@ -194,6 +206,10 @@ class MainWindow(QMainWindow):
             self.rectangleChromaVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.CHROMA_CIRCLE:
             widget = self.circleChromaVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.WAVEFORM:
+            self.waveformVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.COMBINED_RECTANGLE:
+            self.combinedVisualizerView.get_view_in_widget().show()
 
     def validate_render_settings(self):
         if not self.generalSettingsView.validate_view():
@@ -209,6 +225,10 @@ class MainWindow(QMainWindow):
         elif selected == VisualizerOptions.CHROMA_RECTANGLE and not self.rectangleChromaVisualizerView.validate_view():
             return False
         elif selected == VisualizerOptions.CHROMA_CIRCLE and not self.circleChromaVisualizerView.validate_view():
+            return False
+        elif selected == VisualizerOptions.WAVEFORM and not self.waveformVisualizerView.validate_view():
+            return False
+        elif selected == VisualizerOptions.COMBINED_RECTANGLE and not self.combinedVisualizerView.validate_view():
             return False
         
         return True
@@ -260,6 +280,32 @@ class MainWindow(QMainWindow):
                 spacing=visualizer_settings.spacing,
                 bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
                 alignment=visualizer_settings.alignment
+            )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.WAVEFORM:
+            settings = self.waveformVisualizerView.read_view_values()
+
+            return waveform.WaveformVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                line_thickness=settings.line_thickness,
+                super_sampling=visualizer_settings.super_sampling,
+                color=visualizer_settings.bg_color,
+                alignment=visualizer_settings.alignment
+            )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.COMBINED_RECTANGLE:
+            settings = self.combinedVisualizerView.read_view_values()
+
+            return combined.RectangleVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                super_sampling=visualizer_settings.super_sampling,
+                box_height=settings.box_height, box_width=settings.box_width,
+                corner_radius=settings.corner_radius,
+                chroma_box_height=settings.chroma_box_height,
+                chroma_corner_radius=settings.chroma_corner_radius,
+                border_width=visualizer_settings.border_width, spacing=visualizer_settings.spacing,
+                volume_color=visualizer_settings.bg_color,
+                chroma_color=visualizer_settings.border_color,
+                border_color=visualizer_settings.border_color,
+                alignment=visualizer_settings.alignment, flow=settings.flow
             )
         return None
 
@@ -368,6 +414,21 @@ class MainWindow(QMainWindow):
                 "box_height": settings.box_height,
                 "corner_radius": settings.corner_radius,
             }
+        elif selected == VisualizerOptions.WAVEFORM:
+            settings = self.waveformVisualizerView.read_view_values()
+            specific = {
+                "line_thickness": settings.line_thickness,
+            }
+        elif selected == VisualizerOptions.COMBINED_RECTANGLE:
+            settings = self.combinedVisualizerView.read_view_values()
+            specific = {
+                "box_height": settings.box_height,
+                "box_width": settings.box_width,
+                "corner_radius": settings.corner_radius,
+                "flow": settings.flow.value,
+                "chroma_box_height": settings.chroma_box_height,
+                "chroma_corner_radius": settings.chroma_corner_radius,
+            }
 
         return {
             "general": {
@@ -454,6 +515,22 @@ class MainWindow(QMainWindow):
                 self.rectangleChromaVisualizerView.box_height.setText(str(specific["box_height"]))
             if "corner_radius" in specific:
                 self.rectangleChromaVisualizerView.corner_radius.setText(str(specific["corner_radius"]))
+        elif current_type == VisualizerOptions.WAVEFORM.value:
+            if "line_thickness" in specific:
+                self.waveformVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
+        elif current_type == VisualizerOptions.COMBINED_RECTANGLE.value:
+            if "box_height" in specific:
+                self.combinedVisualizerView.box_height.setText(str(specific["box_height"]))
+            if "box_width" in specific:
+                self.combinedVisualizerView.box_width.setText(str(specific["box_width"]))
+            if "corner_radius" in specific:
+                self.combinedVisualizerView.corner_radius.setText(str(specific["corner_radius"]))
+            if "flow" in specific:
+                self.combinedVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
+            if "chroma_box_height" in specific:
+                self.combinedVisualizerView.chroma_box_height.setText(str(specific["chroma_box_height"]))
+            if "chroma_corner_radius" in specific:
+                self.combinedVisualizerView.chroma_corner_radius.setText(str(specific["chroma_corner_radius"]))
 
         if "preview" in ui_state:
             self.preview_checkbox.setChecked(bool(ui_state["preview"]))

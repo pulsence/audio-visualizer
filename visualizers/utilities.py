@@ -53,6 +53,8 @@ class VisualizerOptions(Enum):
     VOLUME_CIRCLE = "Volume: Circle"
     CHROMA_RECTANGLE = "Chroma: Rectangle"
     CHROMA_CIRCLE = "Chroma: Circle"
+    WAVEFORM = "Waveform"
+    COMBINED_RECTANGLE = "Combined: Volume + Chroma"
 
     @staticmethod
     def list():
