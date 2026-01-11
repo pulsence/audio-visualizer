@@ -28,7 +28,7 @@ from PySide6.QtCore import (
 
 from PySide6.QtWidgets import (
     QLayout, QGridLayout, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QCheckBox,
+    QLabel, QLineEdit, QPushButton, QCheckBox, QComboBox,
     QFileDialog,
     QSizePolicy
 )
@@ -104,8 +104,11 @@ class GeneralSettingsView(View):
         self.video_height = QLineEdit("100")
         form_layout.addRow("Video Height:", self.video_height)
 
-        self.codec = QLineEdit("h264")
-        self.codec.setPlaceholderText("Codec (e.g. h264, hevc, vp9)")
+        self.codec = QComboBox()
+        self.codec.setEditable(False)
+        self.codec.addItems(["h264", "hevc", "vp9", "av1", "mpeg4"])
+        self.codec.setCurrentText("h264")
+        self.codec.setToolTip("Codec (e.g. h264, hevc, vp9)")
         form_layout.addRow("Video Codec:", self.codec)
 
         self.bitrate = QLineEdit("")
@@ -141,7 +144,7 @@ class GeneralSettingsView(View):
         if video_width < 1 or video_height < 1 or fps < 1:
             return False
 
-        codec = self.codec.text().strip()
+        codec = self.codec.currentText().strip()
         if not codec:
             return False
 
@@ -181,7 +184,7 @@ class GeneralSettingsView(View):
         settings.video_width = int(self.video_width.text())
         settings.video_height = int(self.video_height.text())
         settings.fps = int(self.visualizer_fps.text())
-        settings.codec = self.codec.text().strip()
+        settings.codec = self.codec.currentText().strip()
 
         bitrate_text = self.bitrate.text().strip()
         settings.bitrate = int(bitrate_text) if bitrate_text else None

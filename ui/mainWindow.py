@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 from PySide6.QtCore import (
-    Qt, QRunnable, QThreadPool, QObject, Signal
+    Qt, QRunnable, QThreadPool, QObject, Signal, QTimer
 )
 
 from PySide6.QtWidgets import (
@@ -94,8 +94,15 @@ class MainWindow(QMainWindow):
         self.rendering = False
         self._show_output_for_last_render = True
         self._active_preview = False
+        self._preview_dialog = None
+        self._pending_preview_refresh = False
+        self._preview_update_timer = QTimer(self)
+        self._preview_update_timer.setSingleShot(True)
+        self._preview_update_timer.setInterval(400)
+        self._preview_update_timer.timeout.connect(self._trigger_live_preview_update)
 
         self._load_last_settings_if_present()
+        self._connect_live_preview_updates()
 
     '''
     General settings in (1,0)
@@ -329,7 +336,7 @@ class MainWindow(QMainWindow):
         self.render_status_label.hide()
         self._active_preview = False
 
-    def _start_render(self, preview_seconds=None, output_path=None, force_show_output=None):
+    def _start_render(self, preview_seconds=None, output_path=None, force_show_output=None, show_validation_errors=True):
         if self.rendering:
             return
         
@@ -348,9 +355,10 @@ class MainWindow(QMainWindow):
         if not self.validate_render_settings():
             self._reset_render_controls()
 
-            message = QMessageBox(QMessageBox.Icon.Critical, "Settings Error",
-                                  "One of your settings are invalid. The render cannot run. Please double check the values inputed.")
-            message.exec()
+            if show_validation_errors:
+                message = QMessageBox(QMessageBox.Icon.Critical, "Settings Error",
+                                      "One of your settings are invalid. The render cannot run. Please double check the values inputed.")
+                message.exec()
             return
 
         general_settings = self.generalSettingsView.read_view_values()
@@ -397,9 +405,20 @@ class MainWindow(QMainWindow):
     
     def render_finished(self, video_data: VideoData):
         if self._show_output_for_last_render:
-            player = RenderDialog(video_data)
-            player.exec()
+            if self._active_preview:
+                if self._preview_dialog is not None and self._preview_dialog.isVisible():
+                    self._preview_dialog.close()
+                self._preview_dialog = RenderDialog(video_data)
+                self._preview_dialog.setWindowModality(Qt.WindowModality.NonModal)
+                self._preview_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+                self._preview_dialog.finished.connect(lambda _: setattr(self, "_preview_dialog", None))
+                self._preview_dialog.show()
+            else:
+                player = RenderDialog(video_data)
+                player.exec()
         self._reset_render_controls()
+        if self._pending_preview_refresh:
+            self._trigger_live_preview_update()
     
     def render_failed(self, msg):
         message = QMessageBox(QMessageBox.Icon.Critical, "Error rendering",
@@ -409,6 +428,37 @@ class MainWindow(QMainWindow):
 
     def render_status_update(self, msg):
         self.render_status_label.setText(msg)
+
+    def _connect_live_preview_updates(self):
+        for field in self.findChildren(QLineEdit):
+            field.textChanged.connect(self._schedule_live_preview_update)
+        for combo in self.findChildren(QComboBox):
+            combo.currentTextChanged.connect(self._schedule_live_preview_update)
+        for checkbox in self.findChildren(QCheckBox):
+            checkbox.stateChanged.connect(self._schedule_live_preview_update)
+
+    def _schedule_live_preview_update(self):
+        if not self._active_preview and (self._preview_dialog is None or not self._preview_dialog.isVisible()):
+            return
+        self._pending_preview_refresh = True
+        self._preview_update_timer.start()
+
+    def _trigger_live_preview_update(self):
+        if not self._active_preview and (self._preview_dialog is None or not self._preview_dialog.isVisible()):
+            self._pending_preview_refresh = False
+            return
+        if self.rendering:
+            return
+        if not self.validate_render_settings():
+            self._pending_preview_refresh = False
+            return
+        self._pending_preview_refresh = False
+        self._start_render(
+            preview_seconds=5,
+            output_path=self._preview_output_path(),
+            force_show_output=True,
+            show_validation_errors=False,
+        )
 
     def _default_settings_path(self) -> Path:
         return Path(__file__).resolve().parent.parent / "last_settings.json"
@@ -514,7 +564,7 @@ class MainWindow(QMainWindow):
             if "video_height" in general:
                 self.generalSettingsView.video_height.setText(str(general["video_height"]))
             if "codec" in general and general["codec"]:
-                self.generalSettingsView.codec.setText(general["codec"])
+                self.generalSettingsView.codec.setCurrentText(general["codec"])
             if "bitrate" in general and general["bitrate"] is not None:
                 self.generalSettingsView.bitrate.setText(str(general["bitrate"]))
             else:
