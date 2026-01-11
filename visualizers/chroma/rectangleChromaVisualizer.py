@@ -108,7 +108,7 @@ class RectangleVisualizer(Visualizer):
         img = Image.new("RGB", (self.video_data.video_width * self.super_sampling, self.video_data.video_height * self.super_sampling), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        for i in range(self.number_of_boxes - 1):
+        for i in range(self.number_of_boxes):
             offset = int(self.box_height * self.audio_data.chromagrams[frame_index][i]) // 2
             self.rectangles[i][1] = self.y - offset
             self.rectangles[i][3] = self.y + offset

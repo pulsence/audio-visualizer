@@ -106,7 +106,8 @@ class RectangleVisualizer(Visualizer):
             self.rectangles[i][1] = self.rectangles[i+1][1]
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
         volume = self.audio_data.average_volumes[frame_index]
-        self.rectangles[self.center_index][1] = self.y - int(self.box_height * (volume / self.audio_data.max_volume))
+        denom = self.audio_data.max_volume if self.audio_data.max_volume > 0 else 1.0
+        self.rectangles[self.center_index][1] = self.y - int(self.box_height * (volume / denom))
 
         for rect in self.rectangles:
             draw.rounded_rectangle(rect, self.corner_radius,
@@ -130,7 +131,8 @@ class RectangleVisualizer(Visualizer):
         for i in range(self.number_of_boxes - 1):
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
         volume = self.audio_data.average_volumes[frame_index]
-        self.rectangles[0][1] = self.y - int(self.box_height * (volume / self.audio_data.max_volume))
+        denom = self.audio_data.max_volume if self.audio_data.max_volume > 0 else 1.0
+        self.rectangles[0][1] = self.y - int(self.box_height * (volume / denom))
 
         for rect in self.rectangles:
             draw.rounded_rectangle(rect, self.corner_radius,
@@ -156,7 +158,8 @@ class RectangleVisualizer(Visualizer):
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
             self.rectangles[self.number_of_boxes - i - 1][3] = self.rectangles[self.number_of_boxes - i - 2][3]
         volume = self.audio_data.average_volumes[frame_index]
-        offset = int(self.box_height * (volume / self.audio_data.max_volume)) // 2
+        denom = self.audio_data.max_volume if self.audio_data.max_volume > 0 else 1.0
+        offset = int(self.box_height * (volume / denom)) // 2
         self.rectangles[0][1] = self.y - offset
         self.rectangles[0][3] = self.y + offset
 
@@ -185,7 +188,8 @@ class RectangleVisualizer(Visualizer):
             self.rectangles[self.number_of_boxes - i - 1][1] = self.rectangles[self.number_of_boxes - i - 2][1]
             self.rectangles[self.number_of_boxes - i - 1][3] = self.rectangles[self.number_of_boxes - i - 2][3]
         volume = self.audio_data.average_volumes[frame_index]
-        offset = int(self.box_height * (volume / self.audio_data.max_volume)) // 2
+        denom = self.audio_data.max_volume if self.audio_data.max_volume > 0 else 1.0
+        offset = int(self.box_height * (volume / denom)) // 2
         self.rectangles[self.center_index][1] = self.y - offset
         self.rectangles[self.center_index][3] = self.y + offset
 

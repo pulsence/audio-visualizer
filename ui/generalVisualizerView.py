@@ -127,6 +127,17 @@ class GeneralVisualizerView(View):
 
         self.layout.addLayout(form_layout, 1, 0)
 
+    @staticmethod
+    def _parse_color(text: str):
+        parts = [part.strip() for part in text.split(",")]
+        if len(parts) != 3:
+            raise ValueError("Color must be three components.")
+        values = tuple(int(part) for part in parts)
+        for value in values:
+            if value < 0 or value > 255:
+                raise ValueError("Color components must be 0-255.")
+        return values
+
     '''
     Verifies that the input values in the view are valide.
     '''
@@ -135,8 +146,8 @@ class GeneralVisualizerView(View):
             x = int(self.visualizer_x.text())
             y = int(self.visualizer_y.text())
 
-            bg_color = tuple(map(int, self.visualizer_bg_color_field.text().split(',')))
-            border_color = tuple(map(int, self.visualizer_border_color_field.text().split(',')))
+            bg_color = self._parse_color(self.visualizer_bg_color_field.text())
+            border_color = self._parse_color(self.visualizer_border_color_field.text())
             border_width = int(self.visualizer_border_width.text())
 
             spacing = int(self.visualizer_spacing.text())
@@ -157,8 +168,8 @@ class GeneralVisualizerView(View):
         settings.x = int(self.visualizer_x.text())
         settings.y = int(self.visualizer_y.text())
 
-        settings.bg_color = tuple(map(int, self.visualizer_bg_color_field.text().split(',')))
-        settings.border_color = tuple(map(int, self.visualizer_border_color_field.text().split(',')))
+        settings.bg_color = self._parse_color(self.visualizer_bg_color_field.text())
+        settings.border_color = self._parse_color(self.visualizer_border_color_field.text())
         settings.border_width = int(self.visualizer_border_width.text())
 
         settings.spacing = int(self.visualizer_spacing.text())

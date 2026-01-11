@@ -184,13 +184,14 @@ class MainWindow(QMainWindow):
         if not self.generalVisualizerView.validate_view():
             return False
         
-        if VisualizerOptions.VOLUME_RECTANGLE and not self.rectangleVolumeVisualizerView.validate_view():
+        selected = VisualizerOptions(self.generalVisualizerView.visualizer.currentText())
+        if selected == VisualizerOptions.VOLUME_RECTANGLE and not self.rectangleVolumeVisualizerView.validate_view():
             return False
-        elif VisualizerOptions.VOLUME_CIRCLE and not self.circleVolumeVisualizerView.validate_view():
+        elif selected == VisualizerOptions.VOLUME_CIRCLE and not self.circleVolumeVisualizerView.validate_view():
             return False
-        elif VisualizerOptions.CHROMA_RECTANGLE and not self.rectangleChromaVisualizerView.validate_view():
+        elif selected == VisualizerOptions.CHROMA_RECTANGLE and not self.rectangleChromaVisualizerView.validate_view():
             return False
-        elif VisualizerOptions.CHROMA_CIRCLE and not self.circleChromaVisualizerView.validate_view():
+        elif selected == VisualizerOptions.CHROMA_CIRCLE and not self.circleChromaVisualizerView.validate_view():
             return False
         
         return True
@@ -320,6 +321,7 @@ class RenderWorker(QRunnable):
         self.signals.status.emit("Opening audio file...")
         if not self.audio_data.load_audio_data(self.preview):
             self.signals.error.emit("Error opening audio file.")
+            return
             
         self.signals.status.emit("Analyzing audio data...")
         self.audio_data.chunk_audio(self.video_data.fps)
@@ -328,6 +330,7 @@ class RenderWorker(QRunnable):
         self.signals.status.emit("Preparing video environment...")
         if not self.video_data.prepare_container():
             self.signals.error.emit("Error opening video file.")
+            return
         self.visualizer.prepare_shapes()
 
         ''' If preview is True, limit to 30 seconds of video. '''
@@ -350,4 +353,5 @@ class RenderWorker(QRunnable):
         self.signals.status.emit("Render finished, saving file...")
         if not self.video_data.finalize():
             self.signals.error.emit("Error closing video file.")
+            return
         self.signals.finished.emit(self.video_data)

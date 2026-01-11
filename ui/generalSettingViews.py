@@ -33,10 +33,6 @@ from PySide6.QtWidgets import (
     QSizePolicy
 )
 
-from PySide6.QtGui import (
-    QIntValidator
-)
-
 import os
 
 from .generalView import View
@@ -92,15 +88,12 @@ class GeneralSettingsView(View):
         form_layout.addRow("Output Video File Path:", video_file_row)
 
         self.visualizer_fps = QLineEdit("12")
-        self.visualizer_fps.setValidator(QIntValidator(1, 60))
         form_layout.addRow("Visual Frames Per Second (FPS):", self.visualizer_fps)
 
         self.video_width = QLineEdit("720")
-        self.video_width.setValidator(QIntValidator(1, 1920))
         form_layout.addRow("Video Width:", self.video_width)
 
         self.video_height = QLineEdit("100")
-        self.video_height.setValidator(QIntValidator(1, 1080))
         form_layout.addRow("Video Height:", self.video_height)
 
         self.layout.addLayout(form_layout, 1, 0)
@@ -116,6 +109,9 @@ class GeneralSettingsView(View):
         except:
             return False
         
+        if video_width < 1 or video_height < 1 or fps < 1:
+            return False
+
         if not os.path.isfile(self.audio_file_path.text()):
             return False
         

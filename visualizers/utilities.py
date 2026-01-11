@@ -24,6 +24,7 @@ SOFTWARE.
 
 Utility functions
 '''
+import math
 import librosa
 import numpy as np
 
@@ -91,7 +92,11 @@ class AudioData:
     Each frame contains a number of samples equal to the sample rate divided by fps.
     '''
     def chunk_audio(self, fps):
-        frames = (self.audio_samples.size // self.sample_rate) * fps
+        if self.audio_samples is None or self.sample_rate in (0, None):
+            self.audio_frames = []
+            return
+        samples_per_frame = self.sample_rate / fps
+        frames = max(1, math.ceil(self.audio_samples.size / samples_per_frame))
         self.audio_frames = np.array_split(self.audio_samples, frames)
 
     def analyze_audio(self):

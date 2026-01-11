@@ -84,7 +84,7 @@ class RectangleVolumeVisualizerView(View):
     Reads the widget values to prepare the visualizer.
     '''
     def read_view_values(self) -> RectangleVolumeVisualizerSettings:
-        settings = RectangleVolumeVisualizerView()
+        settings = RectangleVolumeVisualizerSettings()
 
         settings.box_height = int(self.box_height.text())
         settings.box_width = int(self.box_width.text())

@@ -114,7 +114,8 @@ class CircleVisualizer(Visualizer):
             self.circles[self.number_of_cirles - i - 1][5] = r
 
         volume = self.audio_data.average_volumes[frame_index]
-        r = int(self.max_radius * (volume / self.audio_data.max_volume))
+        denom = self.audio_data.max_volume if self.audio_data.max_volume > 0 else 1.0
+        r = int(self.max_radius * (volume / denom))
         self.circles[self.center_index][0] = self.circles[self.center_index][4] - r
         self.circles[self.center_index][1] = self.y - r * 2
         self.circles[self.center_index][2] = self.circles[self.center_index][4] + r
@@ -148,7 +149,8 @@ class CircleVisualizer(Visualizer):
             self.circles[self.number_of_cirles - i - 1][5] = r
 
         volume = self.audio_data.average_volumes[frame_index]
-        r = int(self.max_radius * (volume / self.audio_data.max_volume))
+        denom = self.audio_data.max_volume if self.audio_data.max_volume > 0 else 1.0
+        r = int(self.max_radius * (volume / denom))
         self.circles[0][0] = self.circles[0][4] - r
         self.circles[0][1] = self.y - r * 2
         self.circles[0][2] = self.circles[0][4] + r
@@ -183,7 +185,8 @@ class CircleVisualizer(Visualizer):
             self.circles[self.number_of_cirles - i - 1][5] = r
 
         volume = self.audio_data.average_volumes[frame_index]
-        r = int(self.max_radius * (volume / self.audio_data.max_volume))
+        denom = self.audio_data.max_volume if self.audio_data.max_volume > 0 else 1.0
+        r = int(self.max_radius * (volume / denom))
         self.circles[0][0] = self.circles[0][4] - r
         self.circles[0][1] = self.y - r
         self.circles[0][2] = self.circles[0][4] + r
@@ -224,7 +227,8 @@ class CircleVisualizer(Visualizer):
             self.circles[self.number_of_cirles - i - 1][5] = r
         
         volume = self.audio_data.average_volumes[frame_index]
-        r = int(self.max_radius * (volume / self.audio_data.max_volume))
+        denom = self.audio_data.max_volume if self.audio_data.max_volume > 0 else 1.0
+        r = int(self.max_radius * (volume / denom))
         self.circles[self.center_index][0] = self.circles[self.center_index][4] - r
         self.circles[self.center_index][1] = self.y - r
         self.circles[self.center_index][2] = self.circles[self.center_index][4] + r
