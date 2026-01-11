@@ -1,7 +1,5 @@
 # Todo:
 ## GUI
-- Live Preview does not allow user to interact with main UI element while video screen is open.
-- Video codex should be a drop down of options
 ## Visualizers
 - Set video dimensions by number of objects in visualizer
 - Future visualizers:
