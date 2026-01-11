@@ -28,7 +28,7 @@ from PySide6.QtCore import (
 from PySide6.QtWidgets import (
     QMainWindow, QMessageBox, QGridLayout, QFormLayout, QHBoxLayout,
     QWidget, QComboBox, QLabel, QLineEdit, QPushButton, QCheckBox,
-    QFileDialog, QColorDialog,
+    QFileDialog, QColorDialog, QProgressBar,
     QSizePolicy
 )
 
@@ -58,13 +58,19 @@ from audio_visualizer.ui import (
 
 import av
 import json
+import logging
 import time
 from fractions import Fraction
 from pathlib import Path
 
+from audio_visualizer.app_logging import setup_logging
+from audio_visualizer.app_paths import get_config_dir, get_data_dir
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._log_path = setup_logging()
+        self._logger = logging.getLogger(__name__)
         self.setWindowTitle("Audio Visualizer")
         self.setGeometry(100, 100, 800, 500)
 
@@ -95,6 +101,7 @@ class MainWindow(QMainWindow):
         self._show_output_for_last_render = True
         self._active_preview = False
         self._preview_dialog = None
+        self._active_render_worker = None
         self._pending_preview_refresh = False
         self._preview_update_timer = QTimer(self)
         self._preview_update_timer.setSingleShot(True)
@@ -193,6 +200,16 @@ class MainWindow(QMainWindow):
         self.load_project_button.clicked.connect(self.load_project)
         render_section_layout.addWidget(self.load_project_button, 2, 1)
 
+        self.render_progress_bar = QProgressBar()
+        self.render_progress_bar.setRange(0, 0)
+        self.render_progress_bar.hide()
+        render_section_layout.addWidget(self.render_progress_bar, 3, 0, 1, 2)
+
+        self.cancel_button = QPushButton("Cancel Render")
+        self.cancel_button.clicked.connect(self.cancel_render)
+        self.cancel_button.hide()
+        render_section_layout.addWidget(self.cancel_button, 4, 0, 1, 2)
+
         layout.addLayout(render_section_layout, r, c)
 
         self.render_status_label = QLabel()
@@ -221,28 +238,28 @@ class MainWindow(QMainWindow):
 
     def validate_render_settings(self):
         if not self.generalSettingsView.validate_view():
-            return False
+            return False, self.generalSettingsView.last_error or "General settings are invalid."
         if not self.generalVisualizerView.validate_view():
-            return False
+            return False, "General visualization settings are invalid."
         
         selected = VisualizerOptions(self.generalVisualizerView.visualizer.currentText())
         if selected == VisualizerOptions.VOLUME_RECTANGLE and not self.rectangleVolumeVisualizerView.validate_view():
-            return False
+            return False, "Rectangle volume settings are invalid."
         elif selected == VisualizerOptions.VOLUME_CIRCLE and not self.circleVolumeVisualizerView.validate_view():
-            return False
+            return False, "Circle volume settings are invalid."
         elif selected == VisualizerOptions.CHROMA_RECTANGLE and not self.rectangleChromaVisualizerView.validate_view():
-            return False
+            return False, "Rectangle chroma settings are invalid."
         elif selected == VisualizerOptions.CHROMA_CIRCLE and not self.circleChromaVisualizerView.validate_view():
-            return False
+            return False, "Circle chroma settings are invalid."
         elif selected == VisualizerOptions.WAVEFORM and not self.waveformVisualizerView.validate_view():
-            return False
+            return False, "Waveform settings are invalid."
         elif selected == VisualizerOptions.COMBINED_RECTANGLE and not self.combinedVisualizerView.validate_view():
-            return False
+            return False, "Combined settings are invalid."
         
-        return True
+        return True, ""
 
     def _preview_output_path(self) -> str:
-        return str(Path(__file__).resolve().parents[3] / "preview_output.mp4")
+        return str(get_data_dir() / "preview_output.mp4")
 
     def _create_visualizer(self, audio_data: AudioData, video_data: VideoData, visualizer_settings: GeneralVisualizerSettings):
         if visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_RECTANGLE:
@@ -329,11 +346,13 @@ class MainWindow(QMainWindow):
 
     def _reset_render_controls(self):
         self.rendering = False
-        self.render_button.setEnabled(True)
-        self.preview_button.setEnabled(True)
+        self._set_controls_enabled(True)
         self.render_button.setText("Render Video")
         self.preview_button.setText("Live Preview (5s)")
         self.render_status_label.hide()
+        self.render_progress_bar.hide()
+        self.cancel_button.hide()
+        self.cancel_button.setEnabled(True)
         self._active_preview = False
 
     def _start_render(self, preview_seconds=None, output_path=None, force_show_output=None, show_validation_errors=True):
@@ -342,8 +361,7 @@ class MainWindow(QMainWindow):
         
         self.rendering = True
         self._active_preview = preview_seconds is not None and output_path == self._preview_output_path()
-        self.render_button.setEnabled(False)
-        self.preview_button.setEnabled(False)
+        self._set_controls_enabled(False)
         if self._active_preview:
             self.preview_button.setText("Previewing...")
         else:
@@ -351,13 +369,19 @@ class MainWindow(QMainWindow):
 
         self.render_status_label.show()
         self.render_status_label.setText("Setting up render...")
+        self.render_progress_bar.setRange(0, 0)
+        self.render_progress_bar.setValue(0)
+        self.render_progress_bar.show()
+        self.cancel_button.show()
+        self.cancel_button.setEnabled(True)
 
-        if not self.validate_render_settings():
+        valid, validation_error = self.validate_render_settings()
+        if not valid:
             self._reset_render_controls()
 
             if show_validation_errors:
                 message = QMessageBox(QMessageBox.Icon.Critical, "Settings Error",
-                                      "One of your settings are invalid. The render cannot run. Please double check the values inputed.")
+                                      f"The render cannot run. {validation_error}")
                 message.exec()
             return
 
@@ -391,9 +415,12 @@ class MainWindow(QMainWindow):
             preview_seconds,
             include_audio=general_settings.include_audio,
         )
+        self._active_render_worker = render_worker
         render_worker.signals.finished.connect(self.render_finished)
         render_worker.signals.error.connect(self.render_failed)
         render_worker.signals.status.connect(self.render_status_update)
+        render_worker.signals.progress.connect(self.render_progress_update)
+        render_worker.signals.canceled.connect(self.render_canceled)
         self.render_thread_pool.start(render_worker)
 
     def render_video(self):
@@ -416,18 +443,60 @@ class MainWindow(QMainWindow):
             else:
                 player = RenderDialog(video_data)
                 player.exec()
+        self._active_render_worker = None
         self._reset_render_controls()
         if self._pending_preview_refresh:
             self._trigger_live_preview_update()
     
     def render_failed(self, msg):
         message = QMessageBox(QMessageBox.Icon.Critical, "Error rendering",
-                              f"There was an error rendering the video. The error message is: {msg}")
+                              f"There was an error rendering the video. The error message is: {msg}\n\nLog file: {self._log_path}")
         message.exec()
+        self._active_render_worker = None
         self._reset_render_controls()
 
     def render_status_update(self, msg):
         self.render_status_label.setText(msg)
+
+    def render_progress_update(self, current_frame: int, total_frames: int, elapsed_seconds: float):
+        if total_frames > 0:
+            if self.render_progress_bar.maximum() != total_frames:
+                self.render_progress_bar.setRange(0, total_frames)
+            self.render_progress_bar.setValue(current_frame)
+        if current_frame > 0 and total_frames > 0:
+            eta_seconds = (elapsed_seconds / current_frame) * (total_frames - current_frame)
+            eta = self._format_duration(eta_seconds)
+            self.render_status_label.setText(
+                f"Rendering video ({current_frame}/{total_frames} frames, ETA {eta})"
+            )
+
+    def render_canceled(self):
+        self._active_render_worker = None
+        self.render_status_label.setText("Render canceled.")
+        self._reset_render_controls()
+
+    def cancel_render(self):
+        if self._active_render_worker is None:
+            return
+        self.render_status_label.setText("Canceling render...")
+        self.cancel_button.setEnabled(False)
+        self._active_render_worker.cancel()
+
+    def _set_controls_enabled(self, enabled: bool):
+        for widget in self.findChildren((QLineEdit, QComboBox, QCheckBox, QPushButton)):
+            if widget is self.cancel_button:
+                continue
+            widget.setEnabled(enabled)
+        if enabled:
+            self.cancel_button.setEnabled(False)
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        if seconds < 0:
+            seconds = 0
+        total = int(seconds)
+        minutes, secs = divmod(total, 60)
+        return f"{minutes:02d}:{secs:02d}"
 
     def _connect_live_preview_updates(self):
         for field in self.findChildren(QLineEdit):
@@ -449,7 +518,8 @@ class MainWindow(QMainWindow):
             return
         if self.rendering:
             return
-        if not self.validate_render_settings():
+        valid, _ = self.validate_render_settings()
+        if not valid:
             self._pending_preview_refresh = False
             return
         self._pending_preview_refresh = False
@@ -461,7 +531,7 @@ class MainWindow(QMainWindow):
         )
 
     def _default_settings_path(self) -> Path:
-        return Path(__file__).resolve().parents[3] / "last_settings.json"
+        return get_config_dir() / "last_settings.json"
 
     def _collect_settings(self) -> dict:
         general = self.generalSettingsView.read_view_values()
@@ -729,66 +799,127 @@ class RenderWorker(QRunnable):
         self.audio_input_stream = None
         self.audio_output_stream = None
         self.audio_resampler = None
+        self._cancel_requested = False
+        self._logger = logging.getLogger(__name__)
 
         class RenderSignals(QObject):
             finished = Signal(VideoData)
             error = Signal(str)
             status = Signal(str)
+            progress = Signal(int, int, float)
+            canceled = Signal()
         self.signals = RenderSignals()
 
+    def cancel(self):
+        self._cancel_requested = True
+
+    def _check_canceled(self) -> bool:
+        if not self._cancel_requested:
+            return False
+        self._cleanup_on_cancel()
+        self.signals.canceled.emit()
+        return True
+
+    def _cleanup_on_cancel(self):
+        try:
+            if getattr(self.video_data, "container", None) is not None:
+                self.video_data.container.close()
+        except Exception:
+            pass
+        try:
+            if self.audio_input_container is not None:
+                self.audio_input_container.close()
+        except Exception:
+            pass
+
     def run(self):
-        self.signals.status.emit("Opening audio file...")
-        if not self.audio_data.load_audio_data(self.preview_seconds):
-            self.signals.error.emit("Error opening audio file.")
-            return
-            
-        self.signals.status.emit("Analyzing audio data...")
-        self.audio_data.chunk_audio(self.video_data.fps)
-        self.audio_data.analyze_audio()
-
-        self.signals.status.emit("Preparing video environment...")
-        if not self.video_data.prepare_container():
-            self.signals.error.emit("Error opening video file.")
-            return
-
-        if self.include_audio:
-            self.signals.status.emit("Preparing audio mux...")
-            if not self._prepare_audio_mux():
-                self.signals.error.emit("Error preparing audio stream.")
+        try:
+            self.signals.status.emit("Opening audio file...")
+            if not self.audio_data.load_audio_data(self.preview_seconds):
+                error = self.audio_data.last_error or "Unknown error."
+                self._logger.error("Audio load failed: %s", error)
+                self.signals.error.emit(f"Error opening audio file: {error}")
                 return
-        self.visualizer.prepare_shapes()
-
-        frames = len(self.audio_data.audio_frames)
-        if self.preview_seconds is not None:
-            frames = min(len(self.audio_data.audio_frames), self.video_data.fps * self.preview_seconds)
-
-        self.signals.status.emit("Rendering video (0 %) ...")
-        for i in range(frames):
-            img = self.visualizer.generate_frame(i)
-            frame = av.VideoFrame.from_ndarray(img, format="rgb24")
-            for packet in self.video_data.stream.encode(frame):
-                self.video_data.container.mux(packet)
-            
-            if int(time.time()) % 5 == 0:
-                prog = int((i / frames) * 100)
-                self.signals.status.emit(f"Rendering video ({prog} %) ...")
+            if self._check_canceled():
+                return
                 
-        
-        self.signals.status.emit("Render finished, saving file...")
-        if self.include_audio:
-            self.signals.status.emit("Muxing audio...")
-            if not self._mux_audio():
-                self.signals.error.emit("Error muxing audio.")
+            self.signals.status.emit("Analyzing audio data...")
+            self.audio_data.chunk_audio(self.video_data.fps)
+            self.audio_data.analyze_audio()
+            if self._check_canceled():
                 return
-        if not self.video_data.finalize():
-            self.signals.error.emit("Error closing video file.")
-            return
-        self.signals.finished.emit(self.video_data)
+
+            self.signals.status.emit("Preparing video environment...")
+            if not self.video_data.prepare_container():
+                error = self.video_data.last_error or "Unknown error."
+                self._logger.error("Video container setup failed: %s", error)
+                self.signals.error.emit(f"Error opening video file: {error}")
+                return
+            if self._check_canceled():
+                return
+
+            if self.include_audio:
+                self.signals.status.emit("Preparing audio mux...")
+                if not self._prepare_audio_mux():
+                    error = self._last_error or "Unknown error."
+                    self._logger.error("Audio mux prep failed: %s", error)
+                    self.signals.error.emit(f"Error preparing audio stream: {error}")
+                    return
+                if self._check_canceled():
+                    return
+            self.visualizer.prepare_shapes()
+
+            frames = len(self.audio_data.audio_frames)
+            if self.preview_seconds is not None:
+                frames = min(len(self.audio_data.audio_frames), self.video_data.fps * self.preview_seconds)
+
+            self.signals.status.emit("Rendering video (0 %) ...")
+            start_time = time.time()
+            last_progress_emit = 0.0
+            for i in range(frames):
+                if self._check_canceled():
+                    return
+                img = self.visualizer.generate_frame(i)
+                frame = av.VideoFrame.from_ndarray(img, format="rgb24")
+                for packet in self.video_data.stream.encode(frame):
+                    self.video_data.container.mux(packet)
+                
+                now = time.time()
+                if now - last_progress_emit >= 0.5 or i == frames - 1:
+                    elapsed = now - start_time
+                    self.signals.progress.emit(i + 1, frames, elapsed)
+                    last_progress_emit = now
+                    
+            
+            self.signals.status.emit("Render finished, saving file...")
+            if self._check_canceled():
+                return
+            if self.include_audio:
+                self.signals.status.emit("Muxing audio...")
+                mux_result = self._mux_audio()
+                if mux_result is None:
+                    return
+                if mux_result is False:
+                    error = self._last_error or "Unknown error."
+                    self._logger.error("Audio mux failed: %s", error)
+                    self.signals.error.emit(f"Error muxing audio: {error}")
+                    return
+            if not self.video_data.finalize():
+                error = self.video_data.last_error or "Unknown error."
+                self._logger.error("Finalize failed: %s", error)
+                self.signals.error.emit(f"Error closing video file: {error}")
+                return
+            self.signals.finished.emit(self.video_data)
+        except Exception as exc:
+            self._logger.exception("Unhandled error during render.")
+            self.signals.error.emit(f"Unexpected error: {exc}")
 
     def _prepare_audio_mux(self) -> bool:
+        self._last_error = ""
         try:
             self.audio_input_container = av.open(self.audio_data.file_path)
-        except Exception:
+        except Exception as exc:
+            self._last_error = str(exc)
             return False
 
         for stream in self.audio_input_container.streams:
@@ -796,11 +927,13 @@ class RenderWorker(QRunnable):
                 self.audio_input_stream = stream
                 break
         if self.audio_input_stream is None:
+            self._last_error = "No audio stream found in input."
             return False
 
         try:
             self.audio_output_stream = self.video_data.container.add_stream("aac", rate=self.audio_input_stream.rate)
-        except Exception:
+        except Exception as exc:
+            self._last_error = str(exc)
             return False
 
         self.audio_output_stream.layout = self.audio_input_stream.layout.name
@@ -815,39 +948,59 @@ class RenderWorker(QRunnable):
             layout=self.audio_output_stream.layout.name,
             rate=self.audio_output_stream.rate,
         )
+        self._last_error = ""
         return True
 
     def _mux_audio(self) -> bool:
         if self.audio_input_container is None or self.audio_input_stream is None:
+            self._last_error = "Missing audio input."
             return False
         if self.audio_output_stream is None or self.audio_resampler is None:
+            self._last_error = "Missing audio output."
             return False
 
         samples_written = 0
         stop_at_time = False
-        for packet in self.audio_input_container.demux(self.audio_input_stream):
-            if stop_at_time:
-                break
-            for frame in packet.decode():
-                if self.preview_seconds is not None and frame.pts is not None:
-                    time_seconds = float(frame.pts * frame.time_base)
-                    if time_seconds >= self.preview_seconds:
-                        stop_at_time = True
-                        break
-                for resampled in self.audio_resampler.resample(frame):
-                    if resampled.pts is None:
-                        resampled.pts = samples_written
-                        resampled.time_base = self.audio_output_stream.time_base
-                    samples_written += resampled.samples
-                    for out_packet in self.audio_output_stream.encode(resampled):
-                        self.video_data.container.mux(out_packet)
+        try:
+            for packet in self.audio_input_container.demux(self.audio_input_stream):
+                if self._cancel_requested:
+                    self._cleanup_on_cancel()
+                    self.signals.canceled.emit()
+                    return None
+                if stop_at_time:
+                    break
+                for frame in packet.decode():
+                    if self._cancel_requested:
+                        self._cleanup_on_cancel()
+                        self.signals.canceled.emit()
+                        return None
+                    if self.preview_seconds is not None and frame.pts is not None:
+                        time_seconds = float(frame.pts * frame.time_base)
+                        if time_seconds >= self.preview_seconds:
+                            stop_at_time = True
+                            break
+                    for resampled in self.audio_resampler.resample(frame):
+                        if self._cancel_requested:
+                            self._cleanup_on_cancel()
+                            self.signals.canceled.emit()
+                            return None
+                        if resampled.pts is None:
+                            resampled.pts = samples_written
+                            resampled.time_base = self.audio_output_stream.time_base
+                        samples_written += resampled.samples
+                        for out_packet in self.audio_output_stream.encode(resampled):
+                            self.video_data.container.mux(out_packet)
+        except Exception as exc:
+            self._last_error = str(exc)
+            return False
 
         for out_packet in self.audio_output_stream.encode():
             self.video_data.container.mux(out_packet)
 
         try:
             self.audio_input_container.close()
-        except Exception:
+        except Exception as exc:
+            self._last_error = str(exc)
             return False
         return True
 

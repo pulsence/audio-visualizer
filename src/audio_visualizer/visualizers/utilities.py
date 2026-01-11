@@ -63,6 +63,7 @@ class VisualizerOptions(Enum):
 class AudioData:
     def __init__(self, file_path):
         self.file_path = file_path
+        self.last_error = ""
 
         self.audio_samples = None
         self.sample_rate = None
@@ -85,8 +86,10 @@ class AudioData:
                 self.audio_samples, self.sample_rate = librosa.load(self.file_path)
             else:
                 self.audio_samples, self.sample_rate = librosa.load(self.file_path, duration=duration_seconds)
-        except:
+        except Exception as exc:
+            self.last_error = str(exc)
             return False
+        self.last_error = ""
         return True
     
     '''
@@ -125,11 +128,13 @@ class VideoData:
         self.bitrate = bitrate
         self.crf = crf
         self.hardware_accel = hardware_accel
+        self.last_error = ""
 
     def prepare_container(self):
         try:
             self.container = av.open(self.file_path, mode='w')
-        except:
+        except Exception as exc:
+            self.last_error = str(exc)
             return False
         codec = self.codec
         if self.hardware_accel:
@@ -140,10 +145,12 @@ class VideoData:
             codec = hw_map.get(self.codec, self.codec)
         try:
             self.stream = self.container.add_stream(codec, rate=self.fps)
-        except:
+        except Exception as exc:
+            self.last_error = str(exc)
             try:
                 self.stream = self.container.add_stream(self.codec, rate=self.fps)
-            except:
+            except Exception as exc_inner:
+                self.last_error = str(exc_inner)
                 return False
         self.stream.width = self.video_width
         self.stream.height = self.video_height
@@ -152,6 +159,7 @@ class VideoData:
             self.stream.bit_rate = self.bitrate
         if self.crf is not None:
             self.stream.options = {"crf": str(self.crf)}
+        self.last_error = ""
         return True
 
     def finalize(self):
@@ -159,7 +167,9 @@ class VideoData:
             self.container.mux(packet)
         try:
             self.container.close()
-        except:
+        except Exception as exc:
+            self.last_error = str(exc)
             return False
+        self.last_error = ""
         return True
 
