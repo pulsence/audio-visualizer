@@ -52,6 +52,7 @@ from audio_visualizer.ui import (
     RectangleChromaVisualizerView, RectangleChromaVisualizerSettings,
     CircleChromeVisualizerView, CircleChromeVisualizerSettings,
     LineChromaVisualizerView, LineChromaVisualizerSettings,
+    LineChromaBandsVisualizerView, LineChromaBandsVisualizerSettings,
     WaveformVisualizerView, WaveformVisualizerSettings,
     CombinedVisualizerView, CombinedVisualizerSettings,
     GeneralSettingsView, GeneralSettings,
@@ -171,6 +172,11 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.lineChromaVisualizerView.get_view_in_widget(), 1, 0)
         self.visualizer_views.append(self.lineChromaVisualizerView)
 
+        self.lineChromaBandsVisualizerView = LineChromaBandsVisualizerView()
+        self.lineChromaBandsVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.lineChromaBandsVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.lineChromaBandsVisualizerView)
+
         self.waveformVisualizerView = WaveformVisualizerView()
         self.waveformVisualizerView.get_view_in_widget().hide()
         main_layout.addWidget(self.waveformVisualizerView.get_view_in_widget(), 1, 0)
@@ -248,6 +254,8 @@ class MainWindow(QMainWindow):
             widget = self.circleChromaVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.CHROMA_LINE:
             self.lineChromaVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.CHROMA_LINES:
+            self.lineChromaBandsVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.WAVEFORM:
             self.waveformVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.COMBINED_RECTANGLE:
@@ -272,6 +280,8 @@ class MainWindow(QMainWindow):
             return False, "Circle chroma settings are invalid."
         elif selected == VisualizerOptions.CHROMA_LINE and not self.lineChromaVisualizerView.validate_view():
             return False, "Smooth line chroma settings are invalid."
+        elif selected == VisualizerOptions.CHROMA_LINES and not self.lineChromaBandsVisualizerView.validate_view():
+            return False, "Chroma lines settings are invalid."
         elif selected == VisualizerOptions.WAVEFORM and not self.waveformVisualizerView.validate_view():
             return False, "Waveform settings are invalid."
         elif selected == VisualizerOptions.COMBINED_RECTANGLE and not self.combinedVisualizerView.validate_view():
@@ -362,6 +372,21 @@ class MainWindow(QMainWindow):
                 color_mode=settings.color_mode,
                 gradient_start=settings.gradient_start,
                 gradient_end=settings.gradient_end,
+                band_colors=settings.band_colors,
+            )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_LINES:
+            settings = self.lineChromaBandsVisualizerView.read_view_values()
+
+            return chroma.LineBandsVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                super_sampling=visualizer_settings.super_sampling,
+                max_height=settings.max_height, line_thickness=settings.line_thickness,
+                spacing=visualizer_settings.spacing,
+                color=visualizer_settings.bg_color,
+                alignment=visualizer_settings.alignment,
+                flow=settings.flow,
+                smoothness=settings.smoothness,
+                band_spacing=settings.band_spacing,
                 band_colors=settings.band_colors,
             )
         elif visualizer_settings.visualizer_type == VisualizerOptions.WAVEFORM:
@@ -654,6 +679,16 @@ class MainWindow(QMainWindow):
                 "gradient_end": list(settings.gradient_end) if settings.gradient_end else None,
                 "band_colors": [list(color) for color in settings.band_colors],
             }
+        elif selected == VisualizerOptions.CHROMA_LINES:
+            settings = self.lineChromaBandsVisualizerView.read_view_values()
+            specific = {
+                "max_height": settings.max_height,
+                "line_thickness": settings.line_thickness,
+                "smoothness": settings.smoothness,
+                "flow": settings.flow.value,
+                "band_colors": [list(color) for color in settings.band_colors],
+                "band_spacing": settings.band_spacing,
+            }
         elif selected == VisualizerOptions.WAVEFORM:
             settings = self.waveformVisualizerView.read_view_values()
             specific = {
@@ -840,6 +875,21 @@ class MainWindow(QMainWindow):
             if "band_colors" in specific and specific["band_colors"]:
                 colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
                 self.lineChromaVisualizerView.band_colors.setText("|".join(colors))
+        elif current_type == VisualizerOptions.CHROMA_LINES.value:
+            if "max_height" in specific:
+                self.lineChromaBandsVisualizerView.max_height.setText(str(specific["max_height"]))
+            if "line_thickness" in specific:
+                self.lineChromaBandsVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
+            if "smoothness" in specific:
+                self.lineChromaBandsVisualizerView.smoothness.setText(str(specific["smoothness"]))
+            if "flow" in specific:
+                self.lineChromaBandsVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
+            if "band_colors" in specific and specific["band_colors"]:
+                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
+                for field, color in zip(self.lineChromaBandsVisualizerView.band_color_fields, colors):
+                    field.setText(color)
+            if "band_spacing" in specific:
+                self.lineChromaBandsVisualizerView.band_spacing.setText(str(specific["band_spacing"]))
 
         if "preview" in ui_state:
             self.preview_checkbox.setChecked(bool(ui_state["preview"]))

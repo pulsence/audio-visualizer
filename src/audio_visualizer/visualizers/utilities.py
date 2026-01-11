@@ -55,6 +55,7 @@ class VisualizerOptions(Enum):
     CHROMA_RECTANGLE = "Chroma: Rectangle"
     CHROMA_CIRCLE = "Chroma: Circle"
     CHROMA_LINE = "Chroma: Smooth Line"
+    CHROMA_LINES = "Chroma: Lines"
     WAVEFORM = "Waveform"
     COMBINED_RECTANGLE = "Combined: Volume + Chroma"
 
