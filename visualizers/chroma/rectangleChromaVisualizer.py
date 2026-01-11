@@ -46,7 +46,8 @@ class RectangleVisualizer(Visualizer):
                  spacing = 5, super_sampling = 1,
                  corner_radius = 0, corners = (True, True, True, True),
                  bg_color = (255, 255, 255), border_color = (255, 255, 255),
-                 alignment = VisualizerAlignment.BOTTOM):
+                 alignment = VisualizerAlignment.BOTTOM,
+                 color_mode = "Single", gradient_start = None, gradient_end = None, band_colors = None):
         super().__init__(audio_data, video_data, x, y, super_sampling)
 
         self.border_width = border_width * self.super_sampling
@@ -60,6 +61,10 @@ class RectangleVisualizer(Visualizer):
 
         self.bg_color = bg_color
         self.border_color = border_color
+        self.color_mode = color_mode
+        self.gradient_start = gradient_start
+        self.gradient_end = gradient_end
+        self.band_colors = band_colors or []
 
         self.number_of_boxes = 12
 
@@ -78,6 +83,14 @@ class RectangleVisualizer(Visualizer):
             y1 = self.y - self.border_width
             y2 = self.y 
             self.rectangles.append([x1, y1, x2, y2])
+
+        self.colors = []
+        if self.color_mode == "Per-band" and len(self.band_colors) == self.number_of_boxes:
+            self.colors = self.band_colors
+        elif self.color_mode == "Gradient" and self.gradient_start and self.gradient_end:
+            self.colors = self._build_gradient(self.gradient_start, self.gradient_end, self.number_of_boxes)
+        else:
+            self.colors = [self.bg_color for _ in range(self.number_of_boxes)]
     
     '''
     Draws rectangles aligned to the bottom and flowing from the left side to the other.
@@ -89,9 +102,9 @@ class RectangleVisualizer(Visualizer):
         for i in range(self.number_of_boxes):
             self.rectangles[i][1] = self.y - int(self.box_height * self.audio_data.chromagrams[frame_index][i])
 
-        for rect in self.rectangles:
+        for i, rect in enumerate(self.rectangles):
             draw.rounded_rectangle(rect, self.corner_radius,
-                                   fill=self.bg_color, outline=self.border_color,
+                                   fill=self.colors[i], outline=self.border_color,
                                    width=self.border_width,
                                    corners=(True, True, True, True))
         
@@ -113,9 +126,9 @@ class RectangleVisualizer(Visualizer):
             self.rectangles[i][1] = self.y - offset
             self.rectangles[i][3] = self.y + offset
 
-        for rect in self.rectangles:
+        for i, rect in enumerate(self.rectangles):
             draw.rounded_rectangle(rect, self.corner_radius,
-                                   fill=self.bg_color, outline=self.border_color,
+                                   fill=self.colors[i], outline=self.border_color,
                                    width=self.border_width,
                                    corners=(True, True, True, True))
             
@@ -124,3 +137,16 @@ class RectangleVisualizer(Visualizer):
                         resample=Image.Resampling.LANCZOS)
         
         return np.asarray(img)
+
+    @staticmethod
+    def _build_gradient(start, end, steps):
+        if steps <= 1:
+            return [start]
+        colors = []
+        for i in range(steps):
+            t = i / (steps - 1)
+            r = int(start[0] + (end[0] - start[0]) * t)
+            g = int(start[1] + (end[1] - start[1]) * t)
+            b = int(start[2] + (end[2] - start[2]) * t)
+            colors.append((r, g, b))
+        return colors

@@ -97,6 +97,10 @@ class GeneralVisualizerView(View):
         ))
         self.visualizer_bg_color_button.clicked.connect(self.visualizer_bg_color.open)
         bg_row.addWidget(self.visualizer_bg_color_button)
+        self.visualizer_bg_color_swatch = QLabel()
+        self.visualizer_bg_color_swatch.setFixedSize(18, 18)
+        self.visualizer_bg_color_swatch.setStyleSheet("border: 1px solid #888; background: rgb(227, 209, 169);")
+        bg_row.addWidget(self.visualizer_bg_color_swatch)
         form_layout.addRow("Background Color:", bg_row)
 
         self.visualizer_border_width = QLineEdit("1")
@@ -114,6 +118,10 @@ class GeneralVisualizerView(View):
         ))
         self.visualizer_border_color_button.clicked.connect(self.visualizer_border_color.open)
         border_row.addWidget(self.visualizer_border_color_button)
+        self.visualizer_border_color_swatch = QLabel()
+        self.visualizer_border_color_swatch.setFixedSize(18, 18)
+        self.visualizer_border_color_swatch.setStyleSheet("border: 1px solid #888; background: rgb(227, 209, 169);")
+        border_row.addWidget(self.visualizer_border_color_swatch)
         form_layout.addRow("Border Color:", border_row)
 
         self.visualizer_spacing = QLineEdit("5")
@@ -126,6 +134,12 @@ class GeneralVisualizerView(View):
         form_layout.addRow("Supersampling:", self.super_sampling)
 
         self.layout.addLayout(form_layout, 1, 0)
+        self.visualizer_bg_color_field.textChanged.connect(
+            lambda _: self._update_swatch(self.visualizer_bg_color_field, self.visualizer_bg_color_swatch)
+        )
+        self.visualizer_border_color_field.textChanged.connect(
+            lambda _: self._update_swatch(self.visualizer_border_color_field, self.visualizer_border_color_swatch)
+        )
 
     @staticmethod
     def _parse_color(text: str):
@@ -137,6 +151,15 @@ class GeneralVisualizerView(View):
             if value < 0 or value > 255:
                 raise ValueError("Color components must be 0-255.")
         return values
+
+    @staticmethod
+    def _update_swatch(field: QLineEdit, swatch: QLabel):
+        try:
+            color = GeneralVisualizerView._parse_color(field.text())
+        except Exception:
+            swatch.setStyleSheet("border: 1px solid #888; background: transparent;")
+            return
+        swatch.setStyleSheet(f"border: 1px solid #888; background: rgb({color[0]}, {color[1]}, {color[2]});")
 
     '''
     Verifies that the input values in the view are valide.

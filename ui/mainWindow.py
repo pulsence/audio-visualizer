@@ -270,16 +270,26 @@ class MainWindow(QMainWindow):
                 corner_radius=settings.corner_radius,
                 border_width=visualizer_settings.border_width, spacing=visualizer_settings.spacing,
                 bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment
+                alignment=visualizer_settings.alignment,
+                color_mode=settings.color_mode,
+                gradient_start=settings.gradient_start,
+                gradient_end=settings.gradient_end,
+                band_colors=settings.band_colors,
             )
         elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_CIRCLE:
+            settings = self.circleChromaVisualizerView.read_view_values()
+
             return chroma.CircleVisualizer(
                 audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
                 super_sampling=visualizer_settings.super_sampling,
                 border_width=visualizer_settings.border_width, 
                 spacing=visualizer_settings.spacing,
                 bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment
+                alignment=visualizer_settings.alignment,
+                color_mode=settings.color_mode,
+                gradient_start=settings.gradient_start,
+                gradient_end=settings.gradient_end,
+                band_colors=settings.band_colors,
             )
         elif visualizer_settings.visualizer_type == VisualizerOptions.WAVEFORM:
             settings = self.waveformVisualizerView.read_view_values()
@@ -421,6 +431,18 @@ class MainWindow(QMainWindow):
             specific = {
                 "box_height": settings.box_height,
                 "corner_radius": settings.corner_radius,
+                "color_mode": settings.color_mode,
+                "gradient_start": list(settings.gradient_start),
+                "gradient_end": list(settings.gradient_end),
+                "band_colors": [list(color) for color in settings.band_colors],
+            }
+        elif selected == VisualizerOptions.CHROMA_CIRCLE:
+            settings = self.circleChromaVisualizerView.read_view_values()
+            specific = {
+                "color_mode": settings.color_mode,
+                "gradient_start": list(settings.gradient_start),
+                "gradient_end": list(settings.gradient_end),
+                "band_colors": [list(color) for color in settings.band_colors],
             }
         elif selected == VisualizerOptions.WAVEFORM:
             settings = self.waveformVisualizerView.read_view_values()
@@ -539,6 +561,17 @@ class MainWindow(QMainWindow):
                 self.rectangleChromaVisualizerView.box_height.setText(str(specific["box_height"]))
             if "corner_radius" in specific:
                 self.rectangleChromaVisualizerView.corner_radius.setText(str(specific["corner_radius"]))
+            if "color_mode" in specific:
+                self.rectangleChromaVisualizerView.color_mode.setCurrentText(specific["color_mode"])
+            if "gradient_start" in specific:
+                gs = specific["gradient_start"]
+                self.rectangleChromaVisualizerView.gradient_start.setText(f"{gs[0]}, {gs[1]}, {gs[2]}")
+            if "gradient_end" in specific:
+                ge = specific["gradient_end"]
+                self.rectangleChromaVisualizerView.gradient_end.setText(f"{ge[0]}, {ge[1]}, {ge[2]}")
+            if "band_colors" in specific:
+                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
+                self.rectangleChromaVisualizerView.band_colors.setText("|".join(colors))
         elif current_type == VisualizerOptions.WAVEFORM.value:
             if "line_thickness" in specific:
                 self.waveformVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
@@ -555,6 +588,18 @@ class MainWindow(QMainWindow):
                 self.combinedVisualizerView.chroma_box_height.setText(str(specific["chroma_box_height"]))
             if "chroma_corner_radius" in specific:
                 self.combinedVisualizerView.chroma_corner_radius.setText(str(specific["chroma_corner_radius"]))
+        elif current_type == VisualizerOptions.CHROMA_CIRCLE.value:
+            if "color_mode" in specific:
+                self.circleChromaVisualizerView.color_mode.setCurrentText(specific["color_mode"])
+            if "gradient_start" in specific:
+                gs = specific["gradient_start"]
+                self.circleChromaVisualizerView.gradient_start.setText(f"{gs[0]}, {gs[1]}, {gs[2]}")
+            if "gradient_end" in specific:
+                ge = specific["gradient_end"]
+                self.circleChromaVisualizerView.gradient_end.setText(f"{ge[0]}, {ge[1]}, {ge[2]}")
+            if "band_colors" in specific:
+                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
+                self.circleChromaVisualizerView.band_colors.setText("|".join(colors))
 
         if "preview" in ui_state:
             self.preview_checkbox.setChecked(bool(ui_state["preview"]))
