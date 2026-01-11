@@ -20,6 +20,11 @@ dependencies = [
   "PySide6_Essentials==6.9.1",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest==8.3.2",
+]
+
 [project.scripts]
 audio-visualizer = "audio_visualizer.visualizer:main"
 
@@ -28,3 +33,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

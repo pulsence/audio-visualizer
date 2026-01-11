@@ -1,4 +1,6 @@
 # Todo:
+## General
+- Make the UI and render/visualizers clearly decumpled so that the render path can be used as a separate library
 ## GUI
 ## Visualizers
 - Set video dimensions by number of objects in visualizer
