@@ -55,8 +55,9 @@ from ui import (
 )
 
 import av
-
+import json
 import time
+from pathlib import Path
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -88,6 +89,8 @@ class MainWindow(QMainWindow):
         self.render_thread_pool = QThreadPool()
         self.render_thread_pool.setMaxThreadCount(1)
         self.rendering = False
+
+        self._load_last_settings_if_present()
 
     '''
     General settings in (1,0)
@@ -155,6 +158,14 @@ class MainWindow(QMainWindow):
         self.render_button = QPushButton("Render Video")
         self.render_button.clicked.connect(self.render_video)
         render_section_layout.addWidget(self.render_button, 1, 0, 1, 2)
+
+        self.save_project_button = QPushButton("Save Project")
+        self.save_project_button.clicked.connect(self.save_project)
+        render_section_layout.addWidget(self.save_project_button, 2, 0)
+
+        self.load_project_button = QPushButton("Load Project")
+        self.load_project_button.clicked.connect(self.load_project)
+        render_section_layout.addWidget(self.load_project_button, 2, 1)
 
         layout.addLayout(render_section_layout, r, c)
 
@@ -302,6 +313,177 @@ class MainWindow(QMainWindow):
 
     def render_status_update(self, msg):
         self.render_status_label.setText(msg)
+
+    def _default_settings_path(self) -> Path:
+        return Path(__file__).resolve().parent.parent / "last_settings.json"
+
+    def _collect_settings(self) -> dict:
+        general = self.generalSettingsView.read_view_values()
+        visualizer = self.generalVisualizerView.read_view_values()
+
+        specific = {}
+        selected = visualizer.visualizer_type
+        if selected == VisualizerOptions.VOLUME_RECTANGLE:
+            settings = self.rectangleVolumeVisualizerView.read_view_values()
+            specific = {
+                "box_height": settings.box_height,
+                "box_width": settings.box_width,
+                "corner_radius": settings.corner_radius,
+                "flow": settings.flow.value,
+            }
+        elif selected == VisualizerOptions.VOLUME_CIRCLE:
+            settings = self.circleVolumeVisualizerView.read_view_values()
+            specific = {
+                "radius": settings.radius,
+                "flow": settings.flow.value,
+            }
+        elif selected == VisualizerOptions.CHROMA_RECTANGLE:
+            settings = self.rectangleChromaVisualizerView.read_view_values()
+            specific = {
+                "box_height": settings.box_height,
+                "corner_radius": settings.corner_radius,
+            }
+
+        return {
+            "general": {
+                "audio_file_path": general.audio_file_path,
+                "video_file_path": general.video_file_path,
+                "fps": general.fps,
+                "video_width": general.video_width,
+                "video_height": general.video_height,
+            },
+            "visualizer": {
+                "visualizer_type": visualizer.visualizer_type.value,
+                "alignment": visualizer.alignment.value,
+                "x": visualizer.x,
+                "y": visualizer.y,
+                "bg_color": list(visualizer.bg_color),
+                "border_color": list(visualizer.border_color),
+                "border_width": visualizer.border_width,
+                "spacing": visualizer.spacing,
+                "super_sampling": visualizer.super_sampling,
+            },
+            "specific": specific,
+            "ui": {
+                "preview": self.preview_checkbox.isChecked(),
+                "show_output": self.show_output_checkbox.isChecked(),
+            }
+        }
+
+    def _apply_settings(self, data: dict) -> None:
+        general = data.get("general", {})
+        visualizer = data.get("visualizer", {})
+        specific = data.get("specific", {})
+        ui_state = data.get("ui", {})
+
+        if general:
+            self.generalSettingsView.audio_file_path.setText(general.get("audio_file_path", self.generalSettingsView.audio_file_path.text()))
+            self.generalSettingsView.video_file_path.setText(general.get("video_file_path", self.generalSettingsView.video_file_path.text()))
+            if "fps" in general:
+                self.generalSettingsView.visualizer_fps.setText(str(general["fps"]))
+            if "video_width" in general:
+                self.generalSettingsView.video_width.setText(str(general["video_width"]))
+            if "video_height" in general:
+                self.generalSettingsView.video_height.setText(str(general["video_height"]))
+
+        if visualizer:
+            if "visualizer_type" in visualizer:
+                self.generalVisualizerView.visualizer.setCurrentText(visualizer["visualizer_type"])
+                self.visualizer_selection_changed(visualizer["visualizer_type"])
+            if "alignment" in visualizer:
+                self.generalVisualizerView.visualizer_alignment.setCurrentText(visualizer["alignment"])
+            if "x" in visualizer:
+                self.generalVisualizerView.visualizer_x.setText(str(visualizer["x"]))
+            if "y" in visualizer:
+                self.generalVisualizerView.visualizer_y.setText(str(visualizer["y"]))
+            if "bg_color" in visualizer:
+                bg = visualizer["bg_color"]
+                self.generalVisualizerView.visualizer_bg_color_field.setText(f"{bg[0]}, {bg[1]}, {bg[2]}")
+            if "border_color" in visualizer:
+                bc = visualizer["border_color"]
+                self.generalVisualizerView.visualizer_border_color_field.setText(f"{bc[0]}, {bc[1]}, {bc[2]}")
+            if "border_width" in visualizer:
+                self.generalVisualizerView.visualizer_border_width.setText(str(visualizer["border_width"]))
+            if "spacing" in visualizer:
+                self.generalVisualizerView.visualizer_spacing.setText(str(visualizer["spacing"]))
+            if "super_sampling" in visualizer:
+                self.generalVisualizerView.super_sampling.setText(str(visualizer["super_sampling"]))
+
+        current_type = self.generalVisualizerView.visualizer.currentText()
+        if current_type == VisualizerOptions.VOLUME_RECTANGLE.value:
+            if "box_height" in specific:
+                self.rectangleVolumeVisualizerView.box_height.setText(str(specific["box_height"]))
+            if "box_width" in specific:
+                self.rectangleVolumeVisualizerView.box_width.setText(str(specific["box_width"]))
+            if "corner_radius" in specific:
+                self.rectangleVolumeVisualizerView.corner_radius.setText(str(specific["corner_radius"]))
+            if "flow" in specific:
+                self.rectangleVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
+        elif current_type == VisualizerOptions.VOLUME_CIRCLE.value:
+            if "radius" in specific:
+                self.circleVolumeVisualizerView.radius.setText(str(specific["radius"]))
+            if "flow" in specific:
+                self.circleVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
+        elif current_type == VisualizerOptions.CHROMA_RECTANGLE.value:
+            if "box_height" in specific:
+                self.rectangleChromaVisualizerView.box_height.setText(str(specific["box_height"]))
+            if "corner_radius" in specific:
+                self.rectangleChromaVisualizerView.corner_radius.setText(str(specific["corner_radius"]))
+
+        if "preview" in ui_state:
+            self.preview_checkbox.setChecked(bool(ui_state["preview"]))
+        if "show_output" in ui_state:
+            self.show_output_checkbox.setChecked(bool(ui_state["show_output"]))
+
+    def _save_settings_to_path(self, path: Path) -> bool:
+        try:
+            data = self._collect_settings()
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            return False
+        return True
+
+    def _load_settings_from_path(self, path: Path) -> bool:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        self._apply_settings(data)
+        return True
+
+    def _load_last_settings_if_present(self):
+        path = self._default_settings_path()
+        if path.exists():
+            self._load_settings_from_path(path)
+
+    def save_project(self):
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle("Save Project")
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        dialog.setNameFilter("JSON Files (*.json)")
+        dialog.setDefaultSuffix("json")
+        if dialog.exec():
+            path = Path(dialog.selectedFiles()[0])
+            if not self._save_settings_to_path(path):
+                message = QMessageBox(QMessageBox.Icon.Critical, "Save Failed",
+                                      "Unable to save the project file.")
+                message.exec()
+
+    def load_project(self):
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle("Load Project")
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setNameFilter("JSON Files (*.json)")
+        if dialog.exec():
+            path = Path(dialog.selectedFiles()[0])
+            if not self._load_settings_from_path(path):
+                message = QMessageBox(QMessageBox.Icon.Critical, "Load Failed",
+                                      "Unable to load the project file.")
+                message.exec()
+
+    def closeEvent(self, event):
+        self._save_settings_to_path(self._default_settings_path())
+        super().closeEvent(event)
 
 class RenderWorker(QRunnable):
     def __init__(self, audio_data: AudioData, video_data: VideoData, visualizer: Visualizer, preview: bool):
