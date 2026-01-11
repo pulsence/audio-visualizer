@@ -20,16 +20,3 @@ Current the program can create videos from an audio file visualizing the audio v
 Install Python 3 (3.13 was version this was developed in).
 Run 'pip install -r requirements.txt' to install required packages.
 Run 'python visualizer.py' in root director for the project.
-
-# Todo:
-## General:
-- Implement multithreading (multiprocessing module)
-- Provide option to include audio in generated video
-## GUI
-- Preview shapes
-## Visualizers
-- Set video by number of objects in visualizer
-- Future visualizers:
-    - Wave forms
-    - Cloud/Particles
-    - Ring

@@ -115,21 +115,43 @@ class AudioData:
             self.chromagrams.append(chromagram)
 
 class VideoData:
-    def __init__(self, video_width, video_height, fps, file_path="output.mp4"):
+    def __init__(self, video_width, video_height, fps, file_path="output.mp4",
+                 codec="h264", bitrate=None, crf=None, hardware_accel=False):
         self.video_width = video_width
         self.video_height = video_height
         self.fps = fps
         self.file_path = file_path
+        self.codec = codec
+        self.bitrate = bitrate
+        self.crf = crf
+        self.hardware_accel = hardware_accel
 
     def prepare_container(self):
         try:
             self.container = av.open(self.file_path, mode='w')
         except:
             return False
-        self.stream = self.container.add_stream('h264', rate=self.fps)
+        codec = self.codec
+        if self.hardware_accel:
+            hw_map = {
+                "h264": "h264_nvenc",
+                "hevc": "hevc_nvenc",
+            }
+            codec = hw_map.get(self.codec, self.codec)
+        try:
+            self.stream = self.container.add_stream(codec, rate=self.fps)
+        except:
+            try:
+                self.stream = self.container.add_stream(self.codec, rate=self.fps)
+            except:
+                return False
         self.stream.width = self.video_width
         self.stream.height = self.video_height
         self.stream.pix_fmt = 'yuv420p'
+        if self.bitrate is not None:
+            self.stream.bit_rate = self.bitrate
+        if self.crf is not None:
+            self.stream.options = {"crf": str(self.crf)}
         return True
 
     def finalize(self):

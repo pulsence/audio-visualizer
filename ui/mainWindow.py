@@ -347,8 +347,16 @@ class MainWindow(QMainWindow):
 
         audio_data = AudioData(general_settings.audio_file_path)
         file_path = output_path or general_settings.video_file_path
-        video_data = VideoData(general_settings.video_width, general_settings.video_height,
-                               general_settings.fps, file_path=file_path)
+        video_data = VideoData(
+            general_settings.video_width,
+            general_settings.video_height,
+            general_settings.fps,
+            file_path=file_path,
+            codec=general_settings.codec,
+            bitrate=general_settings.bitrate,
+            crf=general_settings.crf,
+            hardware_accel=general_settings.hardware_accel,
+        )
 
         visualizer = self._create_visualizer(audio_data, video_data, visualizer_settings)
 
@@ -437,6 +445,10 @@ class MainWindow(QMainWindow):
                 "fps": general.fps,
                 "video_width": general.video_width,
                 "video_height": general.video_height,
+                "codec": general.codec,
+                "bitrate": general.bitrate,
+                "crf": general.crf,
+                "hardware_accel": general.hardware_accel,
             },
             "visualizer": {
                 "visualizer_type": visualizer.visualizer_type.value,
@@ -471,6 +483,18 @@ class MainWindow(QMainWindow):
                 self.generalSettingsView.video_width.setText(str(general["video_width"]))
             if "video_height" in general:
                 self.generalSettingsView.video_height.setText(str(general["video_height"]))
+            if "codec" in general and general["codec"]:
+                self.generalSettingsView.codec.setText(general["codec"])
+            if "bitrate" in general and general["bitrate"] is not None:
+                self.generalSettingsView.bitrate.setText(str(general["bitrate"]))
+            else:
+                self.generalSettingsView.bitrate.setText("")
+            if "crf" in general and general["crf"] is not None:
+                self.generalSettingsView.crf.setText(str(general["crf"]))
+            else:
+                self.generalSettingsView.crf.setText("")
+            if "hardware_accel" in general:
+                self.generalSettingsView.hardware_accel.setChecked(bool(general["hardware_accel"]))
 
         if visualizer:
             if "visualizer_type" in visualizer:
