@@ -48,8 +48,10 @@ from audio_visualizer.ui import (
     Fonts, RenderDialog,
     RectangleVolumeVisualizerView, RectangleVolumeVisualizerSettings,
     CircleVolumeVisualizerView, CircleVolumeVisualizerSettings,
+    LineVolumeVisualizerView, LineVolumeVisualizerSettings,
     RectangleChromaVisualizerView, RectangleChromaVisualizerSettings,
     CircleChromeVisualizerView, CircleChromeVisualizerSettings,
+    LineChromaVisualizerView, LineChromaVisualizerSettings,
     WaveformVisualizerView, WaveformVisualizerSettings,
     CombinedVisualizerView, CombinedVisualizerSettings,
     GeneralSettingsView, GeneralSettings,
@@ -60,6 +62,7 @@ import av
 import json
 import logging
 import time
+import shiboken6
 from fractions import Fraction
 from pathlib import Path
 
@@ -148,6 +151,11 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.circleVolumeVisualizerView.get_view_in_widget(), 1, 0)
         self.visualizer_views.append(self.circleVolumeVisualizerView)
 
+        self.lineVolumeVisualizerView = LineVolumeVisualizerView()
+        self.lineVolumeVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.lineVolumeVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.lineVolumeVisualizerView)
+
         self.rectangleChromaVisualizerView = RectangleChromaVisualizerView()
         self.rectangleChromaVisualizerView.get_view_in_widget().hide()
         main_layout.addWidget(self.rectangleChromaVisualizerView.get_view_in_widget(), 1, 0)
@@ -157,6 +165,11 @@ class MainWindow(QMainWindow):
         self.circleChromaVisualizerView.get_view_in_widget().hide()
         main_layout.addWidget(self.circleChromaVisualizerView.get_view_in_widget(), 1, 0)
         self.visualizer_views.append(self.circleChromaVisualizerView)
+
+        self.lineChromaVisualizerView = LineChromaVisualizerView()
+        self.lineChromaVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.lineChromaVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.lineChromaVisualizerView)
 
         self.waveformVisualizerView = WaveformVisualizerView()
         self.waveformVisualizerView.get_view_in_widget().hide()
@@ -227,10 +240,14 @@ class MainWindow(QMainWindow):
             self.circleVolumeVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.VOLUME_RECTANGLE:
             self.rectangleVolumeVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.VOLUME_LINE:
+            self.lineVolumeVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.CHROMA_RECTANGLE:
             self.rectangleChromaVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.CHROMA_CIRCLE:
             widget = self.circleChromaVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.CHROMA_LINE:
+            self.lineChromaVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.WAVEFORM:
             self.waveformVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.COMBINED_RECTANGLE:
@@ -247,10 +264,14 @@ class MainWindow(QMainWindow):
             return False, "Rectangle volume settings are invalid."
         elif selected == VisualizerOptions.VOLUME_CIRCLE and not self.circleVolumeVisualizerView.validate_view():
             return False, "Circle volume settings are invalid."
+        elif selected == VisualizerOptions.VOLUME_LINE and not self.lineVolumeVisualizerView.validate_view():
+            return False, "Smooth line volume settings are invalid."
         elif selected == VisualizerOptions.CHROMA_RECTANGLE and not self.rectangleChromaVisualizerView.validate_view():
             return False, "Rectangle chroma settings are invalid."
         elif selected == VisualizerOptions.CHROMA_CIRCLE and not self.circleChromaVisualizerView.validate_view():
             return False, "Circle chroma settings are invalid."
+        elif selected == VisualizerOptions.CHROMA_LINE and not self.lineChromaVisualizerView.validate_view():
+            return False, "Smooth line chroma settings are invalid."
         elif selected == VisualizerOptions.WAVEFORM and not self.waveformVisualizerView.validate_view():
             return False, "Waveform settings are invalid."
         elif selected == VisualizerOptions.COMBINED_RECTANGLE and not self.combinedVisualizerView.validate_view():
@@ -285,6 +306,17 @@ class MainWindow(QMainWindow):
                 bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
                 alignment=visualizer_settings.alignment, flow=settings.flow
             )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_LINE:
+            settings = self.lineVolumeVisualizerView.read_view_values()
+
+            return volume.LineVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                super_sampling=visualizer_settings.super_sampling,
+                max_height=settings.max_height, line_thickness=settings.line_thickness,
+                spacing=visualizer_settings.spacing,
+                color=visualizer_settings.bg_color,
+                alignment=visualizer_settings.alignment, flow=settings.flow
+            )
         elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_RECTANGLE:
             settings = self.rectangleChromaVisualizerView.read_view_values()
 
@@ -315,6 +347,16 @@ class MainWindow(QMainWindow):
                 gradient_start=settings.gradient_start,
                 gradient_end=settings.gradient_end,
                 band_colors=settings.band_colors,
+            )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_LINE:
+            settings = self.lineChromaVisualizerView.read_view_values()
+
+            return chroma.LineVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                super_sampling=visualizer_settings.super_sampling,
+                max_height=settings.max_height, line_thickness=settings.line_thickness,
+                color=visualizer_settings.bg_color,
+                alignment=visualizer_settings.alignment
             )
         elif visualizer_settings.visualizer_type == VisualizerOptions.WAVEFORM:
             settings = self.waveformVisualizerView.read_view_values()
@@ -433,12 +475,13 @@ class MainWindow(QMainWindow):
     def render_finished(self, video_data: VideoData):
         if self._show_output_for_last_render:
             if self._active_preview:
-                if self._preview_dialog is not None and self._preview_dialog.isVisible():
-                    self._preview_dialog.close()
+                dialog = self._get_preview_dialog()
+                if dialog is not None and dialog.isVisible():
+                    dialog.close()
                 self._preview_dialog = RenderDialog(video_data)
                 self._preview_dialog.setWindowModality(Qt.WindowModality.NonModal)
                 self._preview_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-                self._preview_dialog.finished.connect(lambda _: setattr(self, "_preview_dialog", None))
+                self._preview_dialog.destroyed.connect(lambda _: setattr(self, "_preview_dialog", None))
                 self._preview_dialog.show()
             else:
                 player = RenderDialog(video_data)
@@ -483,10 +526,11 @@ class MainWindow(QMainWindow):
         self._active_render_worker.cancel()
 
     def _set_controls_enabled(self, enabled: bool):
-        for widget in self.findChildren((QLineEdit, QComboBox, QCheckBox, QPushButton)):
-            if widget is self.cancel_button:
-                continue
-            widget.setEnabled(enabled)
+        for widget_type in (QLineEdit, QComboBox, QCheckBox, QPushButton):
+            for widget in self.findChildren(widget_type):
+                if widget is self.cancel_button:
+                    continue
+                widget.setEnabled(enabled)
         if enabled:
             self.cancel_button.setEnabled(False)
 
@@ -507,13 +551,15 @@ class MainWindow(QMainWindow):
             checkbox.stateChanged.connect(self._schedule_live_preview_update)
 
     def _schedule_live_preview_update(self):
-        if not self._active_preview and (self._preview_dialog is None or not self._preview_dialog.isVisible()):
+        dialog = self._get_preview_dialog()
+        if not self._active_preview and (dialog is None or not dialog.isVisible()):
             return
         self._pending_preview_refresh = True
         self._preview_update_timer.start()
 
     def _trigger_live_preview_update(self):
-        if not self._active_preview and (self._preview_dialog is None or not self._preview_dialog.isVisible()):
+        dialog = self._get_preview_dialog()
+        if not self._active_preview and (dialog is None or not dialog.isVisible()):
             self._pending_preview_refresh = False
             return
         if self.rendering:
@@ -529,6 +575,14 @@ class MainWindow(QMainWindow):
             force_show_output=True,
             show_validation_errors=False,
         )
+
+    def _get_preview_dialog(self):
+        if self._preview_dialog is None:
+            return None
+        if not shiboken6.isValid(self._preview_dialog):
+            self._preview_dialog = None
+            return None
+        return self._preview_dialog
 
     def _default_settings_path(self) -> Path:
         return get_config_dir() / "last_settings.json"
@@ -553,6 +607,13 @@ class MainWindow(QMainWindow):
                 "radius": settings.radius,
                 "flow": settings.flow.value,
             }
+        elif selected == VisualizerOptions.VOLUME_LINE:
+            settings = self.lineVolumeVisualizerView.read_view_values()
+            specific = {
+                "max_height": settings.max_height,
+                "line_thickness": settings.line_thickness,
+                "flow": settings.flow.value,
+            }
         elif selected == VisualizerOptions.CHROMA_RECTANGLE:
             settings = self.rectangleChromaVisualizerView.read_view_values()
             specific = {
@@ -570,6 +631,12 @@ class MainWindow(QMainWindow):
                 "gradient_start": list(settings.gradient_start),
                 "gradient_end": list(settings.gradient_end),
                 "band_colors": [list(color) for color in settings.band_colors],
+            }
+        elif selected == VisualizerOptions.CHROMA_LINE:
+            settings = self.lineChromaVisualizerView.read_view_values()
+            specific = {
+                "max_height": settings.max_height,
+                "line_thickness": settings.line_thickness,
             }
         elif selected == VisualizerOptions.WAVEFORM:
             settings = self.waveformVisualizerView.read_view_values()
@@ -686,6 +753,13 @@ class MainWindow(QMainWindow):
                 self.circleVolumeVisualizerView.radius.setText(str(specific["radius"]))
             if "flow" in specific:
                 self.circleVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
+        elif current_type == VisualizerOptions.VOLUME_LINE.value:
+            if "max_height" in specific:
+                self.lineVolumeVisualizerView.max_height.setText(str(specific["max_height"]))
+            if "line_thickness" in specific:
+                self.lineVolumeVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
+            if "flow" in specific:
+                self.lineVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
         elif current_type == VisualizerOptions.CHROMA_RECTANGLE.value:
             if "box_height" in specific:
                 self.rectangleChromaVisualizerView.box_height.setText(str(specific["box_height"]))
@@ -730,6 +804,11 @@ class MainWindow(QMainWindow):
             if "band_colors" in specific:
                 colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
                 self.circleChromaVisualizerView.band_colors.setText("|".join(colors))
+        elif current_type == VisualizerOptions.CHROMA_LINE.value:
+            if "max_height" in specific:
+                self.lineChromaVisualizerView.max_height.setText(str(specific["max_height"]))
+            if "line_thickness" in specific:
+                self.lineChromaVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
 
         if "preview" in ui_state:
             self.preview_checkbox.setChecked(bool(ui_state["preview"]))

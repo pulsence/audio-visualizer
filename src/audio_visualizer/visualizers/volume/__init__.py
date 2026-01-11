@@ -24,3 +24,4 @@ SOFTWARE.
 
 from .rectangleVolumeVisualizer import RectangleVisualizer
 from .circleVolumeVisualizer import CircleVisualizer
+from .lineVolumeVisualizer import LineVisualizer

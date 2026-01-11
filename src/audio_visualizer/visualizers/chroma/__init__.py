@@ -24,3 +24,4 @@ SOFTWARE.
 
 from .rectangleChromaVisualizer import RectangleVisualizer
 from .circleChromaVisualizer import CircleVisualizer
+from .lineChromaVisualizer import LineVisualizer

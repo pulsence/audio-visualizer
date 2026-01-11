@@ -51,8 +51,10 @@ class VisualizerAlignment(Enum):
 class VisualizerOptions(Enum):
     VOLUME_RECTANGLE = "Volume: Rectangle"
     VOLUME_CIRCLE = "Volume: Circle"
+    VOLUME_LINE = "Volume: Smooth Line"
     CHROMA_RECTANGLE = "Chroma: Rectangle"
     CHROMA_CIRCLE = "Chroma: Circle"
+    CHROMA_LINE = "Chroma: Smooth Line"
     WAVEFORM = "Waveform"
     COMBINED_RECTANGLE = "Combined: Volume + Chroma"
 

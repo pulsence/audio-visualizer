@@ -4,3 +4,4 @@ __pycache__/*
 *.code-workspace
 *.json
 .vscode/
+.pytest_cache/
