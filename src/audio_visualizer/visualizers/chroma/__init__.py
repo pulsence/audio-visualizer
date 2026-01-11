@@ -26,3 +26,7 @@ from .rectangleChromaVisualizer import RectangleVisualizer
 from .circleChromaVisualizer import CircleVisualizer
 from .lineChromaVisualizer import LineVisualizer
 from .lineBandsChromaVisualizer import LineBandsVisualizer
+from .forceRectangleVisualizer import ForceRectangleVisualizer
+from .forceCircleVisualizer import ForceCircleVisualizer
+from .forceLineVisualizer import ForceLineVisualizer
+from .forceLinesVisualizer import ForceLinesVisualizer

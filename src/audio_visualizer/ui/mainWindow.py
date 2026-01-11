@@ -49,10 +49,15 @@ from audio_visualizer.ui import (
     RectangleVolumeVisualizerView, RectangleVolumeVisualizerSettings,
     CircleVolumeVisualizerView, CircleVolumeVisualizerSettings,
     LineVolumeVisualizerView, LineVolumeVisualizerSettings,
+    ForceLineVolumeVisualizerView, ForceLineVolumeVisualizerSettings,
     RectangleChromaVisualizerView, RectangleChromaVisualizerSettings,
     CircleChromeVisualizerView, CircleChromeVisualizerSettings,
     LineChromaVisualizerView, LineChromaVisualizerSettings,
     LineChromaBandsVisualizerView, LineChromaBandsVisualizerSettings,
+    ForceRectangleChromaVisualizerView, ForceRectangleChromaVisualizerSettings,
+    ForceCircleChromaVisualizerView, ForceCircleChromaVisualizerSettings,
+    ForceLineChromaVisualizerView, ForceLineChromaVisualizerSettings,
+    ForceLinesChromaVisualizerView, ForceLinesChromaVisualizerSettings,
     WaveformVisualizerView, WaveformVisualizerSettings,
     CombinedVisualizerView, CombinedVisualizerSettings,
     GeneralSettingsView, GeneralSettings,
@@ -157,6 +162,11 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.lineVolumeVisualizerView.get_view_in_widget(), 1, 0)
         self.visualizer_views.append(self.lineVolumeVisualizerView)
 
+        self.forceLineVolumeVisualizerView = ForceLineVolumeVisualizerView()
+        self.forceLineVolumeVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.forceLineVolumeVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.forceLineVolumeVisualizerView)
+
         self.rectangleChromaVisualizerView = RectangleChromaVisualizerView()
         self.rectangleChromaVisualizerView.get_view_in_widget().hide()
         main_layout.addWidget(self.rectangleChromaVisualizerView.get_view_in_widget(), 1, 0)
@@ -176,6 +186,26 @@ class MainWindow(QMainWindow):
         self.lineChromaBandsVisualizerView.get_view_in_widget().hide()
         main_layout.addWidget(self.lineChromaBandsVisualizerView.get_view_in_widget(), 1, 0)
         self.visualizer_views.append(self.lineChromaBandsVisualizerView)
+
+        self.forceRectangleChromaVisualizerView = ForceRectangleChromaVisualizerView()
+        self.forceRectangleChromaVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.forceRectangleChromaVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.forceRectangleChromaVisualizerView)
+
+        self.forceCircleChromaVisualizerView = ForceCircleChromaVisualizerView()
+        self.forceCircleChromaVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.forceCircleChromaVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.forceCircleChromaVisualizerView)
+
+        self.forceLineChromaVisualizerView = ForceLineChromaVisualizerView()
+        self.forceLineChromaVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.forceLineChromaVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.forceLineChromaVisualizerView)
+
+        self.forceLinesChromaVisualizerView = ForceLinesChromaVisualizerView()
+        self.forceLinesChromaVisualizerView.get_view_in_widget().hide()
+        main_layout.addWidget(self.forceLinesChromaVisualizerView.get_view_in_widget(), 1, 0)
+        self.visualizer_views.append(self.forceLinesChromaVisualizerView)
 
         self.waveformVisualizerView = WaveformVisualizerView()
         self.waveformVisualizerView.get_view_in_widget().hide()
@@ -248,6 +278,8 @@ class MainWindow(QMainWindow):
             self.rectangleVolumeVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.VOLUME_LINE:
             self.lineVolumeVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.VOLUME_FORCE_LINE:
+            self.forceLineVolumeVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.CHROMA_RECTANGLE:
             self.rectangleChromaVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.CHROMA_CIRCLE:
@@ -256,6 +288,14 @@ class MainWindow(QMainWindow):
             self.lineChromaVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.CHROMA_LINES:
             self.lineChromaBandsVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.CHROMA_FORCE_RECTANGLE:
+            self.forceRectangleChromaVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.CHROMA_FORCE_CIRCLE:
+            self.forceCircleChromaVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.CHROMA_FORCE_LINE:
+            self.forceLineChromaVisualizerView.get_view_in_widget().show()
+        elif visualizer == VisualizerOptions.CHROMA_FORCE_LINES:
+            self.forceLinesChromaVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.WAVEFORM:
             self.waveformVisualizerView.get_view_in_widget().show()
         elif visualizer == VisualizerOptions.COMBINED_RECTANGLE:
@@ -274,6 +314,8 @@ class MainWindow(QMainWindow):
             return False, "Circle volume settings are invalid."
         elif selected == VisualizerOptions.VOLUME_LINE and not self.lineVolumeVisualizerView.validate_view():
             return False, "Smooth line volume settings are invalid."
+        elif selected == VisualizerOptions.VOLUME_FORCE_LINE and not self.forceLineVolumeVisualizerView.validate_view():
+            return False, "Force line volume settings are invalid."
         elif selected == VisualizerOptions.CHROMA_RECTANGLE and not self.rectangleChromaVisualizerView.validate_view():
             return False, "Rectangle chroma settings are invalid."
         elif selected == VisualizerOptions.CHROMA_CIRCLE and not self.circleChromaVisualizerView.validate_view():
@@ -282,6 +324,14 @@ class MainWindow(QMainWindow):
             return False, "Smooth line chroma settings are invalid."
         elif selected == VisualizerOptions.CHROMA_LINES and not self.lineChromaBandsVisualizerView.validate_view():
             return False, "Chroma lines settings are invalid."
+        elif selected == VisualizerOptions.CHROMA_FORCE_RECTANGLE and not self.forceRectangleChromaVisualizerView.validate_view():
+            return False, "Force rectangle chroma settings are invalid."
+        elif selected == VisualizerOptions.CHROMA_FORCE_CIRCLE and not self.forceCircleChromaVisualizerView.validate_view():
+            return False, "Force circle chroma settings are invalid."
+        elif selected == VisualizerOptions.CHROMA_FORCE_LINE and not self.forceLineChromaVisualizerView.validate_view():
+            return False, "Force line chroma settings are invalid."
+        elif selected == VisualizerOptions.CHROMA_FORCE_LINES and not self.forceLinesChromaVisualizerView.validate_view():
+            return False, "Force lines chroma settings are invalid."
         elif selected == VisualizerOptions.WAVEFORM and not self.waveformVisualizerView.validate_view():
             return False, "Waveform settings are invalid."
         elif selected == VisualizerOptions.COMBINED_RECTANGLE and not self.combinedVisualizerView.validate_view():
@@ -327,6 +377,22 @@ class MainWindow(QMainWindow):
                 color=visualizer_settings.bg_color,
                 alignment=visualizer_settings.alignment, flow=settings.flow,
                 smoothness=settings.smoothness
+            )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_FORCE_LINE:
+            settings = self.forceLineVolumeVisualizerView.read_view_values()
+
+            return volume.ForceLineVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                super_sampling=visualizer_settings.super_sampling,
+                line_thickness=settings.line_thickness,
+                points_count=settings.points_count,
+                color=visualizer_settings.bg_color,
+                alignment=visualizer_settings.alignment,
+                flow=settings.flow,
+                tension=settings.tension,
+                damping=settings.damping,
+                impulse_strength=settings.impulse_strength,
+                gravity=settings.gravity,
             )
         elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_RECTANGLE:
             settings = self.rectangleChromaVisualizerView.read_view_values()
@@ -385,6 +451,78 @@ class MainWindow(QMainWindow):
                 color=visualizer_settings.bg_color,
                 alignment=visualizer_settings.alignment,
                 flow=settings.flow,
+                smoothness=settings.smoothness,
+                band_spacing=settings.band_spacing,
+                band_colors=settings.band_colors,
+            )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_FORCE_RECTANGLE:
+            settings = self.forceRectangleChromaVisualizerView.read_view_values()
+
+            return chroma.ForceRectangleVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                super_sampling=visualizer_settings.super_sampling,
+                box_height=settings.box_height,
+                corner_radius=settings.corner_radius,
+                border_width=visualizer_settings.border_width,
+                spacing=visualizer_settings.spacing,
+                bg_color=visualizer_settings.bg_color,
+                border_color=visualizer_settings.border_color,
+                alignment=visualizer_settings.alignment,
+                color_mode=settings.color_mode,
+                gradient_start=settings.gradient_start,
+                gradient_end=settings.gradient_end,
+                band_colors=settings.band_colors,
+                gravity=settings.gravity,
+                force_strength=settings.force_strength,
+            )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_FORCE_CIRCLE:
+            settings = self.forceCircleChromaVisualizerView.read_view_values()
+
+            return chroma.ForceCircleVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                super_sampling=visualizer_settings.super_sampling,
+                border_width=visualizer_settings.border_width,
+                spacing=visualizer_settings.spacing,
+                bg_color=visualizer_settings.bg_color,
+                border_color=visualizer_settings.border_color,
+                alignment=visualizer_settings.alignment,
+                color_mode=settings.color_mode,
+                gradient_start=settings.gradient_start,
+                gradient_end=settings.gradient_end,
+                band_colors=settings.band_colors,
+                gravity=settings.gravity,
+                force_strength=settings.force_strength,
+            )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_FORCE_LINE:
+            settings = self.forceLineChromaVisualizerView.read_view_values()
+
+            return chroma.ForceLineVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                super_sampling=visualizer_settings.super_sampling,
+                line_thickness=settings.line_thickness,
+                points_count=settings.points_count,
+                color=visualizer_settings.bg_color,
+                alignment=visualizer_settings.alignment,
+                tension=settings.tension,
+                damping=settings.damping,
+                force_strength=settings.force_strength,
+                gravity=settings.gravity,
+                smoothness=settings.smoothness,
+            )
+        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_FORCE_LINES:
+            settings = self.forceLinesChromaVisualizerView.read_view_values()
+
+            return chroma.ForceLinesVisualizer(
+                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
+                super_sampling=visualizer_settings.super_sampling,
+                line_thickness=settings.line_thickness,
+                points_count=settings.points_count,
+                color=visualizer_settings.bg_color,
+                alignment=visualizer_settings.alignment,
+                tension=settings.tension,
+                damping=settings.damping,
+                force_strength=settings.force_strength,
+                gravity=settings.gravity,
                 smoothness=settings.smoothness,
                 band_spacing=settings.band_spacing,
                 band_colors=settings.band_colors,
@@ -650,6 +788,17 @@ class MainWindow(QMainWindow):
                 "flow": settings.flow.value,
                 "smoothness": settings.smoothness,
             }
+        elif selected == VisualizerOptions.VOLUME_FORCE_LINE:
+            settings = self.forceLineVolumeVisualizerView.read_view_values()
+            specific = {
+                "line_thickness": settings.line_thickness,
+                "points_count": settings.points_count,
+                "tension": settings.tension,
+                "damping": settings.damping,
+                "impulse_strength": settings.impulse_strength,
+                "gravity": settings.gravity,
+                "flow": settings.flow.value,
+            }
         elif selected == VisualizerOptions.CHROMA_RECTANGLE:
             settings = self.rectangleChromaVisualizerView.read_view_values()
             specific = {
@@ -688,6 +837,52 @@ class MainWindow(QMainWindow):
                 "flow": settings.flow.value,
                 "band_colors": [list(color) for color in settings.band_colors],
                 "band_spacing": settings.band_spacing,
+            }
+        elif selected == VisualizerOptions.CHROMA_FORCE_RECTANGLE:
+            settings = self.forceRectangleChromaVisualizerView.read_view_values()
+            specific = {
+                "box_height": settings.box_height,
+                "corner_radius": settings.corner_radius,
+                "color_mode": settings.color_mode,
+                "gradient_start": list(settings.gradient_start),
+                "gradient_end": list(settings.gradient_end),
+                "band_colors": [list(color) for color in settings.band_colors],
+                "gravity": settings.gravity,
+                "force_strength": settings.force_strength,
+            }
+        elif selected == VisualizerOptions.CHROMA_FORCE_CIRCLE:
+            settings = self.forceCircleChromaVisualizerView.read_view_values()
+            specific = {
+                "color_mode": settings.color_mode,
+                "gradient_start": list(settings.gradient_start),
+                "gradient_end": list(settings.gradient_end),
+                "band_colors": [list(color) for color in settings.band_colors],
+                "gravity": settings.gravity,
+                "force_strength": settings.force_strength,
+            }
+        elif selected == VisualizerOptions.CHROMA_FORCE_LINE:
+            settings = self.forceLineChromaVisualizerView.read_view_values()
+            specific = {
+                "line_thickness": settings.line_thickness,
+                "points_count": settings.points_count,
+                "smoothness": settings.smoothness,
+                "tension": settings.tension,
+                "damping": settings.damping,
+                "force_strength": settings.force_strength,
+                "gravity": settings.gravity,
+            }
+        elif selected == VisualizerOptions.CHROMA_FORCE_LINES:
+            settings = self.forceLinesChromaVisualizerView.read_view_values()
+            specific = {
+                "line_thickness": settings.line_thickness,
+                "points_count": settings.points_count,
+                "smoothness": settings.smoothness,
+                "band_spacing": settings.band_spacing,
+                "tension": settings.tension,
+                "damping": settings.damping,
+                "force_strength": settings.force_strength,
+                "gravity": settings.gravity,
+                "band_colors": [list(color) for color in settings.band_colors],
             }
         elif selected == VisualizerOptions.WAVEFORM:
             settings = self.waveformVisualizerView.read_view_values()
@@ -813,6 +1008,21 @@ class MainWindow(QMainWindow):
                 self.lineVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
             if "smoothness" in specific:
                 self.lineVolumeVisualizerView.smoothness.setText(str(specific["smoothness"]))
+        elif current_type == VisualizerOptions.VOLUME_FORCE_LINE.value:
+            if "line_thickness" in specific:
+                self.forceLineVolumeVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
+            if "points_count" in specific:
+                self.forceLineVolumeVisualizerView.points_count.setText(str(specific["points_count"]))
+            if "tension" in specific:
+                self.forceLineVolumeVisualizerView.tension.setText(str(specific["tension"]))
+            if "damping" in specific:
+                self.forceLineVolumeVisualizerView.damping.setText(str(specific["damping"]))
+            if "impulse_strength" in specific:
+                self.forceLineVolumeVisualizerView.impulse_strength.setText(str(specific["impulse_strength"]))
+            if "gravity" in specific:
+                self.forceLineVolumeVisualizerView.gravity.setText(str(specific["gravity"]))
+            if "flow" in specific:
+                self.forceLineVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
         elif current_type == VisualizerOptions.CHROMA_RECTANGLE.value:
             if "box_height" in specific:
                 self.rectangleChromaVisualizerView.box_height.setText(str(specific["box_height"]))
@@ -890,6 +1100,78 @@ class MainWindow(QMainWindow):
                     field.setText(color)
             if "band_spacing" in specific:
                 self.lineChromaBandsVisualizerView.band_spacing.setText(str(specific["band_spacing"]))
+        elif current_type == VisualizerOptions.CHROMA_FORCE_RECTANGLE.value:
+            if "box_height" in specific:
+                self.forceRectangleChromaVisualizerView.box_height.setText(str(specific["box_height"]))
+            if "corner_radius" in specific:
+                self.forceRectangleChromaVisualizerView.corner_radius.setText(str(specific["corner_radius"]))
+            if "color_mode" in specific:
+                self.forceRectangleChromaVisualizerView.color_mode.setCurrentText(specific["color_mode"])
+            if "gradient_start" in specific and specific["gradient_start"]:
+                gs = specific["gradient_start"]
+                self.forceRectangleChromaVisualizerView.gradient_start.setText(f"{gs[0]}, {gs[1]}, {gs[2]}")
+            if "gradient_end" in specific and specific["gradient_end"]:
+                ge = specific["gradient_end"]
+                self.forceRectangleChromaVisualizerView.gradient_end.setText(f"{ge[0]}, {ge[1]}, {ge[2]}")
+            if "band_colors" in specific and specific["band_colors"]:
+                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
+                self.forceRectangleChromaVisualizerView.band_colors.setText("|".join(colors))
+            if "gravity" in specific:
+                self.forceRectangleChromaVisualizerView.gravity.setText(str(specific["gravity"]))
+            if "force_strength" in specific:
+                self.forceRectangleChromaVisualizerView.force_strength.setText(str(specific["force_strength"]))
+        elif current_type == VisualizerOptions.CHROMA_FORCE_CIRCLE.value:
+            if "color_mode" in specific:
+                self.forceCircleChromaVisualizerView.color_mode.setCurrentText(specific["color_mode"])
+            if "gradient_start" in specific and specific["gradient_start"]:
+                gs = specific["gradient_start"]
+                self.forceCircleChromaVisualizerView.gradient_start.setText(f"{gs[0]}, {gs[1]}, {gs[2]}")
+            if "gradient_end" in specific and specific["gradient_end"]:
+                ge = specific["gradient_end"]
+                self.forceCircleChromaVisualizerView.gradient_end.setText(f"{ge[0]}, {ge[1]}, {ge[2]}")
+            if "band_colors" in specific and specific["band_colors"]:
+                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
+                self.forceCircleChromaVisualizerView.band_colors.setText("|".join(colors))
+            if "gravity" in specific:
+                self.forceCircleChromaVisualizerView.gravity.setText(str(specific["gravity"]))
+            if "force_strength" in specific:
+                self.forceCircleChromaVisualizerView.force_strength.setText(str(specific["force_strength"]))
+        elif current_type == VisualizerOptions.CHROMA_FORCE_LINE.value:
+            if "line_thickness" in specific:
+                self.forceLineChromaVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
+            if "points_count" in specific:
+                self.forceLineChromaVisualizerView.points_count.setText(str(specific["points_count"]))
+            if "smoothness" in specific:
+                self.forceLineChromaVisualizerView.smoothness.setText(str(specific["smoothness"]))
+            if "tension" in specific:
+                self.forceLineChromaVisualizerView.tension.setText(str(specific["tension"]))
+            if "damping" in specific:
+                self.forceLineChromaVisualizerView.damping.setText(str(specific["damping"]))
+            if "force_strength" in specific:
+                self.forceLineChromaVisualizerView.force_strength.setText(str(specific["force_strength"]))
+            if "gravity" in specific:
+                self.forceLineChromaVisualizerView.gravity.setText(str(specific["gravity"]))
+        elif current_type == VisualizerOptions.CHROMA_FORCE_LINES.value:
+            if "line_thickness" in specific:
+                self.forceLinesChromaVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
+            if "points_count" in specific:
+                self.forceLinesChromaVisualizerView.points_count.setText(str(specific["points_count"]))
+            if "smoothness" in specific:
+                self.forceLinesChromaVisualizerView.smoothness.setText(str(specific["smoothness"]))
+            if "band_spacing" in specific:
+                self.forceLinesChromaVisualizerView.band_spacing.setText(str(specific["band_spacing"]))
+            if "tension" in specific:
+                self.forceLinesChromaVisualizerView.tension.setText(str(specific["tension"]))
+            if "damping" in specific:
+                self.forceLinesChromaVisualizerView.damping.setText(str(specific["damping"]))
+            if "force_strength" in specific:
+                self.forceLinesChromaVisualizerView.force_strength.setText(str(specific["force_strength"]))
+            if "gravity" in specific:
+                self.forceLinesChromaVisualizerView.gravity.setText(str(specific["gravity"]))
+            if "band_colors" in specific and specific["band_colors"]:
+                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
+                for field, color in zip(self.forceLinesChromaVisualizerView.band_color_fields, colors):
+                    field.setText(color)
 
         if "preview" in ui_state:
             self.preview_checkbox.setChecked(bool(ui_state["preview"]))
