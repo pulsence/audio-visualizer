@@ -20,7 +20,7 @@ jobs:
           pip install .
           pip install pyinstaller
       - name: Build executable
-        run: pyinstaller --onefile --windowed --name "Audio Visualizer" --icon icon.ico src/audio_visualizer/__main__.py
+        run: pyinstaller --onefile --windowed --name "Audio Visualizer" --icon icon.ico --add-data "icon.ico;." src/audio_visualizer/__main__.py
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
         with:

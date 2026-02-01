@@ -21,11 +21,32 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
+import sys
+from pathlib import Path
+
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from audio_visualizer.ui.mainWindow import MainWindow
 
+def _resolve_icon_path() -> Path | None:
+    if getattr(sys, "frozen", False):
+        base_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    else:
+        base_dir = Path(__file__).resolve().parents[2]
+    candidates = [
+        base_dir / "icon.ico",
+        Path(sys.executable).resolve().parent / "icon.ico",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
 def main():
     app = QApplication([])
+    icon_path = _resolve_icon_path()
+    if icon_path is not None:
+        app.setWindowIcon(QIcon(str(icon_path)))
     main_window = MainWindow()
     main_window.show()
     app.exec()
