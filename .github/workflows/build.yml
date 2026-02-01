@@ -21,6 +21,11 @@ jobs:
           pip install pyinstaller
       - name: Build executable
         run: pyinstaller --onefile --windowed --name "Audio Visualizer" --icon icon.ico --add-data "icon.ico;." src/audio_visualizer/__main__.py
+      - name: Rename executable
+        run: |
+          $source = "dist/Audio.Visualizer.exe"
+          $target = "dist/Audio Visualizer.exe"
+          if (Test-Path $source) { Rename-Item -Path $source -NewName $target }
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
         with:
