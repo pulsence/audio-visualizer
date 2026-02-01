@@ -25,10 +25,7 @@ SOFTWARE.
 Utility functions
 '''
 import math
-import librosa
 import numpy as np
-
-import av
 
 from enum import Enum
 
@@ -90,6 +87,7 @@ class AudioData:
     '''
     def load_audio_data(self, duration_seconds=None):
         try:
+            import librosa
             if duration_seconds is None:
                 self.audio_samples, self.sample_rate = librosa.load(self.file_path)
             else:
@@ -113,6 +111,7 @@ class AudioData:
         self.audio_frames = np.array_split(self.audio_samples, frames)
 
     def analyze_audio(self):
+        import librosa
         for frame in self.audio_frames:
             avg_volume = np.mean(np.abs(frame))
             self.average_volumes.append(avg_volume)
@@ -140,6 +139,7 @@ class VideoData:
 
     def prepare_container(self):
         try:
+            import av
             self.container = av.open(self.file_path, mode='w')
         except Exception as exc:
             self.last_error = str(exc)

@@ -8,6 +8,7 @@ This project is provided as-is under the MIT License. It is maintained for perso
 - Live preview panel in the main UI (toggleable).
 - Per-visualizer settings with saved project presets.
 - Volume and chroma (pitch class) visualizers, including "force" variants.
+- Built-in update check via Help menu.
 
 ## Feature Table
 | Area | Highlights |
@@ -48,7 +49,7 @@ Combined:
 
 # Set Up
 Install Python 3 (3.13 was version this was developed in).
-Run 'pip install -r requirements.txt' to install required packages.
+Run `pip install .` to install required packages.
 Run `python -m audio_visualizer` from the project root.
 
 ## Run Scripts

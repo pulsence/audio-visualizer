@@ -37,6 +37,7 @@ from PySide6.QtGui import (
 )
 
 import os
+from pathlib import Path
 
 from audio_visualizer.app_paths import get_data_dir
 from .generalView import View
@@ -79,7 +80,7 @@ class GeneralSettingsView(View):
         self.audio_file_dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
         self.audio_file_dialog.setNameFilter("Audio Files (*.mp3 *.wav *.flac)")
         self.audio_file_dialog.fileSelected.connect(self.audio_file_path.setText)
-        self.audio_file_button.clicked.connect(self.audio_file_dialog.open)
+        self.audio_file_button.clicked.connect(self._on_audio_file_button_clicked)
         audio_file_row.addWidget(self.audio_file_button)
         form_layout.addRow("Audio File Path:", audio_file_row)
 
@@ -94,7 +95,7 @@ class GeneralSettingsView(View):
         self.video_file_dialog.setFileMode(QFileDialog.FileMode.AnyFile)
         self.video_file_dialog.setNameFilter("Video Files (*.mp4)")
         self.video_file_dialog.fileSelected.connect(self.video_file_path.setText)
-        self.video_file_button.clicked.connect(self.video_file_dialog.open)
+        self.video_file_button.clicked.connect(self._on_video_file_button_clicked)
         video_file_row.addWidget(self.video_file_button)
         form_layout.addRow("Output Video File Path:", video_file_row)
 
@@ -132,6 +133,28 @@ class GeneralSettingsView(View):
         form_layout.addRow("", self.include_audio)
 
         self.layout.addLayout(form_layout, 1, 0)
+
+    @staticmethod
+    def _get_initial_directory(current_path: str, fallback_folder: str) -> str:
+        if current_path:
+            path = Path(current_path)
+            parent = path.parent if path.suffix else path
+            if parent.exists():
+                return str(parent)
+        user_folder = Path.home() / fallback_folder
+        if user_folder.exists():
+            return str(user_folder)
+        return str(Path.home())
+
+    def _on_audio_file_button_clicked(self):
+        initial_dir = self._get_initial_directory(self.audio_file_path.text(), "Music")
+        self.audio_file_dialog.setDirectory(initial_dir)
+        self.audio_file_dialog.open()
+
+    def _on_video_file_button_clicked(self):
+        initial_dir = self._get_initial_directory(self.video_file_path.text(), "Videos")
+        self.video_file_dialog.setDirectory(initial_dir)
+        self.video_file_dialog.open()
 
     '''
     Verifies that the input values in the view are valide.

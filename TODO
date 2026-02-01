@@ -1,6 +1,7 @@
 # Todo:
 ## General
-- Make the UI and render/visualizers clearly decumpled so that the render path can be used as a separate library
+- Make the UI and render/visualizers clearly decumpled so that the render path
+can be used as a separate library
 ## GUI
 - Clicking on color swatches should open color dialogue
 - Chroma gradients should follow tabs like the chroma lines view

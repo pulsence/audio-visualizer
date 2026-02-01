@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtGui import (
-    QIntValidator, QFont
+    QDesktopServices, QAction, QIntValidator, QFont
 )
 
 from PySide6.QtMultimediaWidgets import (
@@ -48,32 +48,9 @@ from audio_visualizer.visualizers import Visualizer
 
 from audio_visualizer.visualizers.utilities import AudioData, VideoData, VisualizerOptions
 
-from audio_visualizer.visualizers import (
-    volume, chroma, waveform, combined
-)
-
-from audio_visualizer.ui.views import (
-    Fonts,
-    RectangleVolumeVisualizerView, RectangleVolumeVisualizerSettings,
-    CircleVolumeVisualizerView, CircleVolumeVisualizerSettings,
-    LineVolumeVisualizerView, LineVolumeVisualizerSettings,
-    ForceLineVolumeVisualizerView, ForceLineVolumeVisualizerSettings,
-    RectangleChromaVisualizerView, RectangleChromaVisualizerSettings,
-    CircleChromeVisualizerView, CircleChromeVisualizerSettings,
-    LineChromaVisualizerView, LineChromaVisualizerSettings,
-    LineChromaBandsVisualizerView, LineChromaBandsVisualizerSettings,
-    ForceRectangleChromaVisualizerView, ForceRectangleChromaVisualizerSettings,
-    ForceCircleChromaVisualizerView, ForceCircleChromaVisualizerSettings,
-    ForceLineChromaVisualizerView, ForceLineChromaVisualizerSettings,
-    ForceLinesChromaVisualizerView, ForceLinesChromaVisualizerSettings,
-    WaveformVisualizerView, WaveformVisualizerSettings,
-    CombinedVisualizerView, CombinedVisualizerSettings,
-    GeneralSettingsView, GeneralSettings,
-    GeneralVisualizerView, GeneralVisualizerSettings
-)
-from audio_visualizer.ui.renderDialog import RenderDialog
-
-import av
+from audio_visualizer.ui.views import Fonts
+from audio_visualizer.ui.views.general.generalSettingViews import GeneralSettingsView, GeneralSettings
+from audio_visualizer.ui.views.general.generalVisualizerView import GeneralVisualizerView, GeneralVisualizerSettings
 import json
 import logging
 import time
@@ -82,14 +59,34 @@ from pathlib import Path
 
 from audio_visualizer.app_logging import setup_logging
 from audio_visualizer.app_paths import get_config_dir, get_data_dir
+from audio_visualizer import updater
 
 class MainWindow(QMainWindow):
+    _VIEW_ATTRIBUTE_MAP = {
+        "rectangleVolumeVisualizerView": VisualizerOptions.VOLUME_RECTANGLE,
+        "circleVolumeVisualizerView": VisualizerOptions.VOLUME_CIRCLE,
+        "lineVolumeVisualizerView": VisualizerOptions.VOLUME_LINE,
+        "forceLineVolumeVisualizerView": VisualizerOptions.VOLUME_FORCE_LINE,
+        "rectangleChromaVisualizerView": VisualizerOptions.CHROMA_RECTANGLE,
+        "circleChromaVisualizerView": VisualizerOptions.CHROMA_CIRCLE,
+        "lineChromaVisualizerView": VisualizerOptions.CHROMA_LINE,
+        "lineChromaBandsVisualizerView": VisualizerOptions.CHROMA_LINES,
+        "forceRectangleChromaVisualizerView": VisualizerOptions.CHROMA_FORCE_RECTANGLE,
+        "forceCircleChromaVisualizerView": VisualizerOptions.CHROMA_FORCE_CIRCLE,
+        "forceLineChromaVisualizerView": VisualizerOptions.CHROMA_FORCE_LINE,
+        "forceLinesChromaVisualizerView": VisualizerOptions.CHROMA_FORCE_LINES,
+        "waveformVisualizerView": VisualizerOptions.WAVEFORM,
+        "combinedVisualizerView": VisualizerOptions.COMBINED_RECTANGLE,
+    }
+
     def __init__(self):
         super().__init__()
         self._log_path = setup_logging()
         self._logger = logging.getLogger(__name__)
         self.setWindowTitle("Audio Visualizer")
         self.setGeometry(100, 100, 800, 500)
+        self._visualizer_views = {}
+        self._visualizer_view_layout = None
 
         primary_layout = QGridLayout()
 
@@ -125,6 +122,9 @@ class MainWindow(QMainWindow):
         self._preview_update_timer.setSingleShot(True)
         self._preview_update_timer.setInterval(400)
         self._preview_update_timer.timeout.connect(self._trigger_live_preview_update)
+        self._background_thread_pool = QThreadPool()
+
+        self._setup_menu()
 
         self._load_last_settings_if_present()
         self._connect_live_preview_updates()
@@ -154,79 +154,82 @@ class MainWindow(QMainWindow):
         section_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         section_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         main_layout.addWidget(section_label, 0, 0)
-
-        self.visualizer_views = []
-        self.rectangleVolumeVisualizerView = RectangleVolumeVisualizerView()
-        self.rectangleVolumeVisualizerView.get_view_in_widget().show()
-        main_layout.addWidget(self.rectangleVolumeVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.rectangleVolumeVisualizerView)
-        
-        self.circleVolumeVisualizerView = CircleVolumeVisualizerView()
-        self.circleVolumeVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.circleVolumeVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.circleVolumeVisualizerView)
-
-        self.lineVolumeVisualizerView = LineVolumeVisualizerView()
-        self.lineVolumeVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.lineVolumeVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.lineVolumeVisualizerView)
-
-        self.forceLineVolumeVisualizerView = ForceLineVolumeVisualizerView()
-        self.forceLineVolumeVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.forceLineVolumeVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.forceLineVolumeVisualizerView)
-
-        self.rectangleChromaVisualizerView = RectangleChromaVisualizerView()
-        self.rectangleChromaVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.rectangleChromaVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.rectangleChromaVisualizerView)
-        
-        self.circleChromaVisualizerView = CircleChromeVisualizerView()
-        self.circleChromaVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.circleChromaVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.circleChromaVisualizerView)
-
-        self.lineChromaVisualizerView = LineChromaVisualizerView()
-        self.lineChromaVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.lineChromaVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.lineChromaVisualizerView)
-
-        self.lineChromaBandsVisualizerView = LineChromaBandsVisualizerView()
-        self.lineChromaBandsVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.lineChromaBandsVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.lineChromaBandsVisualizerView)
-
-        self.forceRectangleChromaVisualizerView = ForceRectangleChromaVisualizerView()
-        self.forceRectangleChromaVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.forceRectangleChromaVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.forceRectangleChromaVisualizerView)
-
-        self.forceCircleChromaVisualizerView = ForceCircleChromaVisualizerView()
-        self.forceCircleChromaVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.forceCircleChromaVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.forceCircleChromaVisualizerView)
-
-        self.forceLineChromaVisualizerView = ForceLineChromaVisualizerView()
-        self.forceLineChromaVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.forceLineChromaVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.forceLineChromaVisualizerView)
-
-        self.forceLinesChromaVisualizerView = ForceLinesChromaVisualizerView()
-        self.forceLinesChromaVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.forceLinesChromaVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.forceLinesChromaVisualizerView)
-
-        self.waveformVisualizerView = WaveformVisualizerView()
-        self.waveformVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.waveformVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.waveformVisualizerView)
-
-        self.combinedVisualizerView = CombinedVisualizerView()
-        self.combinedVisualizerView.get_view_in_widget().hide()
-        main_layout.addWidget(self.combinedVisualizerView.get_view_in_widget(), 1, 0)
-        self.visualizer_views.append(self.combinedVisualizerView)
+        self._visualizer_view_layout = QGridLayout()
+        self._visualizer_view_container = QWidget()
+        self._visualizer_view_container.setLayout(self._visualizer_view_layout)
+        main_layout.addWidget(self._visualizer_view_container, 1, 0)
 
         layout.addLayout(main_layout, r, c)
+        current = VisualizerOptions(self.generalVisualizerView.visualizer.currentText())
+        self._show_visualizer_view(current)
+
+    def __getattr__(self, name):
+        if name in self._VIEW_ATTRIBUTE_MAP:
+            view = self._get_visualizer_view(self._VIEW_ATTRIBUTE_MAP[name])
+            setattr(self, name, view)
+            return view
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def _build_visualizer_view(self, visualizer: VisualizerOptions):
+        if visualizer == VisualizerOptions.VOLUME_RECTANGLE:
+            from audio_visualizer.ui.views.volume.rectangleVolumeVisualizerView import RectangleVolumeVisualizerView
+            return RectangleVolumeVisualizerView()
+        if visualizer == VisualizerOptions.VOLUME_CIRCLE:
+            from audio_visualizer.ui.views.volume.circleVolumeVisualizerView import CircleVolumeVisualizerView
+            return CircleVolumeVisualizerView()
+        if visualizer == VisualizerOptions.VOLUME_LINE:
+            from audio_visualizer.ui.views.volume.lineVolumeVisualizerView import LineVolumeVisualizerView
+            return LineVolumeVisualizerView()
+        if visualizer == VisualizerOptions.VOLUME_FORCE_LINE:
+            from audio_visualizer.ui.views.volume.forceLineVolumeVisualizerView import ForceLineVolumeVisualizerView
+            return ForceLineVolumeVisualizerView()
+        if visualizer == VisualizerOptions.CHROMA_RECTANGLE:
+            from audio_visualizer.ui.views.chroma.rectangleChromaVisualizerView import RectangleChromaVisualizerView
+            return RectangleChromaVisualizerView()
+        if visualizer == VisualizerOptions.CHROMA_CIRCLE:
+            from audio_visualizer.ui.views.chroma.circleChromaVisualizerView import CircleChromeVisualizerView
+            return CircleChromeVisualizerView()
+        if visualizer == VisualizerOptions.CHROMA_LINE:
+            from audio_visualizer.ui.views.chroma.lineChromaVisualizerView import LineChromaVisualizerView
+            return LineChromaVisualizerView()
+        if visualizer == VisualizerOptions.CHROMA_LINES:
+            from audio_visualizer.ui.views.chroma.lineChromaBandsVisualizerView import LineChromaBandsVisualizerView
+            return LineChromaBandsVisualizerView()
+        if visualizer == VisualizerOptions.CHROMA_FORCE_RECTANGLE:
+            from audio_visualizer.ui.views.chroma.forceRectangleChromaVisualizerView import ForceRectangleChromaVisualizerView
+            return ForceRectangleChromaVisualizerView()
+        if visualizer == VisualizerOptions.CHROMA_FORCE_CIRCLE:
+            from audio_visualizer.ui.views.chroma.forceCircleChromaVisualizerView import ForceCircleChromaVisualizerView
+            return ForceCircleChromaVisualizerView()
+        if visualizer == VisualizerOptions.CHROMA_FORCE_LINE:
+            from audio_visualizer.ui.views.chroma.forceLineChromaVisualizerView import ForceLineChromaVisualizerView
+            return ForceLineChromaVisualizerView()
+        if visualizer == VisualizerOptions.CHROMA_FORCE_LINES:
+            from audio_visualizer.ui.views.chroma.forceLinesChromaVisualizerView import ForceLinesChromaVisualizerView
+            return ForceLinesChromaVisualizerView()
+        if visualizer == VisualizerOptions.WAVEFORM:
+            from audio_visualizer.ui.views.general.waveformVisualizerView import WaveformVisualizerView
+            return WaveformVisualizerView()
+        if visualizer == VisualizerOptions.COMBINED_RECTANGLE:
+            from audio_visualizer.ui.views.general.combinedVisualizerView import CombinedVisualizerView
+            return CombinedVisualizerView()
+        raise ValueError(f"Unsupported visualizer view: {visualizer}")
+
+    def _get_visualizer_view(self, visualizer: VisualizerOptions):
+        view = self._visualizer_views.get(visualizer)
+        if view is None:
+            view = self._build_visualizer_view(visualizer)
+            widget = view.get_view_in_widget()
+            widget.hide()
+            self._visualizer_view_layout.addWidget(widget, 0, 0)
+            self._visualizer_views[visualizer] = view
+        return view
+
+    def _show_visualizer_view(self, visualizer: VisualizerOptions):
+        for view in self._visualizer_views.values():
+            view.get_view_in_widget().hide()
+        view = self._get_visualizer_view(visualizer)
+        view.get_view_in_widget().show()
 
     '''
     UI elements to launch a render in (3, 0)
@@ -307,41 +310,21 @@ class MainWindow(QMainWindow):
         self.render_status_label.hide()
         layout.addWidget(self.render_status_label, r, c+1)
 
+    def _setup_menu(self):
+        menu_bar = self.menuBar()
+        menu_bar.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        help_menu = menu_bar.addMenu("Help")
+        help_menu.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.check_updates_action = QAction("Check for Updates", self)
+        self.check_updates_action.triggered.connect(self.check_for_updates)
+        help_menu.addAction(self.check_updates_action)
+
 
     def visualizer_selection_changed(self, visualizer):
-        for view in self.visualizer_views:
-            view.get_view_in_widget().hide()
-
+        if self._visualizer_view_layout is None:
+            return
         visualizer = VisualizerOptions(visualizer)
-
-        if visualizer == VisualizerOptions.VOLUME_CIRCLE:
-            self.circleVolumeVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.VOLUME_RECTANGLE:
-            self.rectangleVolumeVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.VOLUME_LINE:
-            self.lineVolumeVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.VOLUME_FORCE_LINE:
-            self.forceLineVolumeVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.CHROMA_RECTANGLE:
-            self.rectangleChromaVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.CHROMA_CIRCLE:
-            widget = self.circleChromaVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.CHROMA_LINE:
-            self.lineChromaVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.CHROMA_LINES:
-            self.lineChromaBandsVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.CHROMA_FORCE_RECTANGLE:
-            self.forceRectangleChromaVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.CHROMA_FORCE_CIRCLE:
-            self.forceCircleChromaVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.CHROMA_FORCE_LINE:
-            self.forceLineChromaVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.CHROMA_FORCE_LINES:
-            self.forceLinesChromaVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.WAVEFORM:
-            self.waveformVisualizerView.get_view_in_widget().show()
-        elif visualizer == VisualizerOptions.COMBINED_RECTANGLE:
-            self.combinedVisualizerView.get_view_in_widget().show()
+        self._show_visualizer_view(visualizer)
 
     def validate_render_settings(self):
         if not self.generalSettingsView.validate_view():
@@ -350,34 +333,25 @@ class MainWindow(QMainWindow):
             return False, "General visualization settings are invalid."
         
         selected = VisualizerOptions(self.generalVisualizerView.visualizer.currentText())
-        if selected == VisualizerOptions.VOLUME_RECTANGLE and not self.rectangleVolumeVisualizerView.validate_view():
-            return False, "Rectangle volume settings are invalid."
-        elif selected == VisualizerOptions.VOLUME_CIRCLE and not self.circleVolumeVisualizerView.validate_view():
-            return False, "Circle volume settings are invalid."
-        elif selected == VisualizerOptions.VOLUME_LINE and not self.lineVolumeVisualizerView.validate_view():
-            return False, "Smooth line volume settings are invalid."
-        elif selected == VisualizerOptions.VOLUME_FORCE_LINE and not self.forceLineVolumeVisualizerView.validate_view():
-            return False, "Force line volume settings are invalid."
-        elif selected == VisualizerOptions.CHROMA_RECTANGLE and not self.rectangleChromaVisualizerView.validate_view():
-            return False, "Rectangle chroma settings are invalid."
-        elif selected == VisualizerOptions.CHROMA_CIRCLE and not self.circleChromaVisualizerView.validate_view():
-            return False, "Circle chroma settings are invalid."
-        elif selected == VisualizerOptions.CHROMA_LINE and not self.lineChromaVisualizerView.validate_view():
-            return False, "Smooth line chroma settings are invalid."
-        elif selected == VisualizerOptions.CHROMA_LINES and not self.lineChromaBandsVisualizerView.validate_view():
-            return False, "Chroma lines settings are invalid."
-        elif selected == VisualizerOptions.CHROMA_FORCE_RECTANGLE and not self.forceRectangleChromaVisualizerView.validate_view():
-            return False, "Force rectangle chroma settings are invalid."
-        elif selected == VisualizerOptions.CHROMA_FORCE_CIRCLE and not self.forceCircleChromaVisualizerView.validate_view():
-            return False, "Force circle chroma settings are invalid."
-        elif selected == VisualizerOptions.CHROMA_FORCE_LINE and not self.forceLineChromaVisualizerView.validate_view():
-            return False, "Force line chroma settings are invalid."
-        elif selected == VisualizerOptions.CHROMA_FORCE_LINES and not self.forceLinesChromaVisualizerView.validate_view():
-            return False, "Force lines chroma settings are invalid."
-        elif selected == VisualizerOptions.WAVEFORM and not self.waveformVisualizerView.validate_view():
-            return False, "Waveform settings are invalid."
-        elif selected == VisualizerOptions.COMBINED_RECTANGLE and not self.combinedVisualizerView.validate_view():
-            return False, "Combined settings are invalid."
+        error_map = {
+            VisualizerOptions.VOLUME_RECTANGLE: "Rectangle volume settings are invalid.",
+            VisualizerOptions.VOLUME_CIRCLE: "Circle volume settings are invalid.",
+            VisualizerOptions.VOLUME_LINE: "Smooth line volume settings are invalid.",
+            VisualizerOptions.VOLUME_FORCE_LINE: "Force line volume settings are invalid.",
+            VisualizerOptions.CHROMA_RECTANGLE: "Rectangle chroma settings are invalid.",
+            VisualizerOptions.CHROMA_CIRCLE: "Circle chroma settings are invalid.",
+            VisualizerOptions.CHROMA_LINE: "Smooth line chroma settings are invalid.",
+            VisualizerOptions.CHROMA_LINES: "Chroma lines settings are invalid.",
+            VisualizerOptions.CHROMA_FORCE_RECTANGLE: "Force rectangle chroma settings are invalid.",
+            VisualizerOptions.CHROMA_FORCE_CIRCLE: "Force circle chroma settings are invalid.",
+            VisualizerOptions.CHROMA_FORCE_LINE: "Force line chroma settings are invalid.",
+            VisualizerOptions.CHROMA_FORCE_LINES: "Force lines chroma settings are invalid.",
+            VisualizerOptions.WAVEFORM: "Waveform settings are invalid.",
+            VisualizerOptions.COMBINED_RECTANGLE: "Combined settings are invalid.",
+        }
+        if selected in error_map:
+            if not self._get_visualizer_view(selected).validate_view():
+                return False, error_map[selected]
         
         return True, ""
 
@@ -385,6 +359,7 @@ class MainWindow(QMainWindow):
         return str(get_data_dir() / "preview_output.mp4")
 
     def _create_visualizer(self, audio_data: AudioData, video_data: VideoData, visualizer_settings: GeneralVisualizerSettings):
+        from audio_visualizer.visualizers import volume, chroma, waveform, combined
         if visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_RECTANGLE:
             settings = self.rectangleVolumeVisualizerView.read_view_values()
 
@@ -688,6 +663,7 @@ class MainWindow(QMainWindow):
         if self._active_preview:
             self._show_preview_in_panel(video_data)
         elif self._show_output_for_last_render:
+            from audio_visualizer.ui.renderDialog import RenderDialog
             player = RenderDialog(video_data)
             player.exec()
         self._active_render_worker = None
@@ -784,6 +760,41 @@ class MainWindow(QMainWindow):
         self.preview_panel_body.setVisible(visible)
         if not visible:
             self._reset_preview_player()
+
+    def check_for_updates(self):
+        self.check_updates_action.setEnabled(False)
+        worker = UpdateCheckWorker()
+        worker.signals.finished.connect(self._handle_update_check_result)
+        worker.signals.error.connect(self._handle_update_check_error)
+        self._background_thread_pool.start(worker)
+
+    def _handle_update_check_result(self, current_version: str, latest_version: str, url: str):
+        self.check_updates_action.setEnabled(True)
+        if not latest_version:
+            QMessageBox.information(self, "Check for Updates", "Unable to determine the latest version.")
+            return
+        if updater.is_update_available(current_version, latest_version):
+            message = QMessageBox(self)
+            message.setIcon(QMessageBox.Icon.Information)
+            message.setWindowTitle("Update Available")
+            message.setText(
+                f"A new version is available.\n\nCurrent: {current_version}\nLatest: {latest_version}"
+            )
+            open_button = message.addButton("Open Release Page", QMessageBox.ButtonRole.AcceptRole)
+            message.addButton("Close", QMessageBox.ButtonRole.RejectRole)
+            message.exec()
+            if message.clickedButton() == open_button and url:
+                QDesktopServices.openUrl(QUrl(url))
+        else:
+            QMessageBox.information(
+                self,
+                "Check for Updates",
+                f"You are up to date.\n\nCurrent: {current_version}\nLatest: {latest_version}",
+            )
+
+    def _handle_update_check_error(self, error: str):
+        self.check_updates_action.setEnabled(True)
+        QMessageBox.warning(self, "Check for Updates", error)
 
     def _preview_volume_changed(self, value: int):
         if self._preview_audio_output is not None:
@@ -982,6 +993,7 @@ class MainWindow(QMainWindow):
             "ui": {
                 "preview": self.preview_checkbox.isChecked(),
                 "show_output": self.show_output_checkbox.isChecked(),
+                "preview_panel_visible": self.preview_panel_toggle.isChecked(),
             }
         }
 
@@ -1231,6 +1243,9 @@ class MainWindow(QMainWindow):
             self.preview_checkbox.setChecked(bool(ui_state["preview"]))
         if "show_output" in ui_state:
             self.show_output_checkbox.setChecked(bool(ui_state["show_output"]))
+        if "preview_panel_visible" in ui_state:
+            self.preview_panel_toggle.setChecked(bool(ui_state["preview_panel_visible"]))
+            self._toggle_preview_panel(None)
 
     def _save_settings_to_path(self, path: Path) -> bool:
         try:
@@ -1282,6 +1297,24 @@ class MainWindow(QMainWindow):
         self._save_settings_to_path(self._default_settings_path())
         super().closeEvent(event)
 
+class UpdateCheckWorker(QRunnable):
+    def __init__(self):
+        super().__init__()
+
+        class UpdateSignals(QObject):
+            finished = Signal(str, str, str)
+            error = Signal(str)
+
+        self.signals = UpdateSignals()
+
+    def run(self):
+        try:
+            current = updater.get_current_version()
+            latest = updater.fetch_latest_release()
+            self.signals.finished.emit(current, latest.get("version", ""), latest.get("url", ""))
+        except Exception as exc:
+            self.signals.error.emit(str(exc))
+
 class RenderWorker(QRunnable):
     def __init__(self, audio_data: AudioData, video_data: VideoData, visualizer: Visualizer,
                  preview_seconds=None, include_audio=False):
@@ -1297,6 +1330,7 @@ class RenderWorker(QRunnable):
         self.audio_resampler = None
         self._cancel_requested = False
         self._logger = logging.getLogger(__name__)
+        self._av = None
 
         class RenderSignals(QObject):
             finished = Signal(VideoData)
@@ -1305,6 +1339,12 @@ class RenderWorker(QRunnable):
             progress = Signal(int, int, float)
             canceled = Signal()
         self.signals = RenderSignals()
+
+    def _get_av(self):
+        if self._av is None:
+            import av
+            self._av = av
+        return self._av
 
     def cancel(self):
         self._cancel_requested = True
@@ -1372,6 +1412,7 @@ class RenderWorker(QRunnable):
             self.signals.status.emit("Rendering video (0 %) ...")
             start_time = time.time()
             last_progress_emit = 0.0
+            av = self._get_av()
             for i in range(frames):
                 if self._check_canceled():
                     return
@@ -1412,6 +1453,7 @@ class RenderWorker(QRunnable):
 
     def _prepare_audio_mux(self) -> bool:
         self._last_error = ""
+        av = self._get_av()
         try:
             self.audio_input_container = av.open(self.audio_data.file_path)
         except Exception as exc:
