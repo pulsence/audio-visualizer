@@ -261,14 +261,14 @@ class TestBuildFFmpegCommand:
         ))
         cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
 
-        assert cmd[0].endswith("ffmpeg") or cmd[0] == "ffmpeg"
+        assert Path(cmd[0]).stem.lower() == "ffmpeg"
         assert "-y" in cmd
         assert "-i" in cmd
-        assert "/tmp/bg.mp4" in cmd
+        assert str(Path("/tmp/bg.mp4")) in cmd
         assert "-filter_complex" in cmd
         assert "-c:v" in cmd
         assert "libx264" in cmd
-        assert "/tmp/output.mp4" in cmd
+        assert Path(cmd[-1]) == Path("/tmp/output.mp4")
 
     def test_audio_source_included(self):
         model = CompositionModel()
@@ -280,7 +280,7 @@ class TestBuildFFmpegCommand:
             end_ms=5000,
         ))
         cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
-        assert "/tmp/audio.mp3" in cmd
+        assert str(Path("/tmp/audio.mp3")) in cmd
         assert "-c:a" in cmd
         assert "aac" in cmd
 
@@ -293,7 +293,7 @@ class TestBuildFFmpegCommand:
             end_ms=5000,
         ))
         cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
-        assert "/tmp/audio.mp3" not in cmd
+        assert str(Path("/tmp/audio.mp3")) not in cmd
 
     def test_extra_args(self):
         model = CompositionModel()

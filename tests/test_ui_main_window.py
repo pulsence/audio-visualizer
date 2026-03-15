@@ -126,13 +126,14 @@ class TestMainWindowSettings:
 class TestMainWindowJobStatus:
     def test_completed_job_uses_persistent_status_actions(self, main_window):
         output_path = "/tmp/output.mov"
+        main_window._job_status.reset()
         main_window.show_job_status("render", "caption_animate", "Rendering captions")
         main_window.show_job_completed("Done", output_path, "caption_animate")
 
-        assert main_window._job_status.isVisible() is True
-        assert main_window._job_status._preview_button.isVisible() is True
-        assert main_window._job_status._open_output_button.isVisible() is True
-        assert main_window._job_status._open_folder_button.isVisible() is True
+        assert main_window._job_status.isHidden() is False
+        assert main_window._job_status._preview_button.isHidden() is False
+        assert main_window._job_status._open_output_button.isHidden() is False
+        assert main_window._job_status._open_folder_button.isHidden() is False
 
     def test_update_undo_actions_rebinds_without_disconnect_warnings(self, main_window, recwarn):
         main_window._update_undo_actions()

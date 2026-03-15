@@ -397,8 +397,8 @@ class TestCreateRecipeFromSession:
         ))
 
         recipe = create_recipe_from_session(tabs, ctx, name="Roles Test")
-        assert recipe.asset_roles["primary_audio"] == "/tmp/audio.wav"
-        assert recipe.asset_roles["subtitle_source"] == "/tmp/subs.srt"
+        assert recipe.asset_roles["primary_audio"] == str(Path("/tmp/audio.wav"))
+        assert recipe.asset_roles["subtitle_source"] == str(Path("/tmp/subs.srt"))
         assert recipe.asset_roles["caption_source"] is None
         assert recipe.asset_roles["background"] is None
 
@@ -546,7 +546,7 @@ class TestRecipeFullRoundTrip:
         # Step 1: Create recipe from session
         recipe = create_recipe_from_session(tabs, ctx, name="Full Test")
         assert recipe.name == "Full Test"
-        assert recipe.asset_roles["primary_audio"] == "/tmp/song.wav"
+        assert recipe.asset_roles["primary_audio"] == str(Path("/tmp/song.wav"))
 
         # Step 2: Save
         path = tmp_path / "full_test.avrecipe.json"

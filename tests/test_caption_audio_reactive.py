@@ -60,7 +60,7 @@ class TestMakeCacheKey:
         key = make_cache_key(Path("/tmp/audio.mp3"), 30.0, 5000)
         assert isinstance(key, tuple)
         assert len(key) == 3
-        assert key[0] == "/tmp/audio.mp3"
+        assert Path(key[0]) == Path("/tmp/audio.mp3")
         assert key[1] == "audio_reactive"
         assert key[2] == "30.0_5000"
 
