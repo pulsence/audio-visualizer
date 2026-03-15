@@ -12,3 +12,5 @@ dist/
 .eggs/
 *.exe
 Projects to integrate/
+.claude/
+.venv/
