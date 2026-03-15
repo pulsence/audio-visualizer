@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Union
 
-from audio_visualizer.events import AppEvent, AppEventEmitter, EventType
+from audio_visualizer.events import AppEvent, AppEventEmitter, EventLevel, EventType
 
 from .animations import AnimationRegistry
 from .core.sizing import SizeCalculator
@@ -65,6 +65,7 @@ def render_subtitle(
     config: Optional[RenderConfig] = None,
     on_progress: Optional[Callable[[str], None]] = None,
     on_event: Optional[Callable[[AppEvent], None]] = None,
+    emitter: Optional[AppEventEmitter] = None,
 ) -> RenderResult:
     """
     Render a subtitle file to transparent video overlay.
@@ -82,6 +83,7 @@ def render_subtitle(
         config: Render configuration (uses defaults if None)
         on_progress: Simple callback for progress messages
         on_event: Full event callback for detailed progress
+        emitter: Optional shared AppEventEmitter used for host-level integration
 
     Returns:
         RenderResult with success status and output details
@@ -103,10 +105,10 @@ def render_subtitle(
     output_path = Path(output_path)
 
     # Setup event emitter
-    emitter = AppEventEmitter()
+    event_emitter = emitter or AppEventEmitter()
 
     if on_event:
-        emitter.subscribe(on_event)
+        event_emitter.subscribe(on_event)
 
     if on_progress:
 
@@ -114,7 +116,7 @@ def render_subtitle(
             if event.event_type == EventType.STAGE:
                 on_progress(event.message)
 
-        emitter.subscribe(progress_adapter)
+        event_emitter.subscribe(progress_adapter)
 
     try:
         # Validate input
@@ -132,7 +134,7 @@ def render_subtitle(
         preset = loader.load(config.preset)
 
         # Setup progress tracker
-        progress = ProgressTracker(emitter)
+        progress = ProgressTracker(event_emitter)
 
         progress.step(f"Loading: {input_path.name}")
 
@@ -200,7 +202,7 @@ def render_subtitle(
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             renderer = FFmpegRenderer(
-                emitter=emitter,
+                emitter=event_emitter,
                 loglevel="error",
                 show_progress=True,
                 quality=config.quality,
@@ -225,6 +227,17 @@ def render_subtitle(
             )
 
     except Exception as e:
+        event_emitter.emit(
+            AppEvent(
+                event_type=EventType.LOG,
+                message=str(e),
+                level=EventLevel.ERROR,
+                data={
+                    "input_path": str(input_path),
+                    "output_path": str(output_path),
+                },
+            )
+        )
         return RenderResult(success=False, error=str(e))
 
 

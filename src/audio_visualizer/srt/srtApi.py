@@ -124,6 +124,18 @@ def transcribe_file(
         cfg.transcription.initial_prompt = initial_prompt
 
     try:
+        _emit(
+            emitter,
+            AppEvent(
+                event_type=EventType.JOB_START,
+                message=f"Starting transcription for {input_path.name}",
+                data={
+                    "input_path": str(input_path),
+                    "output_path": str(output_path),
+                    "format": fmt,
+                },
+            ),
+        )
         result: CoreTranscriptionResult = transcribe_file_internal(
             input_path=input_path,
             output_path=output_path,
@@ -148,6 +160,19 @@ def transcribe_file(
             tmpdir=tmpdir,
             emitter=emitter,
         )
+        _emit(
+            emitter,
+            AppEvent(
+                event_type=EventType.JOB_COMPLETE,
+                message=f"Finished transcription for {input_path.name}",
+                data={
+                    "input_path": str(input_path),
+                    "output_path": str(output_path),
+                    "success": True,
+                    "elapsed": result.elapsed,
+                },
+            ),
+        )
         return TranscriptionResult(
             success=True,
             input_path=input_path,
@@ -162,6 +187,20 @@ def transcribe_file(
             elapsed=result.elapsed,
         )
     except Exception as exc:
+        _emit(
+            emitter,
+            AppEvent(
+                event_type=EventType.JOB_COMPLETE,
+                message=f"Transcription failed for {input_path.name}",
+                level=EventLevel.ERROR,
+                data={
+                    "input_path": str(input_path),
+                    "output_path": str(output_path),
+                    "success": False,
+                    "error": str(exc),
+                },
+            ),
+        )
         _emit(
             emitter,
             AppEvent(

@@ -3,6 +3,8 @@ __pycache__/*
 *.mp4
 *.code-workspace
 *.json
+!src/audio_visualizer/srt/configs/*.json
+!src/audio_visualizer/caption/presets/examples/*.json
 .vscode/
 .pytest_cache/
 *.lnk

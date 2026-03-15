@@ -60,12 +60,14 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the detailed package structure.
 
 ## Commands
 
+Run the application and the test suite from the project `.venv`. If the virtualenv is not activated, call its Python directly.
+
 ```bash
 # Run the application
-python -m audio_visualizer
+.venv/bin/python -m audio_visualizer
 
 # Run all tests
-pytest tests/ -v
+.venv/bin/python -m pytest tests/ -v
 ```
 
 ## Environment Variables
@@ -82,7 +84,7 @@ pytest tests/ -v
 - **Live preview:** A `QTimer` with 400ms debounce triggers 5-second preview renders when settings change.
 - **Settings persistence:** Settings are serialized as JSON. Auto-saved on close, auto-loaded on startup. Users can also save/load named project files.
 - **View-to-Visualizer mapping:** `MainWindow._VIEW_ATTRIBUTE_MAP` maps view attribute names to `VisualizerOptions` enum values for lazy-loading visualizer-specific UI panels.
-- **Shared event protocol:** `events.py` defines `AppEvent`, `AppEventEmitter`, and `LoggingBridge`. Both the `srt` and `caption` packages emit structured events (LOG, PROGRESS, STAGE, RENDER_START/PROGRESS/COMPLETE, MODEL_LOAD) via optional emitter parameters, decoupling progress reporting from any specific UI.
+- **Shared event protocol:** `events.py` defines `AppEvent`, `AppEventEmitter`, and `LoggingBridge`. Both the `srt` and `caption` packages emit structured events (LOG, PROGRESS, STAGE, JOB_START/COMPLETE, RENDER_START/PROGRESS/COMPLETE, MODEL_LOAD) via optional emitter parameters, decoupling progress reporting from any specific UI.
 - **Lazy loading:** Both `srt` and `caption` packages use `__getattr__`-based lazy loading in their `__init__.py` files. Heavy dependencies (faster-whisper, pysubs2, Pillow) are only imported when first accessed.
 - **SRT transcription:** The `srt` package provides a 4-stage pipeline (audio conversion, transcription, chunking/formatting, output writing). Supports multiple output formats (SRT, VTT, ASS, TXT, JSON), word-level timestamps, silence-aware splitting, script alignment, correction SRT alignment, and optional speaker diarization via pyannote.audio.
 - **Caption rendering:** The `caption` package renders subtitle files to transparent video overlays via FFmpeg with libass. Supports preset-based styling, a plugin animation system (fade, slide, scale, blur, word reveal), tight overlay sizing with Pillow-based text measurement, and multiple quality tiers (H.264, ProRes 422 HQ, ProRes 4444).

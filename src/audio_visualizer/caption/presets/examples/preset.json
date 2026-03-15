@@ -1,0 +1,27 @@
+{
+  "font_file": "",
+  "font_name": "Arial",
+  "font_size": 62,
+  "bold": true,
+  "italic": false,
+  "primary_color": "#FFFFFF",
+  "outline_color": "#000000",
+  "shadow_color": "#000000",
+  "outline_px": 6,
+  "shadow_px": 3,
+  "blur_px": 0,
+  "line_spacing": 10,
+  "max_width_px": 1100,
+  "padding": [44, 70, 56, 70],
+  "alignment": 2,
+  "margin_l": 0,
+  "margin_r": 0,
+  "margin_v": 0,
+  "wrap_style": 2,
+  "animation": {
+    "type": "slide_up",
+    "in_ms": 140,
+    "out_ms": 120,
+    "move_px": 26
+  }
+}

@@ -6,6 +6,7 @@ presets, file paths, and multi-preset files with named presets.
 """
 
 import json
+from importlib import resources
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -17,6 +18,38 @@ try:
     import yaml
 except ImportError:
     yaml = None  # type: ignore
+
+
+_BUNDLED_EXAMPLE_PRESETS = (
+    "preset.json",
+    "word_highlight.json",
+)
+
+
+def ensure_example_presets(preset_dir: Optional[Path] = None) -> Path:
+    """Seed bundled example preset files into the app data directory."""
+
+    target_dir = preset_dir or (get_data_dir() / "caption" / "presets")
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    resource_root = resources.files("audio_visualizer.caption.presets").joinpath(
+        "examples"
+    )
+    for filename in _BUNDLED_EXAMPLE_PRESETS:
+        destination = target_dir / filename
+        if destination.exists():
+            continue
+        source = resource_root.joinpath(filename)
+        if source.is_file():
+            destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    return target_dir
+
+
+def get_caption_preset_dir() -> Path:
+    """Return the caption preset directory inside the app data dir."""
+
+    return ensure_example_presets()
 
 
 class PresetLoader:
@@ -54,7 +87,7 @@ class PresetLoader:
         if preset_dirs is not None:
             self.preset_dirs = preset_dirs
         else:
-            self.preset_dirs = [get_data_dir() / "caption" / "presets"]
+            self.preset_dirs = [get_caption_preset_dir()]
 
     def load(self, preset_ref: str) -> PresetConfig:
         """

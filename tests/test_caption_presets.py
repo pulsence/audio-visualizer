@@ -42,6 +42,36 @@ class TestPresetLoaderDataDir:
         preset = loader.load("custom.json")
         assert preset.font_size == 72
 
+    def test_default_preset_dir_seeds_example_files(self, monkeypatch, tmp_path):
+        """Bundled example preset files are copied to the app data dir."""
+        fake_data = tmp_path / "app_data"
+        fake_data.mkdir()
+        monkeypatch.setattr(
+            "audio_visualizer.caption.presets.loader.get_data_dir",
+            lambda: fake_data,
+        )
+
+        loader = PresetLoader()
+        presets_dir = fake_data / "caption" / "presets"
+
+        assert loader.preset_dirs == [presets_dir]
+        assert (presets_dir / "preset.json").exists()
+        assert (presets_dir / "word_highlight.json").exists()
+
+    def test_seeded_example_preset_can_be_loaded(self, monkeypatch, tmp_path):
+        """A seeded example preset should load through the default loader path."""
+        fake_data = tmp_path / "app_data"
+        fake_data.mkdir()
+        monkeypatch.setattr(
+            "audio_visualizer.caption.presets.loader.get_data_dir",
+            lambda: fake_data,
+        )
+
+        loader = PresetLoader()
+        preset = loader.load("word_highlight.json")
+        assert preset.animation is not None
+        assert preset.animation.type == "word_reveal"
+
     def test_explicit_preset_dirs_override(self, tmp_path):
         """Passing explicit preset_dirs should override the default."""
         custom_dir = tmp_path / "my_presets"

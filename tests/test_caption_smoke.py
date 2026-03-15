@@ -1,6 +1,70 @@
 """Host-level smoke tests for the audio_visualizer.caption package."""
 
+from __future__ import annotations
+
+import os
+import subprocess
 import sys
+from pathlib import Path
+
+from audio_visualizer.caption import RenderConfig, render_subtitle
+from audio_visualizer.events import AppEvent, AppEventEmitter, EventType
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+FIXTURE_SRT = ROOT / "tests" / "fixtures" / "caption" / "sample.srt"
+
+
+def _import_keeps_dependency_unloaded(module_name: str, dependency_name: str) -> None:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        str(SRC) if not env.get("PYTHONPATH") else str(SRC) + os.pathsep + env["PYTHONPATH"]
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                f"import {module_name}; "
+                f"print('loaded' if '{dependency_name}' in sys.modules else 'not_loaded')"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        cwd=ROOT,
+        env=env,
+        text=True,
+    )
+    assert result.stdout.strip() == "not_loaded"
+
+
+def _patch_caption_renderer(monkeypatch) -> None:
+    from audio_visualizer.caption.rendering.ffmpegRenderer import FFmpegRenderer
+
+    monkeypatch.setattr(FFmpegRenderer, "_find_ffmpeg", lambda self: "ffmpeg")
+
+    def fake_render(self, ass_path, output_path, size, fps, duration_sec):
+        assert ass_path.exists()
+        assert size.width > 0
+        assert size.height > 0
+        assert fps
+        assert duration_sec > 0
+        self.emitter.emit(
+            AppEvent(
+                event_type=EventType.RENDER_START,
+                message="Fake FFmpeg render start",
+            )
+        )
+        output_path.write_bytes(b"0" * 2048)
+        self.emitter.emit(
+            AppEvent(
+                event_type=EventType.RENDER_COMPLETE,
+                message="Fake FFmpeg render complete",
+            )
+        )
+
+    monkeypatch.setattr(FFmpegRenderer, "render", fake_render)
 
 
 class TestCaptionImportSmoke:
@@ -10,10 +74,7 @@ class TestCaptionImportSmoke:
 
     def test_lazy_loading_no_pysubs2(self):
         """Importing audio_visualizer.caption should not load pysubs2."""
-        was_loaded = "pysubs2" in sys.modules
-        import audio_visualizer.caption  # noqa: F811
-        if not was_loaded:
-            assert "pysubs2" not in sys.modules or True
+        _import_keeps_dependency_unloaded("audio_visualizer.caption", "pysubs2")
 
     def test_public_api_surface(self):
         from audio_visualizer.caption import (
@@ -69,20 +130,54 @@ class TestCaptionAnimationSmoke:
         assert len(animations) >= 5
 
 
-class TestCaptionEventProtocolSmoke:
-    def test_caption_events_use_shared_protocol(self):
-        from audio_visualizer.events import AppEvent, AppEventEmitter, EventType
+class TestCaptionApiSmoke:
+    def test_render_subtitle_uses_host_api_and_shared_emitter(self, monkeypatch, tmp_path):
+        _patch_caption_renderer(monkeypatch)
+
         emitter = AppEventEmitter()
         received = []
-        emitter.subscribe(lambda e: received.append(e))
+        progress_messages = []
+        on_events = []
+        emitter.subscribe(received.append)
 
-        emitter.emit(AppEvent(event_type=EventType.RENDER_START, message="test from caption"))
-        assert len(received) == 1
-        assert received[0].event_type == EventType.RENDER_START
+        result = render_subtitle(
+            FIXTURE_SRT,
+            tmp_path / "overlay.mov",
+            config=RenderConfig(preset="modern_box", quality="small"),
+            on_progress=progress_messages.append,
+            on_event=on_events.append,
+            emitter=emitter,
+        )
+
+        assert result.success is True
+        assert result.output_path is not None
+        assert result.output_path.exists()
+        assert result.width > 0
+        assert result.height > 0
+        assert progress_messages
+        assert on_events
+
+        event_types = [event.event_type for event in received]
+        assert EventType.STAGE in event_types
+        assert EventType.RENDER_START in event_types
+        assert EventType.RENDER_COMPLETE in event_types
 
 
 class TestCaptionMissingBinarySmoke:
-    def test_ffmpeg_check(self):
-        from audio_visualizer.srt.io.systemHelpers import ffmpeg_ok
-        result = ffmpeg_ok()
-        assert isinstance(result, bool)
+    def test_render_subtitle_reports_missing_ffmpeg(self, monkeypatch, tmp_path):
+        from audio_visualizer.caption.rendering.ffmpegRenderer import FFmpegRenderer
+
+        def raise_missing_ffmpeg(self):
+            raise RuntimeError("FFmpeg not found on PATH.")
+
+        monkeypatch.setattr(FFmpegRenderer, "_find_ffmpeg", raise_missing_ffmpeg)
+
+        result = render_subtitle(
+            FIXTURE_SRT,
+            tmp_path / "overlay.mov",
+            config=RenderConfig(preset="clean_outline", quality="small"),
+        )
+
+        assert result.success is False
+        assert result.error is not None
+        assert "ffmpeg" in result.error.lower()

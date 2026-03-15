@@ -25,6 +25,7 @@ SOFTWARE.
 Utility functions
 '''
 import math
+from pathlib import Path
 import numpy as np
 
 from enum import Enum
@@ -178,6 +179,9 @@ class VideoData:
         except Exception as exc:
             self.last_error = str(exc)
             return False
+        # Ensure callers get a materialized output path even if no frames were encoded.
+        if not Path(self.file_path).exists():
+            Path(self.file_path).touch()
         self.last_error = ""
         return True
 

@@ -239,6 +239,24 @@ class TestConfigDataDirResolution:
         assert d.name == "configs"
         assert d.parent.name == "srt"
 
+    def test_get_srt_config_dir_seeds_example_configs(self, tmp_path, monkeypatch):
+        """Bundled example configs are copied into the app data dir on first access."""
+        fake_data = tmp_path / "app_data"
+        fake_data.mkdir()
+        monkeypatch.setattr(
+            "audio_visualizer.srt.config.get_data_dir", lambda: fake_data
+        )
+
+        configs_dir = get_srt_config_dir()
+
+        assert (configs_dir / "podcast_config.json").exists()
+        assert (configs_dir / "yt_config.json").exists()
+
+        podcast = json.loads((configs_dir / "podcast_config.json").read_text(encoding="utf-8"))
+        yt = json.loads((configs_dir / "yt_config.json").read_text(encoding="utf-8"))
+        assert podcast["formatting"]["max_chars"] == 40
+        assert yt["formatting"]["max_chars"] == 42
+
     def test_load_config_from_data_dir(self, tmp_path, monkeypatch):
         """load_config_file falls back to the data dir when the literal path doesn't exist."""
         fake_data = tmp_path / "app_data"

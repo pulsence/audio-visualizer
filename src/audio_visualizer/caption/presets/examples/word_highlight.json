@@ -1,0 +1,29 @@
+{
+  "font_file": "",
+  "font_name": "Arial",
+  "font_size": 60,
+  "bold": true,
+  "italic": false,
+  "primary_color": "#FFF2B2",
+  "outline_color": "#101010",
+  "shadow_color": "#101010",
+  "outline_px": 5,
+  "shadow_px": 2,
+  "blur_px": 0,
+  "line_spacing": 8,
+  "max_width_px": 1100,
+  "padding": [40, 64, 52, 64],
+  "alignment": 2,
+  "margin_l": 0,
+  "margin_r": 0,
+  "margin_v": 0,
+  "wrap_style": 2,
+  "animation": {
+    "type": "word_reveal",
+    "mode": "weighted",
+    "lead_in_ms": 0,
+    "min_word_ms": 60,
+    "max_word_ms": 350,
+    "unrevealed_color": "#8A8A8A"
+  }
+}

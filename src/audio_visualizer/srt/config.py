@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from importlib import resources
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -93,10 +94,33 @@ MODE_PIPELINE_DEFAULTS: Dict[PipelineMode, Dict[str, Any]] = {
     PipelineMode.TRANSCRIPT: PRESETS["transcript"],
 }
 
+_BUNDLED_EXAMPLE_CONFIGS = (
+    "podcast_config.json",
+    "yt_config.json",
+)
+
 
 # ============================================================
 # Configuration Loading
 # ============================================================
+
+def ensure_example_configs(config_dir: Optional[Path] = None) -> Path:
+    """Seed bundled example configs into the app data directory."""
+
+    target_dir = config_dir or (get_data_dir() / "srt" / "configs")
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    resource_root = resources.files("audio_visualizer.srt").joinpath("configs")
+    for filename in _BUNDLED_EXAMPLE_CONFIGS:
+        destination = target_dir / filename
+        if destination.exists():
+            continue
+        source = resource_root.joinpath(filename)
+        if source.is_file():
+            destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    return target_dir
+
 
 def get_srt_config_dir() -> Path:
     """Return the SRT config directory inside the app data dir.
@@ -106,9 +130,7 @@ def get_srt_config_dir() -> Path:
     Returns:
         ``get_data_dir() / "srt" / "configs"``
     """
-    d = get_data_dir() / "srt" / "configs"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return ensure_example_configs()
 
 
 def _resolve_config_path(path: str) -> Path:
