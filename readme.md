@@ -1,6 +1,8 @@
 # Overview
 This app turns any audio file into a video visualization. It was built for creating audiograms from spoken content, but works for music and general audio as well. The output video can be layered over images or footage in any editor.
 
+Starting with v0.6.0, Audio Visualizer also includes integrated subtitle generation (`audio_visualizer.srt`) and subtitle overlay rendering (`audio_visualizer.caption`) packages.
+
 This project is provided as-is under the MIT License. It is maintained for personal use, but shared in case it helps others.
 
 ## Features
@@ -9,6 +11,8 @@ This project is provided as-is under the MIT License. It is maintained for perso
 - Per-visualizer settings with saved project presets.
 - Volume and chroma (pitch class) visualizers, including "force" variants.
 - Built-in update check via Help menu.
+- Subtitle generation from audio/video using faster-whisper (`audio_visualizer.srt`).
+- Subtitle overlay rendering with animated effects (`audio_visualizer.caption`).
 
 ## Feature Table
 | Area | Highlights |
@@ -19,6 +23,8 @@ This project is provided as-is under the MIT License. It is maintained for perso
 | Chroma Visualizers | Rectangle, Circle, Smooth Line, Lines, Force Rectangle/Circle/Line/Lines |
 | Combined | Volume + Chroma rectangle mode |
 | Projects | Save/load presets to JSON |
+| SRT Generation | Whisper-based transcription, word-level timing, multiple output formats |
+| Caption Rendering | Animated subtitle overlays, preset system, transparent video output |
 
 ## Visualizers
 Volume:
@@ -45,7 +51,12 @@ Combined:
 - numpy
 - librosa
 - PIL (Pillow)
-- Pyside 6
+- PySide6
+- faster-whisper
+- python-docx
+- pysubs2
+- PyYAML
+- pyannote.audio (optional, for speaker diarization)
 
 # Set Up
 Install Python 3 (3.13 was version this was developed in).

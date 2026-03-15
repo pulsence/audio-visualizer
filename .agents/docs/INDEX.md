@@ -8,7 +8,7 @@ Desktop application for generating synchronized audio visualization videos. User
 
 - **Language:** Python >=3.13
 - **Entry:** `python -m audio_visualizer` or `audio-visualizer` script
-- **Version:** 0.5.1
+- **Version:** 0.6.0
 - **License:** MIT
 - **Author:** Timothy Eck
 
@@ -20,6 +20,11 @@ Desktop application for generating synchronized audio visualization videos. User
 - **Video encoding:** av (PyAV / FFmpeg)
 - **Image generation:** Pillow
 - **Update checking:** GitHub REST API
+- **Speech recognition:** faster-whisper (Whisper model)
+- **Subtitle parsing:** pysubs2
+- **Document reading:** python-docx
+- **Preset files:** PyYAML (optional)
+- **Speaker diarization:** pyannote.audio (optional)
 
 ## Architecture Overview
 
@@ -32,6 +37,8 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the detailed package structure.
 - [audio_visualizer.ui](./architecture/packages/audio_visualizer.ui.md) — MainWindow, RenderDialog, threading.
 - [audio_visualizer.ui.views](./architecture/packages/audio_visualizer.ui.views.md) — View base class, settings views for all visualizer types.
 - [audio_visualizer.visualizers](./architecture/packages/audio_visualizer.visualizers.md) — Visualizer base class, AudioData, VideoData, all visualizer implementations.
+- [audio_visualizer.srt](./architecture/packages/audio_visualizer.srt.md) — Subtitle generation from media using faster-whisper.
+- [audio_visualizer.caption](./architecture/packages/audio_visualizer.caption.md) — Subtitle overlay rendering with animated effects.
 
 ### Development Overviews
 
@@ -75,3 +82,9 @@ pytest tests/ -v
 - **Live preview:** A `QTimer` with 400ms debounce triggers 5-second preview renders when settings change.
 - **Settings persistence:** Settings are serialized as JSON. Auto-saved on close, auto-loaded on startup. Users can also save/load named project files.
 - **View-to-Visualizer mapping:** `MainWindow._VIEW_ATTRIBUTE_MAP` maps view attribute names to `VisualizerOptions` enum values for lazy-loading visualizer-specific UI panels.
+- **Shared event protocol:** `events.py` defines `AppEvent`, `AppEventEmitter`, and `LoggingBridge`. Both the `srt` and `caption` packages emit structured events (LOG, PROGRESS, STAGE, RENDER_START/PROGRESS/COMPLETE, MODEL_LOAD) via optional emitter parameters, decoupling progress reporting from any specific UI.
+- **Lazy loading:** Both `srt` and `caption` packages use `__getattr__`-based lazy loading in their `__init__.py` files. Heavy dependencies (faster-whisper, pysubs2, Pillow) are only imported when first accessed.
+- **SRT transcription:** The `srt` package provides a 4-stage pipeline (audio conversion, transcription, chunking/formatting, output writing). Supports multiple output formats (SRT, VTT, ASS, TXT, JSON), word-level timestamps, silence-aware splitting, script alignment, correction SRT alignment, and optional speaker diarization via pyannote.audio.
+- **Caption rendering:** The `caption` package renders subtitle files to transparent video overlays via FFmpeg with libass. Supports preset-based styling, a plugin animation system (fade, slide, scale, blur, word reveal), tight overlay sizing with Pillow-based text measurement, and multiple quality tiers (H.264, ProRes 422 HQ, ProRes 4444).
+- **Model management:** `ModelManager` provides thread-safe Whisper model caching and reuse across multiple transcription jobs. `modelManagement.py` provides standalone model listing, download, delete, and system diagnostics.
+- **Test suite:** 312+ tests across all packages, including dedicated test files for srt models, config, text processing, subtitle generation, alignment, output writers, events, format helpers, audio helpers, system helpers, script reader, smoke tests, caption sizing, measurement, wrapper, word reveal, and integration smoke tests.

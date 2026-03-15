@@ -12,6 +12,7 @@ src/audio_visualizer/
     app_logging.py           # File-based logging setup
     app_paths.py             # Platform-specific config/data directories
     updater.py               # GitHub release update checker
+    events.py                # Shared event protocol (AppEvent, AppEventEmitter, LoggingBridge)
     ui/
         mainWindow.py        # MainWindow — primary application window
         renderDialog.py      # RenderDialog — post-render playback dialog
@@ -60,6 +61,55 @@ src/audio_visualizer/
             rectangleCombinedVisualizer.py
         waveform/
             waveformVisualizer.py
+    srt/
+        __init__.py              # Lazy-loaded public API (transcribe_file, load_model, models, config)
+        srtApi.py                # Public API: transcribe_file(), load_model(), TranscriptionResult
+        models.py                # Data models: ResolvedConfig, SubtitleBlock, WordItem, PipelineMode
+        config.py                # Configuration: PRESETS, load_config_file(), apply_overrides()
+        modelManager.py          # ModelManager — thread-safe Whisper model lifecycle
+        modelManagement.py       # Model listing, download, delete, diagnostics
+        formatHelpers.py         # Duration formatting
+        core/
+            pipeline.py          # Core transcription pipeline (4-stage)
+            whisperWrapper.py    # faster-whisper model initialization
+            subtitleGeneration.py # Segment/word to subtitle block conversion
+            textProcessing.py    # Text normalization, wrapping, splitting, timing
+            alignment.py         # Corrected SRT and script alignment
+            diarization.py       # Optional speaker diarization (pyannote.audio)
+        io/
+            audioHelpers.py      # Audio conversion, silence detection (ffmpeg)
+            outputWriters.py     # SRT/VTT/ASS/TXT/JSON output writers
+            scriptReader.py      # .docx script reading (python-docx)
+            systemHelpers.py     # File system, ffmpeg/ffprobe checks, command execution
+    caption/
+        __init__.py              # Lazy-loaded public API (render_subtitle, configs, classes)
+        captionApi.py            # Public API: render_subtitle(), list_presets(), list_animations()
+        core/
+            config.py            # PresetConfig, AnimationConfig dataclasses
+            style.py             # StyleBuilder — ASS style from PresetConfig
+            sizing.py            # SizeCalculator, OverlaySize — overlay dimension computation
+            subtitle.py          # SubtitleFile — high-level pysubs2 wrapper
+        animations/
+            __init__.py          # Lazy loading + AnimationRegistry patching
+            baseAnimation.py     # BaseAnimation abstract base class
+            registry.py          # AnimationRegistry — plugin registry with decorator registration
+            fadeAnimation.py     # FadeAnimation (fade in/out)
+            slideAnimation.py    # SlideUpAnimation (slide up with move)
+            scaleAnimation.py    # ScaleSettleAnimation (scale effect)
+            blurAnimation.py     # BlurSettleAnimation (blur to sharp)
+            wordRevealAnimation.py # WordRevealAnimation (per-word alpha reveal)
+        rendering/
+            ffmpegRenderer.py    # FFmpegRenderer — ProRes 4444 / H.264 transparent video
+            progressTracker.py   # ProgressTracker — event-based progress reporting
+        presets/
+            defaults.py          # Built-in presets (clean_outline, modern_box)
+            loader.py            # PresetLoader — multi-source preset resolution
+        text/
+            measurement.py       # Text measurement via Pillow
+            utils.py             # ASS tag stripping, newline conversion, whitespace normalization
+            wrapper.py           # Pixel-width text wrapping
+        utils/
+            files.py             # ensure_parent_dir()
 ```
 
 ## Package Details
@@ -71,6 +121,8 @@ See individual package documentation in the [architecture/packages](./architectu
 - [audio_visualizer.ui](./architecture/packages/audio_visualizer.ui.md) — MainWindow, RenderDialog, render threading, settings persistence.
 - [audio_visualizer.ui.views](./architecture/packages/audio_visualizer.ui.views.md) — View base class and all visualizer-specific settings views.
 - [audio_visualizer.visualizers](./architecture/packages/audio_visualizer.visualizers.md) — Visualizer base class, data models, and all visualizer implementations.
+- [audio_visualizer.srt](./architecture/packages/audio_visualizer.srt.md) — Subtitle generation from media using faster-whisper.
+- [audio_visualizer.caption](./architecture/packages/audio_visualizer.caption.md) — Subtitle overlay rendering with animated effects.
 
 ## Development Overviews
 
@@ -93,8 +145,24 @@ Developer-focused architecture notes:
 | `VisualizerOptions` | `visualizers/utilities.py` | Enum of all 14 visualizer types |
 | `VisualizerFlow` | `visualizers/utilities.py` | LEFT_TO_RIGHT or OUT_FROM_CENTER |
 | `VisualizerAlignment` | `visualizers/utilities.py` | BOTTOM or CENTER |
+| `AppEvent` | `events.py` | Unified event dataclass for cross-package communication |
+| `AppEventEmitter` | `events.py` | Pub/sub event bus with enable/disable toggle |
+| `LoggingBridge` | `events.py` | Forwards AppEvents to Python logging |
+| `TranscriptionResult` | `srt/srtApi.py` | Result of a transcription job |
+| `ResolvedConfig` | `srt/models.py` | Nested SRT configuration container |
+| `SubtitleBlock` | `srt/models.py` | A timed subtitle cue with text lines |
+| `ModelManager` | `srt/modelManager.py` | Thread-safe Whisper model lifecycle manager |
+| `RenderConfig` | `caption/captionApi.py` | Configuration for caption rendering |
+| `RenderResult` | `caption/captionApi.py` | Result of a caption render job |
+| `PresetConfig` | `caption/core/config.py` | Complete caption preset configuration |
+| `SubtitleFile` | `caption/core/subtitle.py` | High-level pysubs2 wrapper |
+| `BaseAnimation` | `caption/animations/baseAnimation.py` | Abstract base for animation plugins |
+| `AnimationRegistry` | `caption/animations/registry.py` | Central animation plugin registry |
+| `FFmpegRenderer` | `caption/rendering/ffmpegRenderer.py` | FFmpeg-based transparent video renderer |
 
 ## Data Flow
+
+### Visualization Pipeline
 
 ```
 Audio file → librosa.load() → AudioData
@@ -106,6 +174,35 @@ AudioData + VideoData + settings → Visualizer subclass
     → generate_frame(0..N) → numpy arrays → av video stream
     → optional audio muxing
     → VideoData.finalize() → output MP4
+```
+
+### SRT Subtitle Generation Pipeline
+
+```
+Media file → ffmpeg (to_wav_16k_mono) → 16kHz mono WAV
+    → faster-whisper model.transcribe() → segments + word timestamps
+    → detect_silences() → silence intervals
+    → chunk_words_to_subtitles() or chunk_segments_to_subtitles()
+    → apply_silence_alignment() → timing-adjusted blocks
+    → hygiene_and_polish() → final SubtitleBlock list
+    → write_srt/vtt/ass/txt/json() → output file(s)
+
+All stages emit AppEvent (LOG, PROGRESS, STAGE) via optional emitter.
+```
+
+### Caption Overlay Rendering Pipeline
+
+```
+Subtitle file (.srt/.ass) → pysubs2.load() → SubtitleFile
+    → PresetLoader.load() → PresetConfig
+    → StyleBuilder.build() → pysubs2.SSAStyle → apply to events
+    → AnimationRegistry.create() → BaseAnimation → apply to events
+    → SizeCalculator.compute_size() → OverlaySize (tight dimensions)
+    → apply_center_positioning() → \an5\pos() tags
+    → SubtitleFile.save() → working .ass file
+    → FFmpegRenderer.render() → transparent video overlay (.mov)
+
+All stages emit AppEvent (STAGE, RENDER_START/PROGRESS/COMPLETE) via emitter.
 ```
 
 ## View-to-Visualizer Mapping
