@@ -1,12 +1,76 @@
 # Todo:
-## General
-- Make the UI and render/visualizers clearly decumpled so that the render path
+**Purpose:** Tool to produce social media voice caption/visualization
+
+
+## Current Task: (0.6.0)
+**Goal:** Integrate my existing Local SRT and Caption Animator projects into this project, and so create a single
+one-stop-shop for my YT Video/Short production process.
+
+**Work flow:**
+- Creating YT video:
+  - Record and edit audio
+  - Create visualizer using Audio Visualizer
+  - Use DaVinci Resolve to overlay visualizer over fixed background image
+- Creating Short video:
+  - Record and edit auido
+  - Generate SRT
+  - Edit SRT
+  - Generate Caption video from SRT
+  - User DaVinci Resolve to overlay caption with adio over fixed background image
+
+Both work flows should be integrated into this single app.
+
+### Stage One: (COMPLETED)
+- Review all the files in `.agents/*` and update them to properly align with the projec code in `src/*`. IGNORE ALL FILES IN `Projects to integrate/`.
+
+### Stage Two:
+- There are two projects in `Projects to integrate/`;
+  - Caption Animator (`Projects to integrate/Caption Animator/`)
+  - Local SRT (`Projects to integrate/Local SRT/`)
+- Each project I am currently implementing on its own. The goal is to merge each project into this project.
+- At the end of the merge:
+  - Local SRT will simply be a `srt` package in the `audio_visualizer` package
+  - Caption Animator will simply be a `caption` package in the `audio_visualizer` package
+  - The CLI interface for both Caption Animator and Local SRT will no longer exist, they will
+    exist purely as internal packages for the Audio Visualizer project to use.
+
+### Stage Three:
+- The existing GUI need to be adjusted to use a main tab layout, where there is tab for the following screens:
+  - Audio Visualizer (default): This is the current main screen
+  - SRT Gen: Screen to select audio files and then generate SRT file using the `audio_visualizer.srt` package.
+    This screen should allow the user to set the different settings for the srt gen.
+  - SRT Edit: Screen to allow the user to view a waveform and the srt timestamps, and then adjust the timestamps.
+  - Caption Animate: Screen to select srt files and then generate video files using the `audio_visualizer.caption` package.
+    This screen should allow the user to set the different settings for the caption generation.
+  - Render Composition: Screen to allow the user to load a background video/image, audio, and results from the other
+    tabs (for example Audio Visualizer, and Caption Animate) and then layout the different elements and render into
+    a single video file.
+
+
+## Future Work
+### General
+- Make the UI and render/visualizers clearly decupled so that the render path
 can be used as a separate library
-## GUI
+### GUI
 - Clicking on color swatches should open color dialogue
 - Chroma gradients should follow tabs like the chroma lines view
-## Visualizers
+### Visualizers
 - Set video dimensions by number of objects in visualizer
 - Future visualizers:
     - Cloud/Particles
     - Ring
+### Todo from Caption Animator:
+- Improved animation support:
+  - Add ability to set font bold or italics
+  - Add ability to configure margins and paddings in interactive
+  - Add ability to merge audio with captions
+  - Create animation like word_reveal called word highlight where words are highlighted one by one
+  - Create a new animation that mimics a typewriter effect
+  - Add ability to highlight specific words in a sentence
+  - For many of the abilities, take in a general srt and word-level srt to produce the proper effect.
+- Update tests and make sure that the codebase is comprehensively covered
+
+### Todo from Local SRT:
+- Improve test benchmarking harness to be configurable to point at folder with .mp3 and .srt and a set of
+  setting configurations and then run these configurations on the inputs and generate results based upon
+  outputs compared to provided srt.
