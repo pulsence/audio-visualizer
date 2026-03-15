@@ -74,3 +74,22 @@ can be used as a separate library
 - Improve test benchmarking harness to be configurable to point at folder with .mp3 and .srt and a set of
   setting configurations and then run these configurations on the inputs and generate results based upon
   outputs compared to provided srt.
+
+### Future Features
+- Video-linked SRT editing:
+  - Add real video preview alongside waveform editing
+  - Support frame stepping, in/out point setting from playhead, and subtitle-in-context preview
+- Speaker-aware styling:
+  - Map diarized speakers to caption styles, colors, positions, or animation presets
+- Template / brand kit system:
+  - Save reusable fonts, colors, logos, lower-thirds, caption styles, composition layouts, and export targets
+- Deliverable bundles:
+  - Export final MP4, transparent caption overlay, sidecar SRT/VTT, transcript outputs, and platform-specific variants in one pass
+- Review / approval mode:
+  - Add issue markers, revision notes, autosave history, restore points, and side-by-side subtitle diffs
+- Batch queue + watch folders:
+  - Queue multiple end-to-end jobs and optionally trigger workflows from watched asset folders
+- Multilingual / localization workflow:
+  - Support multiple subtitle tracks, shared timing across languages, and multi-language export bundles
+- Context-aware cleanup:
+  - Add smarter transcript cleanup for names, punctuation, speaker labels, and subtitle text consistency

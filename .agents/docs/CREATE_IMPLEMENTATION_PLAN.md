@@ -32,7 +32,7 @@ After completing a task block, the following must be done:
 1. Create/update tests for new features
 2. Run tests: `pytest tests/ -v`
 3. Update `.agents/docs/` architecture documentation as needed
-4. Run `git add` on all modified files and `git commit` with a message following the format in `COMMIT_MESSAGE.md` (see [COMMIT_MESSAGE.md](./COMMIT_MESSAGE.md))
+4. Run `git add` on all modified files and `git commit` with a message following the format in `COMMIT_MESSAGE.md` (see [COMMIT_MESSAGE.md](./COMMIT_MESSAGE.md)) and then `git push`.
 
 ### Success Criteria
 
