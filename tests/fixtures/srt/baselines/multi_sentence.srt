@@ -1,0 +1,21 @@
+1
+00:00:00,000 --> 00:00:01,596
+We begin with one sentence.
+
+2
+00:00:02,560 --> 00:00:04,790
+Here is a second sentence that adds more
+detail.
+
+3
+00:00:05,700 --> 00:00:10,360
+This third sentence is a bit longer and
+includes a comma which should be handled
+
+4
+00:00:10,440 --> 00:00:11,980
+well. Finally,
+
+5
+00:00:12,600 --> 00:00:13,800
+a short closing sentence.

@@ -1,0 +1,1 @@
+We begin with one sentence. Here is a second sentence that adds more detail. This third sentence is a bit longer and includes a comma, which should be handled well. Finally, a short closing sentence.

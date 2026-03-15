@@ -1,0 +1,4 @@
+1
+00:00:00,330 --> 00:00:03,040
+Today we test one short sentence for clean
+transcription.
