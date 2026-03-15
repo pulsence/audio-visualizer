@@ -1,0 +1,41 @@
+# Video/audio outputs
+*.mp3
+*.mp4
+*.wav
+*.mov
+*.avi
+
+# Test outputs (but keep test.srt as fixture)
+*.ass
+test_*.mov
+test_*.ass
+*_output.*
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+report.html
+.tox/
+*.srt
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Project-specific
+TODO
+.claude/
+*.swp
+*.bak
+*~
+.claude_files/

@@ -1,0 +1,112 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-srt"
+version = "0.3.0"
+description = "Local SRT generator using faster-whisper + ffmpeg"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Timothy Eck", email = "public@verbumcaro.com" }
+]
+keywords = ["subtitles", "srt", "whisper", "faster-whisper", "ffmpeg", "transcription"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: End Users/Desktop",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Utilities",
+]
+
+# Core Python dependencies (system dependency ffmpeg is documented in README)
+dependencies = [
+  "faster-whisper>=1.0.0",
+  "python-docx>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-cov>=4.1.0",
+  "pytest-mock>=3.11.0",
+  "pytest-html>=4.0.0",
+]
+diarize = [
+  "pyannote.audio>=3.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/pulsence/local_srt"
+Repository = "https://github.com/pulsence/local_srt"
+Issues = "https://github.com/pulsence/local_srt/issues"
+Documentation = "https://github.com/pulsence/local_srt#readme"
+Changelog = "https://github.com/pulsence/local_srt/releases"
+
+[project.scripts]
+srtgen = "local_srt.cli:main"
+
+# -----------------------------
+# setuptools configuration
+# -----------------------------
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"configs" = ["configs/*.json"]
+
+
+# -----------------------------
+# MyPy (optional)
+# -----------------------------
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+# -----------------------------
+# Pytest configuration
+# -----------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+  "-v",
+  "-m",
+  "not integration",
+  "--cov=local_srt",
+  "--cov-report=term-missing",
+  "--cov-report=html",
+  "--html=report.html",
+  "--self-contained-html",
+]
+
+# -----------------------------
+# Coverage configuration
+# -----------------------------
+[tool.coverage.run]
+source = ["src/local_srt"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "def __repr__",
+  "raise AssertionError",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]

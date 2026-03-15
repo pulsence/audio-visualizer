@@ -1,0 +1,16 @@
+*.ass
+
+build/
+*.egg-info/
+__pycache__/
+.coverage
+.pytest_cache/
+htmlcov/
+report.html
+dist/
+.venv-wls/
+
+.claude/
+.vscode/
+*.code-workspace
+test_data/

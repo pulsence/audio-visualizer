@@ -1,0 +1,11 @@
+1
+00:00:00,000 --> 00:00:01,516
+This sentence has a pause,
+
+2
+00:00:02,520 --> 00:00:04,430
+then continues after a brief silence,
+
+3
+00:00:05,700 --> 00:00:06,560
+and finishes clearly.
