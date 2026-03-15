@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Configuration management for Local SRT.
+"""Configuration management for audio_visualizer.srt.
 
 This module handles configuration loading, preset management, and
-configuration merging/overrides.
+configuration merging/overrides. Config files are resolved from the
+app data directory at ``get_data_dir() / "srt" / "configs"``.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from audio_visualizer.app_paths import get_data_dir
 from audio_visualizer.srt.models import PipelineMode, ResolvedConfig
 
 
@@ -96,8 +98,44 @@ MODE_PIPELINE_DEFAULTS: Dict[PipelineMode, Dict[str, Any]] = {
 # Configuration Loading
 # ============================================================
 
+def get_srt_config_dir() -> Path:
+    """Return the SRT config directory inside the app data dir.
+
+    The directory is created on first call if it does not exist.
+
+    Returns:
+        ``get_data_dir() / "srt" / "configs"``
+    """
+    d = get_data_dir() / "srt" / "configs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _resolve_config_path(path: str) -> Path:
+    """Resolve a config path, checking the app data directory as a fallback.
+
+    Resolution order:
+    1. Treat *path* as an absolute or cwd-relative path – use it if it exists.
+    2. Look for the filename in ``get_srt_config_dir()``.
+    3. Raise ``FileNotFoundError``.
+    """
+    p = Path(path)
+    if p.exists():
+        return p
+    data_candidate = get_srt_config_dir() / p.name
+    if data_candidate.exists():
+        return data_candidate
+    raise FileNotFoundError(
+        f"Config file not found: {p} (also checked {data_candidate})"
+    )
+
+
 def load_config_file(path: Optional[str]) -> Dict[str, Any]:
     """Load configuration from a JSON file.
+
+    The path is resolved through :func:`_resolve_config_path`, which
+    checks the literal path first, then falls back to the app data
+    directory (``get_data_dir() / "srt" / "configs"``).
 
     Args:
         path: Path to JSON config file, or None to skip loading
@@ -111,9 +149,7 @@ def load_config_file(path: Optional[str]) -> Dict[str, Any]:
     """
     if not path:
         return {}
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Config file not found: {p}")
+    p = _resolve_config_path(path)
     data = json.loads(p.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError("Config must be a JSON object at top-level.")

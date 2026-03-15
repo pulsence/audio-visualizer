@@ -1,7 +1,12 @@
 """Tests for the srt.config module."""
 import json
 import pytest
-from audio_visualizer.srt.config import PRESETS, apply_overrides, load_config_file
+from audio_visualizer.srt.config import (
+    PRESETS,
+    apply_overrides,
+    get_srt_config_dir,
+    load_config_file,
+)
 from audio_visualizer.srt.models import ResolvedConfig
 
 
@@ -223,3 +228,49 @@ class TestApplyOverrides:
         assert result.formatting.min_gap == 0.1
         assert result.formatting.pad == 0.05
         assert result.silence.silence_threshold_db == -40.0
+
+
+class TestConfigDataDirResolution:
+    """Tests for config file resolution via app data directory."""
+
+    def test_get_srt_config_dir_returns_path(self):
+        """get_srt_config_dir() returns a Path under the app data dir."""
+        d = get_srt_config_dir()
+        assert d.name == "configs"
+        assert d.parent.name == "srt"
+
+    def test_load_config_from_data_dir(self, tmp_path, monkeypatch):
+        """load_config_file falls back to the data dir when the literal path doesn't exist."""
+        fake_data = tmp_path / "app_data"
+        fake_data.mkdir()
+        monkeypatch.setattr(
+            "audio_visualizer.srt.config.get_data_dir", lambda: fake_data
+        )
+        configs_dir = fake_data / "srt" / "configs"
+        configs_dir.mkdir(parents=True)
+        config_data = {"formatting": {"max_chars": 99}}
+        (configs_dir / "my_cfg.json").write_text(
+            json.dumps(config_data), encoding="utf-8"
+        )
+
+        result = load_config_file("my_cfg.json")
+        assert result == config_data
+
+    def test_load_config_prefers_literal_path(self, tmp_path, monkeypatch):
+        """When the literal path exists, it is used instead of the data dir."""
+        literal = tmp_path / "literal.json"
+        literal.write_text(json.dumps({"source": "literal"}), encoding="utf-8")
+
+        fake_data = tmp_path / "app_data"
+        fake_data.mkdir()
+        monkeypatch.setattr(
+            "audio_visualizer.srt.config.get_data_dir", lambda: fake_data
+        )
+        configs_dir = fake_data / "srt" / "configs"
+        configs_dir.mkdir(parents=True)
+        (configs_dir / "literal.json").write_text(
+            json.dumps({"source": "data_dir"}), encoding="utf-8"
+        )
+
+        result = load_config_file(str(literal))
+        assert result == {"source": "literal"}

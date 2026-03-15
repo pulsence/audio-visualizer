@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+from audio_visualizer.app_paths import get_data_dir
 from ..core.config import PresetConfig
 from .defaults import BUILTIN_PRESETS, get_builtin_preset
 
@@ -46,9 +47,14 @@ class PresetLoader:
         Initialize preset loader.
 
         Args:
-            preset_dirs: Directories to search for preset files (default: ["presets"])
+            preset_dirs: Directories to search for preset files.
+                         Defaults to the app data directory
+                         (``get_data_dir() / "caption" / "presets"``).
         """
-        self.preset_dirs = preset_dirs or [Path("presets")]
+        if preset_dirs is not None:
+            self.preset_dirs = preset_dirs
+        else:
+            self.preset_dirs = [get_data_dir() / "caption" / "presets"]
 
     def load(self, preset_ref: str) -> PresetConfig:
         """
@@ -213,6 +219,6 @@ class PresetLoader:
 
             for path in directory.iterdir():
                 if path.is_file() and path.suffix.lower() in (".json", ".yaml", ".yml"):
-                    presets[path.name] = str(path.relative_to(Path.cwd()))
+                    presets[path.name] = str(path)
 
         return presets
