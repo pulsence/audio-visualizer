@@ -28,6 +28,8 @@ from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QVBoxLayout, QWidget
 
 import logging
+import time
+from fractions import Fraction
 from pathlib import Path
 
 from audio_visualizer.app_logging import setup_logging
