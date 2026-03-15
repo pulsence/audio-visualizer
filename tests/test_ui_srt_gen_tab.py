@@ -1,0 +1,186 @@
+"""Tests for SrtGenTab from audio_visualizer.ui.tabs.srtGenTab."""
+
+from PySide6.QtWidgets import QApplication
+
+app = QApplication.instance() or QApplication([])
+
+import pytest
+
+from audio_visualizer.ui.tabs.srtGenTab import SrtGenTab
+
+
+# ------------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------------
+
+
+class TestSrtGenTabIdentity:
+    def test_tab_id_and_title(self):
+        tab = SrtGenTab()
+        assert tab.tab_id == "srt_gen"
+        assert tab.tab_title == "SRT Gen"
+
+
+class TestSrtGenTabSettings:
+    def test_collect_settings_structure(self):
+        tab = SrtGenTab()
+        settings = tab.collect_settings()
+
+        # Top-level keys
+        expected_keys = {
+            "input_files",
+            "output_dir",
+            "format",
+            "model",
+            "device",
+            "mode",
+            "language",
+            "word_level",
+            "preset",
+            "formatting",
+            "transcription",
+            "silence",
+            "side_outputs",
+            "diarize",
+            "hf_token",
+            "diagnostics",
+            "advanced_visible",
+        }
+        assert set(settings.keys()) == expected_keys
+
+        # Formatting sub-keys
+        fmt_keys = {
+            "max_chars", "max_lines", "target_cps", "min_dur", "max_dur",
+            "allow_commas", "allow_medium", "prefer_punct_splits",
+            "min_gap", "pad",
+        }
+        assert set(settings["formatting"].keys()) == fmt_keys
+
+        # Transcription sub-keys
+        tx_keys = {
+            "vad_filter", "condition_on_previous_text",
+            "no_speech_threshold", "log_prob_threshold",
+            "compression_ratio_threshold", "initial_prompt",
+        }
+        assert set(settings["transcription"].keys()) == tx_keys
+
+        # Silence sub-keys
+        sil_keys = {"silence_min_dur", "silence_threshold_db"}
+        assert set(settings["silence"].keys()) == sil_keys
+
+        # Side outputs sub-keys
+        side_keys = {"transcript", "segments", "json_bundle"}
+        assert set(settings["side_outputs"].keys()) == side_keys
+
+        # Diagnostics sub-keys
+        diag_keys = {"keep_wav", "dry_run"}
+        assert set(settings["diagnostics"].keys()) == diag_keys
+
+    def test_apply_settings_roundtrip(self):
+        tab = SrtGenTab()
+
+        # Modify settings from defaults
+        custom = {
+            "input_files": ["/tmp/test1.mp3", "/tmp/test2.wav"],
+            "output_dir": "/tmp/output",
+            "format": "vtt",
+            "model": "medium",
+            "device": "cuda",
+            "mode": "shorts",
+            "language": "en",
+            "word_level": False,
+            "preset": "(none)",
+            "formatting": {
+                "max_chars": 20,
+                "max_lines": 1,
+                "target_cps": 15.0,
+                "min_dur": 0.5,
+                "max_dur": 3.0,
+                "allow_commas": False,
+                "allow_medium": False,
+                "prefer_punct_splits": True,
+                "min_gap": 0.1,
+                "pad": 0.05,
+            },
+            "transcription": {
+                "vad_filter": False,
+                "condition_on_previous_text": False,
+                "no_speech_threshold": 0.5,
+                "log_prob_threshold": -0.5,
+                "compression_ratio_threshold": 3.0,
+                "initial_prompt": "test prompt",
+            },
+            "silence": {
+                "silence_min_dur": 0.3,
+                "silence_threshold_db": -40.0,
+            },
+            "side_outputs": {
+                "transcript": True,
+                "segments": True,
+                "json_bundle": False,
+            },
+            "diarize": True,
+            "hf_token": "hf_test_token",
+            "diagnostics": {
+                "keep_wav": True,
+                "dry_run": True,
+            },
+            "advanced_visible": True,
+        }
+
+        tab.apply_settings(custom)
+        restored = tab.collect_settings()
+
+        assert restored["input_files"] == custom["input_files"]
+        assert restored["output_dir"] == custom["output_dir"]
+        assert restored["format"] == custom["format"]
+        assert restored["model"] == custom["model"]
+        assert restored["device"] == custom["device"]
+        assert restored["mode"] == custom["mode"]
+        assert restored["language"] == custom["language"]
+        assert restored["word_level"] == custom["word_level"]
+        assert restored["formatting"] == custom["formatting"]
+        assert restored["transcription"]["vad_filter"] == custom["transcription"]["vad_filter"]
+        assert restored["transcription"]["condition_on_previous_text"] == custom["transcription"]["condition_on_previous_text"]
+        assert restored["transcription"]["initial_prompt"] == custom["transcription"]["initial_prompt"]
+        assert restored["silence"] == custom["silence"]
+        assert restored["side_outputs"] == custom["side_outputs"]
+        assert restored["diarize"] == custom["diarize"]
+        assert restored["hf_token"] == custom["hf_token"]
+        assert restored["diagnostics"] == custom["diagnostics"]
+        assert restored["advanced_visible"] == custom["advanced_visible"]
+
+
+class TestSrtGenTabValidation:
+    def test_validate_empty_queue_fails(self):
+        tab = SrtGenTab()
+        valid, msg = tab.validate_settings()
+        assert valid is False
+        assert "input" in msg.lower()
+
+    def test_validate_with_file_passes(self):
+        tab = SrtGenTab()
+        tab._add_input_path("/tmp/test.mp3")
+        valid, msg = tab.validate_settings()
+        assert valid is True
+        assert msg == ""
+
+
+class TestSrtGenTabGlobalBusy:
+    def test_set_global_busy(self):
+        tab = SrtGenTab()
+        assert tab._start_btn.isEnabled() is True
+
+        # Another tab is busy — our start button should be disabled
+        tab.set_global_busy(True, owner_tab_id="audio_visualizer")
+        assert tab._start_btn.isEnabled() is False
+
+        # Another tab finished — re-enable
+        tab.set_global_busy(False, owner_tab_id="audio_visualizer")
+        assert tab._start_btn.isEnabled() is True
+
+    def test_set_global_busy_own_tab_ignored(self):
+        tab = SrtGenTab()
+        # When we are the owner, set_global_busy should not disable our button
+        tab.set_global_busy(True, owner_tab_id="srt_gen")
+        assert tab._start_btn.isEnabled() is True

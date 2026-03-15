@@ -21,1254 +21,605 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
-from PySide6.QtCore import (
-    Qt, QRunnable, QThreadPool, QObject, Signal, QTimer, QSize, QUrl
-)
+from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QMainWindow, QMessageBox, QGridLayout, QFormLayout, QHBoxLayout,
-    QWidget, QComboBox, QLabel, QLineEdit, QPushButton, QCheckBox,
-    QFileDialog, QColorDialog, QProgressBar, QVBoxLayout, QGroupBox, QSlider,
-    QSizePolicy
-)
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QVBoxLayout, QWidget
 
-from PySide6.QtGui import (
-    QDesktopServices, QAction, QIntValidator, QFont
-)
-
-from PySide6.QtMultimediaWidgets import (
-    QVideoWidget
-)
-
-from PySide6.QtMultimedia import (
-    QMediaPlayer, QAudioOutput
-)
-
-from audio_visualizer.visualizers import Visualizer
-
-from audio_visualizer.visualizers.utilities import AudioData, VideoData, VisualizerOptions
-
-from audio_visualizer.ui.views import Fonts
-from audio_visualizer.ui.views.general.generalSettingViews import GeneralSettingsView, GeneralSettings
-from audio_visualizer.ui.views.general.generalVisualizerView import GeneralVisualizerView, GeneralVisualizerSettings
-import json
 import logging
-import time
-from fractions import Fraction
 from pathlib import Path
 
 from audio_visualizer.app_logging import setup_logging
-from audio_visualizer.app_paths import get_config_dir, get_data_dir
+from audio_visualizer.app_paths import get_config_dir
 from audio_visualizer import updater
+from audio_visualizer.ui.sessionContext import SessionContext
+from audio_visualizer.ui.navigationSidebar import NavigationSidebar
+from audio_visualizer.ui.jobStatusWidget import JobStatusWidget
+from audio_visualizer.ui.tabs.baseTab import BaseTab
+from audio_visualizer.ui.settingsSchema import (
+    create_default_schema, load_settings, migrate_settings, save_settings,
+)
+from audio_visualizer.ui.workflowRecipes import (
+    apply_recipe,
+    create_recipe_from_session,
+    get_recipe_library_dir,
+    load_recipe,
+    save_recipe,
+    validate_recipe,
+)
+
+logger = logging.getLogger(__name__)
+
 
 class MainWindow(QMainWindow):
-    _VIEW_ATTRIBUTE_MAP = {
-        "rectangleVolumeVisualizerView": VisualizerOptions.VOLUME_RECTANGLE,
-        "circleVolumeVisualizerView": VisualizerOptions.VOLUME_CIRCLE,
-        "lineVolumeVisualizerView": VisualizerOptions.VOLUME_LINE,
-        "forceLineVolumeVisualizerView": VisualizerOptions.VOLUME_FORCE_LINE,
-        "rectangleChromaVisualizerView": VisualizerOptions.CHROMA_RECTANGLE,
-        "circleChromaVisualizerView": VisualizerOptions.CHROMA_CIRCLE,
-        "lineChromaVisualizerView": VisualizerOptions.CHROMA_LINE,
-        "lineChromaBandsVisualizerView": VisualizerOptions.CHROMA_LINES,
-        "forceRectangleChromaVisualizerView": VisualizerOptions.CHROMA_FORCE_RECTANGLE,
-        "forceCircleChromaVisualizerView": VisualizerOptions.CHROMA_FORCE_CIRCLE,
-        "forceLineChromaVisualizerView": VisualizerOptions.CHROMA_FORCE_LINE,
-        "forceLinesChromaVisualizerView": VisualizerOptions.CHROMA_FORCE_LINES,
-        "waveformVisualizerView": VisualizerOptions.WAVEFORM,
-        "combinedVisualizerView": VisualizerOptions.COMBINED_RECTANGLE,
-    }
+    """Thin multi-tab shell hosting all workflow tabs.
 
-    def __init__(self):
+    Owns the shared thread pools, SessionContext, navigation sidebar,
+    job status widget, and menu/status behaviour.  All workflow logic
+    lives inside the individual tab classes.
+    """
+
+    def __init__(self) -> None:
         super().__init__()
         self._log_path = setup_logging()
-        self._logger = logging.getLogger(__name__)
         self.setWindowTitle("Audio Visualizer")
-        self.setGeometry(100, 100, 800, 500)
-        self._visualizer_views = {}
-        self._visualizer_view_layout = None
+        self.setGeometry(100, 100, 1600, 1000)
 
-        primary_layout = QGridLayout()
-
-        self.heading_label = QLabel("Welcome to the Audio Visualizer!")
-        self.heading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.heading_label.setFont(Fonts.h1_font)
-        primary_layout.addWidget(self.heading_label, 0, 0, 1, 2)
-
-        # 1,0
-        self._prepare_general_settings_elements(primary_layout)
-        # 1,1
-        self._prepare_general_visualizer_elements(primary_layout)
-        # 2,1
-        self._prepare_specific_visualizer_elements(primary_layout)
-        # 2,0
-        self._prepare_preview_panel_elements(primary_layout)
-        # 3,0
-        self._prepare_render_elements(primary_layout)
-
-
-        container = QWidget()
-        container.setLayout(primary_layout)
-        self.setCentralWidget(container)
-
+        # Shared state
+        self.session_context = SessionContext(self)
         self.render_thread_pool = QThreadPool()
         self.render_thread_pool.setMaxThreadCount(1)
-        self.rendering = False
-        self._show_output_for_last_render = True
-        self._active_preview = False
-        self._active_render_worker = None
-        self._pending_preview_refresh = False
-        self._preview_update_timer = QTimer(self)
-        self._preview_update_timer.setSingleShot(True)
-        self._preview_update_timer.setInterval(400)
-        self._preview_update_timer.timeout.connect(self._trigger_live_preview_update)
         self._background_thread_pool = QThreadPool()
+        self._global_busy = False
+        self._busy_owner_tab_id: str | None = None
 
+        # Tab registry
+        self._tabs: list[BaseTab] = []
+        self._tab_map: dict[str, BaseTab] = {}
+        self._bound_undo_action: QAction | None = None
+        self._bound_redo_action: QAction | None = None
+
+        # Build shell layout
+        self._build_shell()
         self._setup_menu()
 
+        # Register tabs
+        self._register_all_tabs()
+
+        # Load last settings
         self._load_last_settings_if_present()
-        self._connect_live_preview_updates()
 
-    '''
-    General settings in (1,0)
-    '''
-    def _prepare_general_settings_elements(self, layout: QGridLayout, r=1, c=0):
-        self.generalSettingsView = GeneralSettingsView()
-        layout.addLayout(self.generalSettingsView.get_view_in_layout(), r, c,)
+    # ------------------------------------------------------------------
+    # Shell layout
+    # ------------------------------------------------------------------
 
-    '''
-    Settings for general visualization items in (1, 1)
-    '''
-    def _prepare_general_visualizer_elements(self, layout: QGridLayout, r=1, c=1):
-        self.generalVisualizerView = GeneralVisualizerView(self)
-        layout.addLayout(self.generalVisualizerView.get_view_in_layout(), r, c)
+    def _build_shell(self) -> None:
+        """Build the central QStackedWidget + NavigationSidebar + JobStatusWidget."""
+        main_widget = QWidget()
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(4, 4, 4, 4)
 
-    '''
-    Settings for specific visualizes in (2, 1)
-    '''
-    def _prepare_specific_visualizer_elements(self, layout: QGridLayout, r=2, c=1): 
-        main_layout = QGridLayout()
-        
-        section_label = QLabel("Selected Visualizer Settings")
-        section_label.setFont(Fonts.h2_font)
-        section_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        section_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        main_layout.addWidget(section_label, 0, 0)
-        self._visualizer_view_layout = QGridLayout()
-        self._visualizer_view_container = QWidget()
-        self._visualizer_view_container.setLayout(self._visualizer_view_layout)
-        main_layout.addWidget(self._visualizer_view_container, 1, 0)
+        # Top area: sidebar + stacked content
+        content_layout = QHBoxLayout()
 
-        layout.addLayout(main_layout, r, c)
-        current = VisualizerOptions(self.generalVisualizerView.visualizer.currentText())
-        self._show_visualizer_view(current)
+        self._sidebar = NavigationSidebar()
+        self._sidebar.tab_selected.connect(self._on_tab_selected)
+        content_layout.addWidget(self._sidebar)
 
-    def __getattr__(self, name):
-        if name in self._VIEW_ATTRIBUTE_MAP:
-            view = self._get_visualizer_view(self._VIEW_ATTRIBUTE_MAP[name])
-            setattr(self, name, view)
-            return view
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        self._stack = QStackedWidget()
+        content_layout.addWidget(self._stack, 1)
 
-    def _build_visualizer_view(self, visualizer: VisualizerOptions):
-        if visualizer == VisualizerOptions.VOLUME_RECTANGLE:
-            from audio_visualizer.ui.views.volume.rectangleVolumeVisualizerView import RectangleVolumeVisualizerView
-            return RectangleVolumeVisualizerView()
-        if visualizer == VisualizerOptions.VOLUME_CIRCLE:
-            from audio_visualizer.ui.views.volume.circleVolumeVisualizerView import CircleVolumeVisualizerView
-            return CircleVolumeVisualizerView()
-        if visualizer == VisualizerOptions.VOLUME_LINE:
-            from audio_visualizer.ui.views.volume.lineVolumeVisualizerView import LineVolumeVisualizerView
-            return LineVolumeVisualizerView()
-        if visualizer == VisualizerOptions.VOLUME_FORCE_LINE:
-            from audio_visualizer.ui.views.volume.forceLineVolumeVisualizerView import ForceLineVolumeVisualizerView
-            return ForceLineVolumeVisualizerView()
-        if visualizer == VisualizerOptions.CHROMA_RECTANGLE:
-            from audio_visualizer.ui.views.chroma.rectangleChromaVisualizerView import RectangleChromaVisualizerView
-            return RectangleChromaVisualizerView()
-        if visualizer == VisualizerOptions.CHROMA_CIRCLE:
-            from audio_visualizer.ui.views.chroma.circleChromaVisualizerView import CircleChromeVisualizerView
-            return CircleChromeVisualizerView()
-        if visualizer == VisualizerOptions.CHROMA_LINE:
-            from audio_visualizer.ui.views.chroma.lineChromaVisualizerView import LineChromaVisualizerView
-            return LineChromaVisualizerView()
-        if visualizer == VisualizerOptions.CHROMA_LINES:
-            from audio_visualizer.ui.views.chroma.lineChromaBandsVisualizerView import LineChromaBandsVisualizerView
-            return LineChromaBandsVisualizerView()
-        if visualizer == VisualizerOptions.CHROMA_FORCE_RECTANGLE:
-            from audio_visualizer.ui.views.chroma.forceRectangleChromaVisualizerView import ForceRectangleChromaVisualizerView
-            return ForceRectangleChromaVisualizerView()
-        if visualizer == VisualizerOptions.CHROMA_FORCE_CIRCLE:
-            from audio_visualizer.ui.views.chroma.forceCircleChromaVisualizerView import ForceCircleChromaVisualizerView
-            return ForceCircleChromaVisualizerView()
-        if visualizer == VisualizerOptions.CHROMA_FORCE_LINE:
-            from audio_visualizer.ui.views.chroma.forceLineChromaVisualizerView import ForceLineChromaVisualizerView
-            return ForceLineChromaVisualizerView()
-        if visualizer == VisualizerOptions.CHROMA_FORCE_LINES:
-            from audio_visualizer.ui.views.chroma.forceLinesChromaVisualizerView import ForceLinesChromaVisualizerView
-            return ForceLinesChromaVisualizerView()
-        if visualizer == VisualizerOptions.WAVEFORM:
-            from audio_visualizer.ui.views.general.waveformVisualizerView import WaveformVisualizerView
-            return WaveformVisualizerView()
-        if visualizer == VisualizerOptions.COMBINED_RECTANGLE:
-            from audio_visualizer.ui.views.general.combinedVisualizerView import CombinedVisualizerView
-            return CombinedVisualizerView()
-        raise ValueError(f"Unsupported visualizer view: {visualizer}")
+        main_layout.addLayout(content_layout, 1)
 
-    def _get_visualizer_view(self, visualizer: VisualizerOptions):
-        view = self._visualizer_views.get(visualizer)
-        if view is None:
-            view = self._build_visualizer_view(visualizer)
-            widget = view.get_view_in_widget()
-            widget.hide()
-            self._visualizer_view_layout.addWidget(widget, 0, 0)
-            self._visualizer_views[visualizer] = view
-        return view
+        # Bottom area: job status
+        self._job_status = JobStatusWidget()
+        self._job_status.cancel_requested.connect(self._on_cancel_requested)
+        self._job_status.preview_requested.connect(self._open_preview)
+        self._job_status.open_output_requested.connect(self._open_output)
+        self._job_status.open_folder_requested.connect(self._open_output_folder)
+        main_layout.addWidget(self._job_status)
 
-    def _show_visualizer_view(self, visualizer: VisualizerOptions):
-        for view in self._visualizer_views.values():
-            view.get_view_in_widget().hide()
-        view = self._get_visualizer_view(visualizer)
-        view.get_view_in_widget().show()
+        main_widget.setLayout(main_layout)
+        self.setCentralWidget(main_widget)
 
-    '''
-    UI elements to launch a render in (3, 0)
-    '''
-    def _prepare_preview_panel_elements(self, layout: QGridLayout, r=2, c=0):
-        preview_group = QGroupBox("Live Preview")
-        preview_layout = QVBoxLayout()
+    # ------------------------------------------------------------------
+    # Tab registration
+    # ------------------------------------------------------------------
 
-        self.preview_panel_body = QWidget()
-        body_layout = QVBoxLayout()
-        self.preview_video_widget = QVideoWidget()
-        body_layout.addWidget(self.preview_video_widget)
+    def add_tab(self, tab: BaseTab) -> None:
+        """Register a tab in the shell."""
+        tab.set_session_context(self.session_context)
+        index = self._stack.addWidget(tab)
+        self._sidebar.add_tab(tab.tab_id, tab.tab_title, index)
+        self._tabs.append(tab)
+        self._tab_map[tab.tab_id] = tab
+        logger.info("Tab registered: %s (%s)", tab.tab_id, tab.tab_title)
 
-        volume_row = QHBoxLayout()
-        volume_label = QLabel("Preview Volume")
-        volume_row.addWidget(volume_label)
-        self.preview_volume_slider = QSlider()
-        self.preview_volume_slider.setOrientation(Qt.Orientation.Horizontal)
-        self.preview_volume_slider.setRange(0, 100)
-        self.preview_volume_slider.setValue(0)
-        volume_row.addWidget(self.preview_volume_slider)
-        body_layout.addLayout(volume_row)
+    def _register_all_tabs(self) -> None:
+        """Register all application tabs in order."""
+        from audio_visualizer.ui.tabs.audioVisualizerTab import AudioVisualizerTab
+        self.add_tab(AudioVisualizerTab(self))
 
-        self.preview_panel_body.setLayout(body_layout)
-        preview_layout.addWidget(self.preview_panel_body)
-        preview_group.setLayout(preview_layout)
-        layout.addWidget(preview_group, r, c)
+        from audio_visualizer.ui.tabs.srtGenTab import SrtGenTab
+        self.add_tab(SrtGenTab(self))
 
-        self._preview_player = QMediaPlayer()
-        self._preview_audio_output = QAudioOutput()
-        self._preview_player.setAudioOutput(self._preview_audio_output)
-        self._preview_player.setVideoOutput(self.preview_video_widget)
-        self._preview_player.setLoops(QMediaPlayer.Loops.Infinite)
-        self.preview_volume_slider.valueChanged.connect(self._preview_volume_changed)
-        self._preview_volume_changed(self.preview_volume_slider.value())
+        from audio_visualizer.ui.tabs.srtEditTab import SrtEditTab
+        self.add_tab(SrtEditTab(self))
 
-    def _prepare_render_elements(self, layout: QGridLayout, r=3, c=0):
-        render_section_layout = QGridLayout()
+        from audio_visualizer.ui.tabs.captionAnimateTab import CaptionAnimateTab
+        self.add_tab(CaptionAnimateTab(self))
 
-        self.preview_checkbox = QCheckBox("Preview Video (30 seconds)")
-        self.preview_checkbox.setChecked(True)
-        render_section_layout.addWidget(self.preview_checkbox, 0, 0)
+        from audio_visualizer.ui.tabs.renderCompositionTab import RenderCompositionTab
+        self.add_tab(RenderCompositionTab(self))
 
-        self.preview_panel_toggle = QCheckBox("Show Live Preview Panel")
-        self.preview_panel_toggle.setChecked(True)
-        self.preview_panel_toggle.stateChanged.connect(self._toggle_preview_panel)
-        render_section_layout.addWidget(self.preview_panel_toggle, 0, 1)
+        # Default to first tab
+        if self._tabs:
+            self._sidebar.set_active(0)
+            self._stack.setCurrentIndex(0)
+            self._update_undo_actions()
 
-        self.show_output_checkbox = QCheckBox("Show Rendered Video")
-        self.show_output_checkbox.setChecked(True)
-        render_section_layout.addWidget(self.show_output_checkbox, 1, 0)
+    # ------------------------------------------------------------------
+    # Navigation
+    # ------------------------------------------------------------------
 
-        self.render_button = QPushButton("Render Video")
-        self.render_button.clicked.connect(self.render_video)
-        render_section_layout.addWidget(self.render_button, 1, 1)
+    def _on_tab_selected(self, index: int) -> None:
+        """Handle sidebar navigation click."""
+        self._stack.setCurrentIndex(index)
+        self._update_undo_actions()
 
-        self.save_project_button = QPushButton("Save Project")
-        self.save_project_button.clicked.connect(self.save_project)
-        render_section_layout.addWidget(self.save_project_button, 2, 0)
+    def active_tab(self) -> BaseTab | None:
+        """Return the currently visible tab."""
+        widget = self._stack.currentWidget()
+        if isinstance(widget, BaseTab):
+            return widget
+        return None
 
-        self.load_project_button = QPushButton("Load Project")
-        self.load_project_button.clicked.connect(self.load_project)
-        render_section_layout.addWidget(self.load_project_button, 2, 1)
+    # ------------------------------------------------------------------
+    # Menu
+    # ------------------------------------------------------------------
 
-        self.render_progress_bar = QProgressBar()
-        self.render_progress_bar.setRange(0, 0)
-        self.render_progress_bar.hide()
-        render_section_layout.addWidget(self.render_progress_bar, 3, 0, 1, 2)
-
-        self.cancel_button = QPushButton("Cancel Render")
-        self.cancel_button.clicked.connect(self.cancel_render)
-        self.cancel_button.hide()
-        render_section_layout.addWidget(self.cancel_button, 4, 0, 1, 2)
-
-        layout.addLayout(render_section_layout, r, c)
-
-        self.render_status_label = QLabel()
-        self.render_status_label.hide()
-        layout.addWidget(self.render_status_label, r, c+1)
-
-    def _setup_menu(self):
+    def _setup_menu(self) -> None:
         menu_bar = self.menuBar()
-        menu_bar.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+
+        # File menu
+        file_menu = menu_bar.addMenu("File")
+        self._save_project_action = QAction("Save Project", self)
+        self._save_project_action.triggered.connect(self.save_project)
+        file_menu.addAction(self._save_project_action)
+        self._load_project_action = QAction("Load Project", self)
+        self._load_project_action.triggered.connect(self.load_project)
+        file_menu.addAction(self._load_project_action)
+
+        file_menu.addSeparator()
+
+        self._save_recipe_action = QAction("Save Recipe...", self)
+        self._save_recipe_action.triggered.connect(self.save_recipe_dialog)
+        file_menu.addAction(self._save_recipe_action)
+
+        self._apply_recipe_action = QAction("Apply Recipe...", self)
+        self._apply_recipe_action.triggered.connect(self.apply_recipe_dialog)
+        file_menu.addAction(self._apply_recipe_action)
+
+        self._recipe_library_action = QAction("Recipe Library...", self)
+        self._recipe_library_action.triggered.connect(self.open_recipe_library)
+        file_menu.addAction(self._recipe_library_action)
+
+        # Edit menu
+        edit_menu = menu_bar.addMenu("Edit")
+        self._undo_action = QAction("Undo", self)
+        self._undo_action.setEnabled(False)
+        self._undo_action.triggered.connect(self._trigger_active_undo)
+        edit_menu.addAction(self._undo_action)
+        self._redo_action = QAction("Redo", self)
+        self._redo_action.setEnabled(False)
+        self._redo_action.triggered.connect(self._trigger_active_redo)
+        edit_menu.addAction(self._redo_action)
+
+        # Help menu
         help_menu = menu_bar.addMenu("Help")
-        help_menu.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.check_updates_action = QAction("Check for Updates", self)
         self.check_updates_action.triggered.connect(self.check_for_updates)
         help_menu.addAction(self.check_updates_action)
 
+    def _update_undo_actions(self) -> None:
+        """Rebind Edit > Undo/Redo to the active tab's stack."""
+        tab = self.active_tab()
+        self._disconnect_bound_undo_actions()
 
-    def visualizer_selection_changed(self, visualizer):
-        if self._visualizer_view_layout is None:
-            return
-        visualizer = VisualizerOptions(visualizer)
-        self._show_visualizer_view(visualizer)
-
-    def validate_render_settings(self):
-        if not self.generalSettingsView.validate_view():
-            return False, self.generalSettingsView.last_error or "General settings are invalid."
-        if not self.generalVisualizerView.validate_view():
-            return False, "General visualization settings are invalid."
-        
-        selected = VisualizerOptions(self.generalVisualizerView.visualizer.currentText())
-        error_map = {
-            VisualizerOptions.VOLUME_RECTANGLE: "Rectangle volume settings are invalid.",
-            VisualizerOptions.VOLUME_CIRCLE: "Circle volume settings are invalid.",
-            VisualizerOptions.VOLUME_LINE: "Smooth line volume settings are invalid.",
-            VisualizerOptions.VOLUME_FORCE_LINE: "Force line volume settings are invalid.",
-            VisualizerOptions.CHROMA_RECTANGLE: "Rectangle chroma settings are invalid.",
-            VisualizerOptions.CHROMA_CIRCLE: "Circle chroma settings are invalid.",
-            VisualizerOptions.CHROMA_LINE: "Smooth line chroma settings are invalid.",
-            VisualizerOptions.CHROMA_LINES: "Chroma lines settings are invalid.",
-            VisualizerOptions.CHROMA_FORCE_RECTANGLE: "Force rectangle chroma settings are invalid.",
-            VisualizerOptions.CHROMA_FORCE_CIRCLE: "Force circle chroma settings are invalid.",
-            VisualizerOptions.CHROMA_FORCE_LINE: "Force line chroma settings are invalid.",
-            VisualizerOptions.CHROMA_FORCE_LINES: "Force lines chroma settings are invalid.",
-            VisualizerOptions.WAVEFORM: "Waveform settings are invalid.",
-            VisualizerOptions.COMBINED_RECTANGLE: "Combined settings are invalid.",
-        }
-        if selected in error_map:
-            if not self._get_visualizer_view(selected).validate_view():
-                return False, error_map[selected]
-        
-        return True, ""
-
-    def _preview_output_path(self) -> str:
-        return str(get_data_dir() / "preview_output.mp4")
-
-    def _create_visualizer(self, audio_data: AudioData, video_data: VideoData, visualizer_settings: GeneralVisualizerSettings):
-        from audio_visualizer.visualizers import volume, chroma, waveform, combined
-        if visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_RECTANGLE:
-            settings = self.rectangleVolumeVisualizerView.read_view_values()
-
-            return volume.RectangleVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y, 
-                super_sampling=visualizer_settings.super_sampling,
-                box_height=settings.box_height, box_width=settings.box_width,
-                corner_radius=settings.corner_radius,
-                border_width=visualizer_settings.border_width, spacing=visualizer_settings.spacing,
-                bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment, flow=settings.flow
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_CIRCLE:
-            settings = self.circleVolumeVisualizerView.read_view_values()
-
-            return volume.CircleVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                max_radius=settings.radius, border_width=visualizer_settings.border_width, 
-                spacing=visualizer_settings.spacing,
-                bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment, flow=settings.flow
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_LINE:
-            settings = self.lineVolumeVisualizerView.read_view_values()
-
-            return volume.LineVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                max_height=settings.max_height, line_thickness=settings.line_thickness,
-                spacing=visualizer_settings.spacing,
-                color=visualizer_settings.bg_color,
-                alignment=visualizer_settings.alignment, flow=settings.flow,
-                smoothness=settings.smoothness
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.VOLUME_FORCE_LINE:
-            settings = self.forceLineVolumeVisualizerView.read_view_values()
-
-            return volume.ForceLineVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                line_thickness=settings.line_thickness,
-                points_count=settings.points_count,
-                color=visualizer_settings.bg_color,
-                alignment=visualizer_settings.alignment,
-                flow=settings.flow,
-                tension=settings.tension,
-                damping=settings.damping,
-                impulse_strength=settings.impulse_strength,
-                gravity=settings.gravity,
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_RECTANGLE:
-            settings = self.rectangleChromaVisualizerView.read_view_values()
-
-            return chroma.RectangleVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y, 
-                super_sampling=visualizer_settings.super_sampling,
-                box_height=settings.box_height,
-                corner_radius=settings.corner_radius,
-                border_width=visualizer_settings.border_width, spacing=visualizer_settings.spacing,
-                bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment,
-                color_mode=settings.color_mode,
-                gradient_start=settings.gradient_start,
-                gradient_end=settings.gradient_end,
-                band_colors=settings.band_colors,
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_CIRCLE:
-            settings = self.circleChromaVisualizerView.read_view_values()
-
-            return chroma.CircleVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                border_width=visualizer_settings.border_width, 
-                spacing=visualizer_settings.spacing,
-                bg_color=visualizer_settings.bg_color, border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment,
-                color_mode=settings.color_mode,
-                gradient_start=settings.gradient_start,
-                gradient_end=settings.gradient_end,
-                band_colors=settings.band_colors,
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_LINE:
-            settings = self.lineChromaVisualizerView.read_view_values()
-
-            return chroma.LineVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                max_height=settings.max_height, line_thickness=settings.line_thickness,
-                color=visualizer_settings.bg_color,
-                alignment=visualizer_settings.alignment,
-                smoothness=settings.smoothness,
-                color_mode=settings.color_mode,
-                gradient_start=settings.gradient_start,
-                gradient_end=settings.gradient_end,
-                band_colors=settings.band_colors,
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_LINES:
-            settings = self.lineChromaBandsVisualizerView.read_view_values()
-
-            return chroma.LineBandsVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                max_height=settings.max_height, line_thickness=settings.line_thickness,
-                spacing=visualizer_settings.spacing,
-                color=visualizer_settings.bg_color,
-                alignment=visualizer_settings.alignment,
-                flow=settings.flow,
-                smoothness=settings.smoothness,
-                band_spacing=settings.band_spacing,
-                band_colors=settings.band_colors,
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_FORCE_RECTANGLE:
-            settings = self.forceRectangleChromaVisualizerView.read_view_values()
-
-            return chroma.ForceRectangleVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                box_height=settings.box_height,
-                corner_radius=settings.corner_radius,
-                border_width=visualizer_settings.border_width,
-                spacing=visualizer_settings.spacing,
-                bg_color=visualizer_settings.bg_color,
-                border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment,
-                color_mode=settings.color_mode,
-                gradient_start=settings.gradient_start,
-                gradient_end=settings.gradient_end,
-                band_colors=settings.band_colors,
-                gravity=settings.gravity,
-                force_strength=settings.force_strength,
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_FORCE_CIRCLE:
-            settings = self.forceCircleChromaVisualizerView.read_view_values()
-
-            return chroma.ForceCircleVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                border_width=visualizer_settings.border_width,
-                spacing=visualizer_settings.spacing,
-                bg_color=visualizer_settings.bg_color,
-                border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment,
-                color_mode=settings.color_mode,
-                gradient_start=settings.gradient_start,
-                gradient_end=settings.gradient_end,
-                band_colors=settings.band_colors,
-                gravity=settings.gravity,
-                force_strength=settings.force_strength,
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_FORCE_LINE:
-            settings = self.forceLineChromaVisualizerView.read_view_values()
-
-            return chroma.ForceLineVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                line_thickness=settings.line_thickness,
-                points_count=settings.points_count,
-                color=visualizer_settings.bg_color,
-                alignment=visualizer_settings.alignment,
-                tension=settings.tension,
-                damping=settings.damping,
-                force_strength=settings.force_strength,
-                gravity=settings.gravity,
-                smoothness=settings.smoothness,
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.CHROMA_FORCE_LINES:
-            settings = self.forceLinesChromaVisualizerView.read_view_values()
-
-            return chroma.ForceLinesVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                line_thickness=settings.line_thickness,
-                points_count=settings.points_count,
-                color=visualizer_settings.bg_color,
-                alignment=visualizer_settings.alignment,
-                tension=settings.tension,
-                damping=settings.damping,
-                force_strength=settings.force_strength,
-                gravity=settings.gravity,
-                smoothness=settings.smoothness,
-                band_spacing=settings.band_spacing,
-                band_colors=settings.band_colors,
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.WAVEFORM:
-            settings = self.waveformVisualizerView.read_view_values()
-
-            return waveform.WaveformVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                line_thickness=settings.line_thickness,
-                super_sampling=visualizer_settings.super_sampling,
-                color=visualizer_settings.bg_color,
-                alignment=visualizer_settings.alignment
-            )
-        elif visualizer_settings.visualizer_type == VisualizerOptions.COMBINED_RECTANGLE:
-            settings = self.combinedVisualizerView.read_view_values()
-
-            return combined.RectangleVisualizer(
-                audio_data, video_data, visualizer_settings.x, visualizer_settings.y,
-                super_sampling=visualizer_settings.super_sampling,
-                box_height=settings.box_height, box_width=settings.box_width,
-                corner_radius=settings.corner_radius,
-                chroma_box_height=settings.chroma_box_height,
-                chroma_corner_radius=settings.chroma_corner_radius,
-                border_width=visualizer_settings.border_width, spacing=visualizer_settings.spacing,
-                volume_color=visualizer_settings.bg_color,
-                chroma_color=visualizer_settings.border_color,
-                border_color=visualizer_settings.border_color,
-                alignment=visualizer_settings.alignment, flow=settings.flow
-            )
-        return None
-
-    def _reset_render_controls(self):
-        self.rendering = False
-        self._set_controls_enabled(True)
-        self.render_button.setText("Render Video")
-        self.render_status_label.hide()
-        self.render_progress_bar.hide()
-        self.cancel_button.hide()
-        self.cancel_button.setEnabled(True)
-        self._active_preview = False
-
-    def _start_render(self, preview_seconds=None, output_path=None, force_show_output=None, show_validation_errors=True):
-        if self.rendering:
-            return
-        
-        self.rendering = True
-        self._active_preview = preview_seconds is not None and output_path == self._preview_output_path()
-        if self._active_preview:
-            self._reset_preview_player()
-        self._set_controls_enabled(False)
-        if self._active_preview:
-            self.render_button.setText("Previewing...")
+        if tab and tab.has_undo_support:
+            self._bound_undo_action = tab.undo_action()
+            self._bound_redo_action = tab.redo_action()
         else:
-            self.render_button.setText("Rendering...")
+            self._bound_undo_action = None
+            self._bound_redo_action = None
 
-        self.render_status_label.show()
-        self.render_status_label.setText("Setting up render...")
-        self.render_progress_bar.setRange(0, 0)
-        self.render_progress_bar.setValue(0)
-        self.render_progress_bar.show()
-        self.cancel_button.show()
-        self.cancel_button.setEnabled(True)
+        self._connect_bound_undo_actions()
+        self._sync_undo_actions()
 
-        valid, validation_error = self.validate_render_settings()
-        if not valid:
-            self._reset_render_controls()
+    def _connect_bound_undo_actions(self) -> None:
+        if self._bound_undo_action is not None:
+            self._bound_undo_action.changed.connect(self._sync_undo_actions)
+        if self._bound_redo_action is not None:
+            self._bound_redo_action.changed.connect(self._sync_undo_actions)
 
-            if show_validation_errors:
-                message = QMessageBox(QMessageBox.Icon.Critical, "Settings Error",
-                                      f"The render cannot run. {validation_error}")
-                message.exec()
-            return
+    def _disconnect_bound_undo_actions(self) -> None:
+        for action in (self._bound_undo_action, self._bound_redo_action):
+            if action is None:
+                continue
+            try:
+                action.changed.disconnect(self._sync_undo_actions)
+            except RuntimeError:
+                pass
 
-        general_settings = self.generalSettingsView.read_view_values()
-        visualizer_settings = self.generalVisualizerView.read_view_values()
+    def _sync_undo_actions(self) -> None:
+        undo = self._bound_undo_action
+        redo = self._bound_redo_action
 
-        audio_data = AudioData(general_settings.audio_file_path)
-        file_path = output_path or general_settings.video_file_path
-        video_data = VideoData(
-            general_settings.video_width,
-            general_settings.video_height,
-            general_settings.fps,
-            file_path=file_path,
-            codec=general_settings.codec,
-            bitrate=general_settings.bitrate,
-            crf=general_settings.crf,
-            hardware_accel=general_settings.hardware_accel,
-        )
-
-        visualizer = self._create_visualizer(audio_data, video_data, visualizer_settings)
-
-        if force_show_output is None:
-            self._show_output_for_last_render = self.show_output_checkbox.isChecked()
+        if undo is not None:
+            self._undo_action.setEnabled(undo.isEnabled())
+            self._undo_action.setText(undo.text() or "Undo")
         else:
-            self._show_output_for_last_render = force_show_output
+            self._undo_action.setEnabled(False)
+            self._undo_action.setText("Undo")
 
-        render_worker = RenderWorker(
-            audio_data,
-            video_data,
-            visualizer,
-            preview_seconds,
-            include_audio=general_settings.include_audio,
+        if redo is not None:
+            self._redo_action.setEnabled(redo.isEnabled())
+            self._redo_action.setText(redo.text() or "Redo")
+        else:
+            self._redo_action.setEnabled(False)
+            self._redo_action.setText("Redo")
+
+    def _trigger_active_undo(self) -> None:
+        if self._bound_undo_action is not None and self._bound_undo_action.isEnabled():
+            self._bound_undo_action.trigger()
+
+    def _trigger_active_redo(self) -> None:
+        if self._bound_redo_action is not None and self._bound_redo_action.isEnabled():
+            self._bound_redo_action.trigger()
+
+    # ------------------------------------------------------------------
+    # Recipe actions
+    # ------------------------------------------------------------------
+
+    def save_recipe_dialog(self) -> None:
+        """Create a recipe from current state and save to library or user path."""
+        from PySide6.QtWidgets import QInputDialog
+
+        name, ok = QInputDialog.getText(
+            self, "Save Recipe", "Recipe name:"
         )
-        self._active_render_worker = render_worker
-        render_worker.signals.finished.connect(self.render_finished)
-        render_worker.signals.error.connect(self.render_failed)
-        render_worker.signals.status.connect(self.render_status_update)
-        render_worker.signals.progress.connect(self.render_progress_update)
-        render_worker.signals.canceled.connect(self.render_canceled)
-        self.render_thread_pool.start(render_worker)
-
-    def render_video(self):
-        preview_seconds = 30 if self.preview_checkbox.isChecked() else None
-        self._start_render(preview_seconds=preview_seconds)
-
-    def render_preview(self):
-        self._start_render(preview_seconds=5, output_path=self._preview_output_path(), force_show_output=True)
-    
-    def render_finished(self, video_data: VideoData):
-        if self._active_preview:
-            self._show_preview_in_panel(video_data)
-        elif self._show_output_for_last_render:
-            from audio_visualizer.ui.renderDialog import RenderDialog
-            player = RenderDialog(video_data)
-            player.exec()
-        self._active_render_worker = None
-        self._reset_render_controls()
-        if self._pending_preview_refresh:
-            self._trigger_live_preview_update()
-    
-    def render_failed(self, msg):
-        message = QMessageBox(QMessageBox.Icon.Critical, "Error rendering",
-                              f"There was an error rendering the video. The error message is: {msg}\n\nLog file: {self._log_path}")
-        message.exec()
-        self._active_render_worker = None
-        self._reset_preview_player()
-        self._reset_render_controls()
-
-    def render_status_update(self, msg):
-        self.render_status_label.setText(msg)
-
-    def render_progress_update(self, current_frame: int, total_frames: int, elapsed_seconds: float):
-        if total_frames > 0:
-            if self.render_progress_bar.maximum() != total_frames:
-                self.render_progress_bar.setRange(0, total_frames)
-            self.render_progress_bar.setValue(current_frame)
-        if current_frame > 0 and total_frames > 0:
-            eta_seconds = (elapsed_seconds / current_frame) * (total_frames - current_frame)
-            eta = self._format_duration(eta_seconds)
-            self.render_status_label.setText(
-                f"Rendering video ({current_frame}/{total_frames} frames, ETA {eta})"
-            )
-
-    def render_canceled(self):
-        self._active_render_worker = None
-        self.render_status_label.setText("Render canceled.")
-        self._reset_render_controls()
-
-    def cancel_render(self):
-        if self._active_render_worker is None:
+        if not ok or not name.strip():
             return
-        self.render_status_label.setText("Canceling render...")
-        self.cancel_button.setEnabled(False)
-        self._active_render_worker.cancel()
 
-    def _set_controls_enabled(self, enabled: bool):
-        for widget_type in (QLineEdit, QComboBox, QCheckBox, QPushButton):
-            for widget in self.findChildren(widget_type):
-                if widget is self.cancel_button:
-                    continue
-                widget.setEnabled(enabled)
-        if enabled:
-            self.cancel_button.setEnabled(False)
+        recipe = create_recipe_from_session(
+            self._tabs, self.session_context, name.strip()
+        )
 
-    @staticmethod
-    def _format_duration(seconds: float) -> str:
-        if seconds < 0:
-            seconds = 0
-        total = int(seconds)
-        minutes, secs = divmod(total, 60)
-        return f"{minutes:02d}:{secs:02d}"
-
-    def _connect_live_preview_updates(self):
-        for field in self.findChildren(QLineEdit):
-            field.textChanged.connect(self._schedule_live_preview_update)
-        for combo in self.findChildren(QComboBox):
-            combo.currentTextChanged.connect(self._schedule_live_preview_update)
-        for checkbox in self.findChildren(QCheckBox):
-            checkbox.stateChanged.connect(self._schedule_live_preview_update)
-
-    def _schedule_live_preview_update(self):
-        if not self.preview_panel_toggle.isChecked():
-            return
-        self._pending_preview_refresh = True
-        self._preview_update_timer.start()
-
-    def _trigger_live_preview_update(self):
-        if not self.preview_panel_toggle.isChecked():
-            self._pending_preview_refresh = False
-            return
-        if self.rendering:
-            return
-        valid, _ = self.validate_render_settings()
+        valid, msg = validate_recipe(recipe)
         if not valid:
-            self._pending_preview_refresh = False
+            QMessageBox.warning(self, "Invalid Recipe", msg)
             return
-        self._pending_preview_refresh = False
-        self._start_render(
-            preview_seconds=5,
-            output_path=self._preview_output_path(),
-            force_show_output=True,
-            show_validation_errors=False,
-        )
 
-    def _toggle_preview_panel(self, _checked):
-        visible = self.preview_panel_toggle.isChecked()
-        self.preview_panel_body.setVisible(visible)
-        if not visible:
-            self._reset_preview_player()
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle("Save Recipe")
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        dialog.setNameFilter("Recipe Files (*.avrecipe.json)")
+        dialog.setDefaultSuffix("avrecipe.json")
+        dialog.setDirectory(str(get_recipe_library_dir()))
+        if dialog.exec():
+            path = Path(dialog.selectedFiles()[0])
+            if not save_recipe(recipe, path):
+                QMessageBox.critical(
+                    self, "Save Failed",
+                    "Unable to save the recipe file.",
+                )
 
-    def check_for_updates(self):
+    def apply_recipe_dialog(self) -> None:
+        """Browse for a recipe file and apply it."""
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle("Apply Recipe")
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setNameFilter("Recipe Files (*.avrecipe.json);;JSON Files (*.json)")
+        dialog.setDirectory(str(get_recipe_library_dir()))
+        if dialog.exec():
+            path = Path(dialog.selectedFiles()[0])
+            recipe = load_recipe(path)
+            if recipe is None:
+                QMessageBox.critical(
+                    self, "Load Failed",
+                    "Unable to load the recipe file.",
+                )
+                return
+            apply_recipe(recipe, self._tabs, self.session_context)
+            logger.info("Recipe applied: %s", recipe.name)
+
+    def open_recipe_library(self) -> None:
+        """Open the recipe library directory in the system file manager."""
+        library_dir = get_recipe_library_dir()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(library_dir)))
+
+    # ------------------------------------------------------------------
+    # Cross-tab handoff
+    # ------------------------------------------------------------------
+
+    def handoff_to_tab(
+        self,
+        target_tab_id: str,
+        asset_id: str | None = None,
+        role: str | None = None,
+    ) -> None:
+        """Switch to a target tab and optionally pre-fill with an asset.
+
+        Parameters
+        ----------
+        target_tab_id : str
+            The ``tab_id`` of the tab to switch to.
+        asset_id : str | None
+            If provided, the asset ID to pre-fill in the target tab.
+        role : str | None
+            If provided and *asset_id* is given, assign this role to the
+            asset in the session context before switching.
+        """
+        # Assign role if requested
+        if asset_id and role:
+            asset = self.session_context.get_asset(asset_id)
+            if asset is not None:
+                self.session_context.set_role(asset_id, role)
+
+        # Switch to target tab
+        for i, tab in enumerate(self._tabs):
+            if tab.tab_id == target_tab_id:
+                self._sidebar.set_active(i)
+                self._stack.setCurrentIndex(i)
+                self._update_undo_actions()
+                logger.info(
+                    "Handoff to tab '%s' (asset=%s, role=%s)",
+                    target_tab_id,
+                    asset_id,
+                    role,
+                )
+                return
+
+        logger.warning("Handoff target tab '%s' not found.", target_tab_id)
+
+    def handoff_srt_gen_to_srt_edit(self, asset_id: str | None = None) -> None:
+        """Handoff from SRT Gen to SRT Edit after transcription."""
+        self.handoff_to_tab("srt_edit", asset_id=asset_id, role="subtitle_source")
+
+    def handoff_srt_edit_to_caption_animate(self, asset_id: str | None = None) -> None:
+        """Handoff from SRT Edit to Caption Animate after saving."""
+        self.handoff_to_tab("caption_animate", asset_id=asset_id, role="caption_source")
+
+    def handoff_to_composition(self, asset_id: str | None = None) -> None:
+        """Handoff from Caption Animate or Audio Visualizer to Composition."""
+        self.handoff_to_tab("render_composition", asset_id=asset_id)
+
+    # ------------------------------------------------------------------
+    # Global busy state (shared job pool)
+    # ------------------------------------------------------------------
+
+    def set_global_busy(self, is_busy: bool, owner_tab_id: str | None = None) -> None:
+        """Notify all tabs about shared pool busy state."""
+        self._global_busy = is_busy
+        self._busy_owner_tab_id = owner_tab_id if is_busy else None
+        for tab in self._tabs:
+            tab.set_global_busy(is_busy, owner_tab_id)
+        if is_busy and owner_tab_id:
+            idx = next(
+                (i for i, t in enumerate(self._tabs) if t.tab_id == owner_tab_id),
+                -1,
+            )
+            if idx >= 0:
+                self._sidebar.set_busy(idx, True)
+        elif not is_busy:
+            for i in range(len(self._tabs)):
+                self._sidebar.set_busy(i, False)
+
+    def is_global_busy(self) -> bool:
+        """Return whether the shared job pool is busy."""
+        return self._global_busy
+
+    def try_start_job(self, owner_tab_id: str) -> bool:
+        """Attempt to start a job. Returns False if pool is busy."""
+        if self._global_busy:
+            QMessageBox.information(
+                self,
+                "Job in Progress",
+                f"Cannot start a new job while another is running.\n"
+                f"Active job owned by: {self._busy_owner_tab_id or 'unknown'}",
+            )
+            return False
+        self.set_global_busy(True, owner_tab_id)
+        return True
+
+    def finish_job(self, owner_tab_id: str) -> None:
+        """Mark the shared pool as idle after job completion."""
+        self.set_global_busy(False)
+
+    # ------------------------------------------------------------------
+    # Job status widget integration
+    # ------------------------------------------------------------------
+
+    def show_job_status(self, job_type: str, owner_tab: str, label: str) -> None:
+        """Show job info in the persistent status area."""
+        self._job_status.show_job(job_type, owner_tab, label)
+
+    def update_job_progress(self, percent: float, message: str) -> None:
+        """Update the persistent job progress."""
+        self._job_status.update_progress(percent, message)
+
+    def update_job_status(self, message: str) -> None:
+        """Update the persistent job status text."""
+        self._job_status.update_status(message)
+
+    def show_job_completed(self, message: str, output_path: str | None = None,
+                           owner_tab_id: str | None = None) -> None:
+        """Show completion in status and offer actions instead of modal dialog."""
+        self._job_status.show_completed(message, output_path=output_path)
+        self.finish_job(owner_tab_id or "")
+
+    def show_job_failed(self, error: str, owner_tab_id: str | None = None) -> None:
+        """Show error in status area."""
+        self._job_status.show_failed(error)
+        self.finish_job(owner_tab_id or "")
+
+    def show_job_canceled(self, message: str | None = None,
+                          owner_tab_id: str | None = None) -> None:
+        """Show canceled state in status area."""
+        self._job_status.show_canceled(message or "Job canceled.")
+        self.finish_job(owner_tab_id or "")
+
+    def _on_cancel_requested(self) -> None:
+        """Handle cancel from job status widget."""
+        tab = self._tab_map.get(self._busy_owner_tab_id or "")
+        if tab and hasattr(tab, "cancel_job"):
+            tab.cancel_job()
+
+    def _open_preview(self, output_path: str) -> None:
+        """Open RenderDialog for previewing output."""
+        from audio_visualizer.visualizers.utilities import VideoData
+        from audio_visualizer.ui.renderDialog import RenderDialog
+        # Create minimal VideoData for the dialog
+        video_data = VideoData(0, 0, 0, file_path=output_path)
+        dialog = RenderDialog(video_data)
+        dialog.exec()
+
+    def _open_output(self, output_path: str) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path)))
+
+    def _open_output_folder(self, output_path: str) -> None:
+        folder = Path(output_path).parent
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    # ------------------------------------------------------------------
+    # Update checking
+    # ------------------------------------------------------------------
+
+    def check_for_updates(self) -> None:
         self.check_updates_action.setEnabled(False)
         worker = UpdateCheckWorker()
         worker.signals.finished.connect(self._handle_update_check_result)
         worker.signals.error.connect(self._handle_update_check_error)
         self._background_thread_pool.start(worker)
 
-    def _handle_update_check_result(self, current_version: str, latest_version: str, url: str):
+    def _handle_update_check_result(self, current_version: str,
+                                     latest_version: str, url: str) -> None:
         self.check_updates_action.setEnabled(True)
         if not latest_version:
-            QMessageBox.information(self, "Check for Updates", "Unable to determine the latest version.")
+            QMessageBox.information(
+                self, "Check for Updates",
+                "Unable to determine the latest version.",
+            )
             return
         if updater.is_update_available(current_version, latest_version):
             message = QMessageBox(self)
             message.setIcon(QMessageBox.Icon.Information)
             message.setWindowTitle("Update Available")
             message.setText(
-                f"A new version is available.\n\nCurrent: {current_version}\nLatest: {latest_version}"
+                f"A new version is available.\n\n"
+                f"Current: {current_version}\nLatest: {latest_version}"
             )
-            open_button = message.addButton("Open Release Page", QMessageBox.ButtonRole.AcceptRole)
+            open_button = message.addButton(
+                "Open Release Page", QMessageBox.ButtonRole.AcceptRole,
+            )
             message.addButton("Close", QMessageBox.ButtonRole.RejectRole)
             message.exec()
             if message.clickedButton() == open_button and url:
                 QDesktopServices.openUrl(QUrl(url))
         else:
             QMessageBox.information(
-                self,
-                "Check for Updates",
-                f"You are up to date.\n\nCurrent: {current_version}\nLatest: {latest_version}",
+                self, "Check for Updates",
+                f"You are up to date.\n\n"
+                f"Current: {current_version}\nLatest: {latest_version}",
             )
 
-    def _handle_update_check_error(self, error: str):
+    def _handle_update_check_error(self, error: str) -> None:
         self.check_updates_action.setEnabled(True)
         QMessageBox.warning(self, "Check for Updates", error)
 
-    def _preview_volume_changed(self, value: int):
-        if self._preview_audio_output is not None:
-            self._preview_audio_output.setVolume(value / 100)
-
-    def _reset_preview_player(self):
-        if self._preview_player is None:
-            return
-        try:
-            self._preview_player.stop()
-        except Exception:
-            pass
-        try:
-            self._preview_player.setSource(QUrl())
-        except Exception:
-            pass
-
-    def _show_preview_in_panel(self, video_data: VideoData):
-        if not self.preview_panel_toggle.isChecked():
-            return
-        try:
-            self.preview_video_widget.setMaximumSize(QSize(video_data.video_width, video_data.video_height))
-        except Exception:
-            pass
-        self._preview_player.setSource(QUrl.fromLocalFile(video_data.file_path))
-        self._preview_player.play()
+    # ------------------------------------------------------------------
+    # Settings persistence (versioned schema)
+    # ------------------------------------------------------------------
 
     def _default_settings_path(self) -> Path:
         return get_config_dir() / "last_settings.json"
 
     def _collect_settings(self) -> dict:
-        general = self.generalSettingsView.read_view_values()
-        visualizer = self.generalVisualizerView.read_view_values()
+        """Collect settings from all tabs into the versioned schema."""
+        schema = create_default_schema()
+        # UI state
+        active = self.active_tab()
+        schema["ui"]["last_active_tab"] = active.tab_id if active else "audio_visualizer"
+        schema["ui"]["window"]["width"] = self.width()
+        schema["ui"]["window"]["height"] = self.height()
+        schema["ui"]["window"]["maximized"] = self.isMaximized()
 
-        specific = {}
-        selected = visualizer.visualizer_type
-        if selected == VisualizerOptions.VOLUME_RECTANGLE:
-            settings = self.rectangleVolumeVisualizerView.read_view_values()
-            specific = {
-                "box_height": settings.box_height,
-                "box_width": settings.box_width,
-                "corner_radius": settings.corner_radius,
-                "flow": settings.flow.value,
-            }
-        elif selected == VisualizerOptions.VOLUME_CIRCLE:
-            settings = self.circleVolumeVisualizerView.read_view_values()
-            specific = {
-                "radius": settings.radius,
-                "flow": settings.flow.value,
-            }
-        elif selected == VisualizerOptions.VOLUME_LINE:
-            settings = self.lineVolumeVisualizerView.read_view_values()
-            specific = {
-                "max_height": settings.max_height,
-                "line_thickness": settings.line_thickness,
-                "flow": settings.flow.value,
-                "smoothness": settings.smoothness,
-            }
-        elif selected == VisualizerOptions.VOLUME_FORCE_LINE:
-            settings = self.forceLineVolumeVisualizerView.read_view_values()
-            specific = {
-                "line_thickness": settings.line_thickness,
-                "points_count": settings.points_count,
-                "tension": settings.tension,
-                "damping": settings.damping,
-                "impulse_strength": settings.impulse_strength,
-                "gravity": settings.gravity,
-                "flow": settings.flow.value,
-            }
-        elif selected == VisualizerOptions.CHROMA_RECTANGLE:
-            settings = self.rectangleChromaVisualizerView.read_view_values()
-            specific = {
-                "box_height": settings.box_height,
-                "corner_radius": settings.corner_radius,
-                "color_mode": settings.color_mode,
-                "gradient_start": list(settings.gradient_start),
-                "gradient_end": list(settings.gradient_end),
-                "band_colors": [list(color) for color in settings.band_colors],
-            }
-        elif selected == VisualizerOptions.CHROMA_CIRCLE:
-            settings = self.circleChromaVisualizerView.read_view_values()
-            specific = {
-                "color_mode": settings.color_mode,
-                "gradient_start": list(settings.gradient_start),
-                "gradient_end": list(settings.gradient_end),
-                "band_colors": [list(color) for color in settings.band_colors],
-            }
-        elif selected == VisualizerOptions.CHROMA_LINE:
-            settings = self.lineChromaVisualizerView.read_view_values()
-            specific = {
-                "max_height": settings.max_height,
-                "line_thickness": settings.line_thickness,
-                "smoothness": settings.smoothness,
-                "color_mode": settings.color_mode,
-                "gradient_start": list(settings.gradient_start) if settings.gradient_start else None,
-                "gradient_end": list(settings.gradient_end) if settings.gradient_end else None,
-                "band_colors": [list(color) for color in settings.band_colors],
-            }
-        elif selected == VisualizerOptions.CHROMA_LINES:
-            settings = self.lineChromaBandsVisualizerView.read_view_values()
-            specific = {
-                "max_height": settings.max_height,
-                "line_thickness": settings.line_thickness,
-                "smoothness": settings.smoothness,
-                "flow": settings.flow.value,
-                "band_colors": [list(color) for color in settings.band_colors],
-                "band_spacing": settings.band_spacing,
-            }
-        elif selected == VisualizerOptions.CHROMA_FORCE_RECTANGLE:
-            settings = self.forceRectangleChromaVisualizerView.read_view_values()
-            specific = {
-                "box_height": settings.box_height,
-                "corner_radius": settings.corner_radius,
-                "color_mode": settings.color_mode,
-                "gradient_start": list(settings.gradient_start),
-                "gradient_end": list(settings.gradient_end),
-                "band_colors": [list(color) for color in settings.band_colors],
-                "gravity": settings.gravity,
-                "force_strength": settings.force_strength,
-            }
-        elif selected == VisualizerOptions.CHROMA_FORCE_CIRCLE:
-            settings = self.forceCircleChromaVisualizerView.read_view_values()
-            specific = {
-                "color_mode": settings.color_mode,
-                "gradient_start": list(settings.gradient_start),
-                "gradient_end": list(settings.gradient_end),
-                "band_colors": [list(color) for color in settings.band_colors],
-                "gravity": settings.gravity,
-                "force_strength": settings.force_strength,
-            }
-        elif selected == VisualizerOptions.CHROMA_FORCE_LINE:
-            settings = self.forceLineChromaVisualizerView.read_view_values()
-            specific = {
-                "line_thickness": settings.line_thickness,
-                "points_count": settings.points_count,
-                "smoothness": settings.smoothness,
-                "tension": settings.tension,
-                "damping": settings.damping,
-                "force_strength": settings.force_strength,
-                "gravity": settings.gravity,
-            }
-        elif selected == VisualizerOptions.CHROMA_FORCE_LINES:
-            settings = self.forceLinesChromaVisualizerView.read_view_values()
-            specific = {
-                "line_thickness": settings.line_thickness,
-                "points_count": settings.points_count,
-                "smoothness": settings.smoothness,
-                "band_spacing": settings.band_spacing,
-                "tension": settings.tension,
-                "damping": settings.damping,
-                "force_strength": settings.force_strength,
-                "gravity": settings.gravity,
-                "band_colors": [list(color) for color in settings.band_colors],
-            }
-        elif selected == VisualizerOptions.WAVEFORM:
-            settings = self.waveformVisualizerView.read_view_values()
-            specific = {
-                "line_thickness": settings.line_thickness,
-            }
-        elif selected == VisualizerOptions.COMBINED_RECTANGLE:
-            settings = self.combinedVisualizerView.read_view_values()
-            specific = {
-                "box_height": settings.box_height,
-                "box_width": settings.box_width,
-                "corner_radius": settings.corner_radius,
-                "flow": settings.flow.value,
-                "chroma_box_height": settings.chroma_box_height,
-                "chroma_corner_radius": settings.chroma_corner_radius,
-            }
+        # Tab settings
+        for tab in self._tabs:
+            schema["tabs"][tab.tab_id] = tab.collect_settings()
 
-        return {
-            "general": {
-                "audio_file_path": general.audio_file_path,
-                "video_file_path": general.video_file_path,
-                "fps": general.fps,
-                "video_width": general.video_width,
-                "video_height": general.video_height,
-                "codec": general.codec,
-                "bitrate": general.bitrate,
-                "crf": general.crf,
-                "hardware_accel": general.hardware_accel,
-                "include_audio": general.include_audio,
-            },
-            "visualizer": {
-                "visualizer_type": visualizer.visualizer_type.value,
-                "alignment": visualizer.alignment.value,
-                "x": visualizer.x,
-                "y": visualizer.y,
-                "bg_color": list(visualizer.bg_color),
-                "border_color": list(visualizer.border_color),
-                "border_width": visualizer.border_width,
-                "spacing": visualizer.spacing,
-                "super_sampling": visualizer.super_sampling,
-            },
-            "specific": specific,
-            "ui": {
-                "preview": self.preview_checkbox.isChecked(),
-                "show_output": self.show_output_checkbox.isChecked(),
-                "preview_panel_visible": self.preview_panel_toggle.isChecked(),
-            }
-        }
+        # Session
+        schema["session"] = self.session_context.to_dict()
+        return schema
 
     def _apply_settings(self, data: dict) -> None:
-        general = data.get("general", {})
-        visualizer = data.get("visualizer", {})
-        specific = data.get("specific", {})
+        """Apply settings from a versioned schema to all tabs."""
+        data = migrate_settings(data)
+
+        # UI state
         ui_state = data.get("ui", {})
+        window = ui_state.get("window", {})
+        if window.get("maximized"):
+            self.showMaximized()
+        else:
+            w = window.get("width", 1600)
+            h = window.get("height", 1000)
+            self.resize(w, h)
 
-        if general:
-            self.generalSettingsView.audio_file_path.setText(general.get("audio_file_path", self.generalSettingsView.audio_file_path.text()))
-            self.generalSettingsView.video_file_path.setText(general.get("video_file_path", self.generalSettingsView.video_file_path.text()))
-            if "fps" in general:
-                self.generalSettingsView.visualizer_fps.setText(str(general["fps"]))
-            if "video_width" in general:
-                self.generalSettingsView.video_width.setText(str(general["video_width"]))
-            if "video_height" in general:
-                self.generalSettingsView.video_height.setText(str(general["video_height"]))
-            if "codec" in general and general["codec"]:
-                self.generalSettingsView.codec.setCurrentText(general["codec"])
-            if "bitrate" in general and general["bitrate"] is not None:
-                self.generalSettingsView.bitrate.setText(str(general["bitrate"]))
-            else:
-                self.generalSettingsView.bitrate.setText("")
-            if "crf" in general and general["crf"] is not None:
-                self.generalSettingsView.crf.setText(str(general["crf"]))
-            else:
-                self.generalSettingsView.crf.setText("")
-            if "hardware_accel" in general:
-                self.generalSettingsView.hardware_accel.setChecked(bool(general["hardware_accel"]))
-            if "include_audio" in general:
-                self.generalSettingsView.include_audio.setChecked(bool(general["include_audio"]))
+        # Tab settings
+        tabs_data = data.get("tabs", {})
+        for tab in self._tabs:
+            tab_data = tabs_data.get(tab.tab_id, {})
+            if tab_data:
+                tab.apply_settings(tab_data)
 
-        if visualizer:
-            if "visualizer_type" in visualizer:
-                self.generalVisualizerView.visualizer.setCurrentText(visualizer["visualizer_type"])
-                self.visualizer_selection_changed(visualizer["visualizer_type"])
-            if "alignment" in visualizer:
-                self.generalVisualizerView.visualizer_alignment.setCurrentText(visualizer["alignment"])
-            if "x" in visualizer:
-                self.generalVisualizerView.visualizer_x.setText(str(visualizer["x"]))
-            if "y" in visualizer:
-                self.generalVisualizerView.visualizer_y.setText(str(visualizer["y"]))
-            if "bg_color" in visualizer:
-                bg = visualizer["bg_color"]
-                self.generalVisualizerView.visualizer_bg_color_field.setText(f"{bg[0]}, {bg[1]}, {bg[2]}")
-            if "border_color" in visualizer:
-                bc = visualizer["border_color"]
-                self.generalVisualizerView.visualizer_border_color_field.setText(f"{bc[0]}, {bc[1]}, {bc[2]}")
-            if "border_width" in visualizer:
-                self.generalVisualizerView.visualizer_border_width.setText(str(visualizer["border_width"]))
-            if "spacing" in visualizer:
-                self.generalVisualizerView.visualizer_spacing.setText(str(visualizer["spacing"]))
-            if "super_sampling" in visualizer:
-                self.generalVisualizerView.super_sampling.setText(str(visualizer["super_sampling"]))
+        # Session
+        session_data = data.get("session", {})
+        if session_data:
+            self.session_context.from_dict(session_data)
 
-        current_type = self.generalVisualizerView.visualizer.currentText()
-        if current_type == VisualizerOptions.VOLUME_RECTANGLE.value:
-            if "box_height" in specific:
-                self.rectangleVolumeVisualizerView.box_height.setText(str(specific["box_height"]))
-            if "box_width" in specific:
-                self.rectangleVolumeVisualizerView.box_width.setText(str(specific["box_width"]))
-            if "corner_radius" in specific:
-                self.rectangleVolumeVisualizerView.corner_radius.setText(str(specific["corner_radius"]))
-            if "flow" in specific:
-                self.rectangleVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
-        elif current_type == VisualizerOptions.VOLUME_CIRCLE.value:
-            if "radius" in specific:
-                self.circleVolumeVisualizerView.radius.setText(str(specific["radius"]))
-            if "flow" in specific:
-                self.circleVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
-        elif current_type == VisualizerOptions.VOLUME_LINE.value:
-            if "max_height" in specific:
-                self.lineVolumeVisualizerView.max_height.setText(str(specific["max_height"]))
-            if "line_thickness" in specific:
-                self.lineVolumeVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
-            if "flow" in specific:
-                self.lineVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
-            if "smoothness" in specific:
-                self.lineVolumeVisualizerView.smoothness.setText(str(specific["smoothness"]))
-        elif current_type == VisualizerOptions.VOLUME_FORCE_LINE.value:
-            if "line_thickness" in specific:
-                self.forceLineVolumeVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
-            if "points_count" in specific:
-                self.forceLineVolumeVisualizerView.points_count.setText(str(specific["points_count"]))
-            if "tension" in specific:
-                self.forceLineVolumeVisualizerView.tension.setText(str(specific["tension"]))
-            if "damping" in specific:
-                self.forceLineVolumeVisualizerView.damping.setText(str(specific["damping"]))
-            if "impulse_strength" in specific:
-                self.forceLineVolumeVisualizerView.impulse_strength.setText(str(specific["impulse_strength"]))
-            if "gravity" in specific:
-                self.forceLineVolumeVisualizerView.gravity.setText(str(specific["gravity"]))
-            if "flow" in specific:
-                self.forceLineVolumeVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
-        elif current_type == VisualizerOptions.CHROMA_RECTANGLE.value:
-            if "box_height" in specific:
-                self.rectangleChromaVisualizerView.box_height.setText(str(specific["box_height"]))
-            if "corner_radius" in specific:
-                self.rectangleChromaVisualizerView.corner_radius.setText(str(specific["corner_radius"]))
-            if "color_mode" in specific:
-                self.rectangleChromaVisualizerView.color_mode.setCurrentText(specific["color_mode"])
-            if "gradient_start" in specific:
-                gs = specific["gradient_start"]
-                self.rectangleChromaVisualizerView.gradient_start.setText(f"{gs[0]}, {gs[1]}, {gs[2]}")
-            if "gradient_end" in specific:
-                ge = specific["gradient_end"]
-                self.rectangleChromaVisualizerView.gradient_end.setText(f"{ge[0]}, {ge[1]}, {ge[2]}")
-            if "band_colors" in specific:
-                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
-                self.rectangleChromaVisualizerView.band_colors.setText("|".join(colors))
-        elif current_type == VisualizerOptions.WAVEFORM.value:
-            if "line_thickness" in specific:
-                self.waveformVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
-        elif current_type == VisualizerOptions.COMBINED_RECTANGLE.value:
-            if "box_height" in specific:
-                self.combinedVisualizerView.box_height.setText(str(specific["box_height"]))
-            if "box_width" in specific:
-                self.combinedVisualizerView.box_width.setText(str(specific["box_width"]))
-            if "corner_radius" in specific:
-                self.combinedVisualizerView.corner_radius.setText(str(specific["corner_radius"]))
-            if "flow" in specific:
-                self.combinedVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
-            if "chroma_box_height" in specific:
-                self.combinedVisualizerView.chroma_box_height.setText(str(specific["chroma_box_height"]))
-            if "chroma_corner_radius" in specific:
-                self.combinedVisualizerView.chroma_corner_radius.setText(str(specific["chroma_corner_radius"]))
-        elif current_type == VisualizerOptions.CHROMA_CIRCLE.value:
-            if "color_mode" in specific:
-                self.circleChromaVisualizerView.color_mode.setCurrentText(specific["color_mode"])
-            if "gradient_start" in specific:
-                gs = specific["gradient_start"]
-                self.circleChromaVisualizerView.gradient_start.setText(f"{gs[0]}, {gs[1]}, {gs[2]}")
-            if "gradient_end" in specific:
-                ge = specific["gradient_end"]
-                self.circleChromaVisualizerView.gradient_end.setText(f"{ge[0]}, {ge[1]}, {ge[2]}")
-            if "band_colors" in specific:
-                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
-                self.circleChromaVisualizerView.band_colors.setText("|".join(colors))
-        elif current_type == VisualizerOptions.CHROMA_LINE.value:
-            if "max_height" in specific:
-                self.lineChromaVisualizerView.max_height.setText(str(specific["max_height"]))
-            if "line_thickness" in specific:
-                self.lineChromaVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
-            if "smoothness" in specific:
-                self.lineChromaVisualizerView.smoothness.setText(str(specific["smoothness"]))
-            if "color_mode" in specific:
-                self.lineChromaVisualizerView.color_mode.setCurrentText(specific["color_mode"])
-            if "gradient_start" in specific and specific["gradient_start"]:
-                gs = specific["gradient_start"]
-                self.lineChromaVisualizerView.gradient_start.setText(f"{gs[0]}, {gs[1]}, {gs[2]}")
-            if "gradient_end" in specific and specific["gradient_end"]:
-                ge = specific["gradient_end"]
-                self.lineChromaVisualizerView.gradient_end.setText(f"{ge[0]}, {ge[1]}, {ge[2]}")
-            if "band_colors" in specific and specific["band_colors"]:
-                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
-                self.lineChromaVisualizerView.band_colors.setText("|".join(colors))
-        elif current_type == VisualizerOptions.CHROMA_LINES.value:
-            if "max_height" in specific:
-                self.lineChromaBandsVisualizerView.max_height.setText(str(specific["max_height"]))
-            if "line_thickness" in specific:
-                self.lineChromaBandsVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
-            if "smoothness" in specific:
-                self.lineChromaBandsVisualizerView.smoothness.setText(str(specific["smoothness"]))
-            if "flow" in specific:
-                self.lineChromaBandsVisualizerView.visualizer_flow.setCurrentText(specific["flow"])
-            if "band_colors" in specific and specific["band_colors"]:
-                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
-                for field, color in zip(self.lineChromaBandsVisualizerView.band_color_fields, colors):
-                    field.setText(color)
-            if "band_spacing" in specific:
-                self.lineChromaBandsVisualizerView.band_spacing.setText(str(specific["band_spacing"]))
-        elif current_type == VisualizerOptions.CHROMA_FORCE_RECTANGLE.value:
-            if "box_height" in specific:
-                self.forceRectangleChromaVisualizerView.box_height.setText(str(specific["box_height"]))
-            if "corner_radius" in specific:
-                self.forceRectangleChromaVisualizerView.corner_radius.setText(str(specific["corner_radius"]))
-            if "color_mode" in specific:
-                self.forceRectangleChromaVisualizerView.color_mode.setCurrentText(specific["color_mode"])
-            if "gradient_start" in specific and specific["gradient_start"]:
-                gs = specific["gradient_start"]
-                self.forceRectangleChromaVisualizerView.gradient_start.setText(f"{gs[0]}, {gs[1]}, {gs[2]}")
-            if "gradient_end" in specific and specific["gradient_end"]:
-                ge = specific["gradient_end"]
-                self.forceRectangleChromaVisualizerView.gradient_end.setText(f"{ge[0]}, {ge[1]}, {ge[2]}")
-            if "band_colors" in specific and specific["band_colors"]:
-                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
-                self.forceRectangleChromaVisualizerView.band_colors.setText("|".join(colors))
-            if "gravity" in specific:
-                self.forceRectangleChromaVisualizerView.gravity.setText(str(specific["gravity"]))
-            if "force_strength" in specific:
-                self.forceRectangleChromaVisualizerView.force_strength.setText(str(specific["force_strength"]))
-        elif current_type == VisualizerOptions.CHROMA_FORCE_CIRCLE.value:
-            if "color_mode" in specific:
-                self.forceCircleChromaVisualizerView.color_mode.setCurrentText(specific["color_mode"])
-            if "gradient_start" in specific and specific["gradient_start"]:
-                gs = specific["gradient_start"]
-                self.forceCircleChromaVisualizerView.gradient_start.setText(f"{gs[0]}, {gs[1]}, {gs[2]}")
-            if "gradient_end" in specific and specific["gradient_end"]:
-                ge = specific["gradient_end"]
-                self.forceCircleChromaVisualizerView.gradient_end.setText(f"{ge[0]}, {ge[1]}, {ge[2]}")
-            if "band_colors" in specific and specific["band_colors"]:
-                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
-                self.forceCircleChromaVisualizerView.band_colors.setText("|".join(colors))
-            if "gravity" in specific:
-                self.forceCircleChromaVisualizerView.gravity.setText(str(specific["gravity"]))
-            if "force_strength" in specific:
-                self.forceCircleChromaVisualizerView.force_strength.setText(str(specific["force_strength"]))
-        elif current_type == VisualizerOptions.CHROMA_FORCE_LINE.value:
-            if "line_thickness" in specific:
-                self.forceLineChromaVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
-            if "points_count" in specific:
-                self.forceLineChromaVisualizerView.points_count.setText(str(specific["points_count"]))
-            if "smoothness" in specific:
-                self.forceLineChromaVisualizerView.smoothness.setText(str(specific["smoothness"]))
-            if "tension" in specific:
-                self.forceLineChromaVisualizerView.tension.setText(str(specific["tension"]))
-            if "damping" in specific:
-                self.forceLineChromaVisualizerView.damping.setText(str(specific["damping"]))
-            if "force_strength" in specific:
-                self.forceLineChromaVisualizerView.force_strength.setText(str(specific["force_strength"]))
-            if "gravity" in specific:
-                self.forceLineChromaVisualizerView.gravity.setText(str(specific["gravity"]))
-        elif current_type == VisualizerOptions.CHROMA_FORCE_LINES.value:
-            if "line_thickness" in specific:
-                self.forceLinesChromaVisualizerView.line_thickness.setText(str(specific["line_thickness"]))
-            if "points_count" in specific:
-                self.forceLinesChromaVisualizerView.points_count.setText(str(specific["points_count"]))
-            if "smoothness" in specific:
-                self.forceLinesChromaVisualizerView.smoothness.setText(str(specific["smoothness"]))
-            if "band_spacing" in specific:
-                self.forceLinesChromaVisualizerView.band_spacing.setText(str(specific["band_spacing"]))
-            if "tension" in specific:
-                self.forceLinesChromaVisualizerView.tension.setText(str(specific["tension"]))
-            if "damping" in specific:
-                self.forceLinesChromaVisualizerView.damping.setText(str(specific["damping"]))
-            if "force_strength" in specific:
-                self.forceLinesChromaVisualizerView.force_strength.setText(str(specific["force_strength"]))
-            if "gravity" in specific:
-                self.forceLinesChromaVisualizerView.gravity.setText(str(specific["gravity"]))
-            if "band_colors" in specific and specific["band_colors"]:
-                colors = ["{0}, {1}, {2}".format(*color) for color in specific["band_colors"]]
-                for field, color in zip(self.forceLinesChromaVisualizerView.band_color_fields, colors):
-                    field.setText(color)
-
-        if "preview" in ui_state:
-            self.preview_checkbox.setChecked(bool(ui_state["preview"]))
-        if "show_output" in ui_state:
-            self.show_output_checkbox.setChecked(bool(ui_state["show_output"]))
-        if "preview_panel_visible" in ui_state:
-            self.preview_panel_toggle.setChecked(bool(ui_state["preview_panel_visible"]))
-            self._toggle_preview_panel(None)
+        # Restore active tab
+        last_tab = ui_state.get("last_active_tab", "audio_visualizer")
+        for i, tab in enumerate(self._tabs):
+            if tab.tab_id == last_tab:
+                self._sidebar.set_active(i)
+                self._stack.setCurrentIndex(i)
+                break
+        self._update_undo_actions()
 
     def _save_settings_to_path(self, path: Path) -> bool:
         try:
             data = self._collect_settings()
-            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            save_settings(data, path)
         except Exception:
+            logger.exception("Failed to save settings to %s", path)
             return False
         return True
 
     def _load_settings_from_path(self, path: Path) -> bool:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        data = load_settings(path)
+        if data is None:
             return False
         self._apply_settings(data)
         return True
 
-    def _load_last_settings_if_present(self):
+    def _load_last_settings_if_present(self) -> None:
         path = self._default_settings_path()
         if path.exists():
             self._load_settings_from_path(path)
 
-    def save_project(self):
+    def save_project(self) -> None:
         dialog = QFileDialog(self)
         dialog.setWindowTitle("Save Project")
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
@@ -1277,11 +628,12 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             path = Path(dialog.selectedFiles()[0])
             if not self._save_settings_to_path(path):
-                message = QMessageBox(QMessageBox.Icon.Critical, "Save Failed",
-                                      "Unable to save the project file.")
-                message.exec()
+                QMessageBox(
+                    QMessageBox.Icon.Critical, "Save Failed",
+                    "Unable to save the project file.",
+                ).exec()
 
-    def load_project(self):
+    def load_project(self) -> None:
         dialog = QFileDialog(self)
         dialog.setWindowTitle("Load Project")
         dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
@@ -1289,16 +641,22 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             path = Path(dialog.selectedFiles()[0])
             if not self._load_settings_from_path(path):
-                message = QMessageBox(QMessageBox.Icon.Critical, "Load Failed",
-                                      "Unable to load the project file.")
-                message.exec()
+                QMessageBox(
+                    QMessageBox.Icon.Critical, "Load Failed",
+                    "Unable to load the project file.",
+                ).exec()
 
-    def closeEvent(self, event):
+    def closeEvent(self, event) -> None:
         self._save_settings_to_path(self._default_settings_path())
         super().closeEvent(event)
 
+
+# ------------------------------------------------------------------
+# Background workers
+# ------------------------------------------------------------------
+
 class UpdateCheckWorker(QRunnable):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
         class UpdateSignals(QObject):
@@ -1307,18 +665,29 @@ class UpdateCheckWorker(QRunnable):
 
         self.signals = UpdateSignals()
 
-    def run(self):
+    def run(self) -> None:
         try:
             current = updater.get_current_version()
             latest = updater.fetch_latest_release()
-            self.signals.finished.emit(current, latest.get("version", ""), latest.get("url", ""))
+            self.signals.finished.emit(
+                current, latest.get("version", ""), latest.get("url", ""),
+            )
         except Exception as exc:
             self.signals.error.emit(str(exc))
 
+
 class RenderWorker(QRunnable):
-    def __init__(self, audio_data: AudioData, video_data: VideoData, visualizer: Visualizer,
-                 preview_seconds=None, include_audio=False):
+    """Render worker for the Audio Visualizer tab.
+
+    Produces video frames from a Visualizer instance and optionally
+    muxes audio into the output container.
+    """
+
+    def __init__(self, audio_data, video_data, visualizer,
+                 preview_seconds=None, include_audio=False) -> None:
         super().__init__()
+        from audio_visualizer.visualizers.utilities import AudioData, VideoData
+        from audio_visualizer.visualizers import Visualizer
         self.audio_data = audio_data
         self.video_data = video_data
         self.visualizer = visualizer
@@ -1333,7 +702,7 @@ class RenderWorker(QRunnable):
         self._av = None
 
         class RenderSignals(QObject):
-            finished = Signal(VideoData)
+            finished = Signal(object)
             error = Signal(str)
             status = Signal(str)
             progress = Signal(int, int, float)
@@ -1346,7 +715,7 @@ class RenderWorker(QRunnable):
             self._av = av
         return self._av
 
-    def cancel(self):
+    def cancel(self) -> None:
         self._cancel_requested = True
 
     def _check_canceled(self) -> bool:
@@ -1356,7 +725,7 @@ class RenderWorker(QRunnable):
         self.signals.canceled.emit()
         return True
 
-    def _cleanup_on_cancel(self):
+    def _cleanup_on_cancel(self) -> None:
         try:
             if getattr(self.video_data, "container", None) is not None:
                 self.video_data.container.close()
@@ -1368,7 +737,7 @@ class RenderWorker(QRunnable):
         except Exception:
             pass
 
-    def run(self):
+    def run(self) -> None:
         try:
             self.signals.status.emit("Opening audio file...")
             if not self.audio_data.load_audio_data(self.preview_seconds):
@@ -1378,7 +747,7 @@ class RenderWorker(QRunnable):
                 return
             if self._check_canceled():
                 return
-                
+
             self.signals.status.emit("Analyzing audio data...")
             self.audio_data.chunk_audio(self.video_data.fps)
             self.audio_data.analyze_audio()
@@ -1407,7 +776,8 @@ class RenderWorker(QRunnable):
 
             frames = len(self.audio_data.audio_frames)
             if self.preview_seconds is not None:
-                frames = min(len(self.audio_data.audio_frames), self.video_data.fps * self.preview_seconds)
+                frames = min(len(self.audio_data.audio_frames),
+                             self.video_data.fps * self.preview_seconds)
 
             self.signals.status.emit("Rendering video (0 %) ...")
             start_time = time.time()
@@ -1420,14 +790,13 @@ class RenderWorker(QRunnable):
                 frame = av.VideoFrame.from_ndarray(img, format="rgb24")
                 for packet in self.video_data.stream.encode(frame):
                     self.video_data.container.mux(packet)
-                
+
                 now = time.time()
                 if now - last_progress_emit >= 0.5 or i == frames - 1:
                     elapsed = now - start_time
                     self.signals.progress.emit(i + 1, frames, elapsed)
                     last_progress_emit = now
-                    
-            
+
             self.signals.status.emit("Render finished, saving file...")
             if self._check_canceled():
                 return
@@ -1469,7 +838,9 @@ class RenderWorker(QRunnable):
             return False
 
         try:
-            self.audio_output_stream = self.video_data.container.add_stream("aac", rate=self.audio_input_stream.rate)
+            self.audio_output_stream = self.video_data.container.add_stream(
+                "aac", rate=self.audio_input_stream.rate,
+            )
         except Exception as exc:
             self._last_error = str(exc)
             return False
@@ -1479,7 +850,8 @@ class RenderWorker(QRunnable):
         self.audio_output_stream.time_base = Fraction(1, self.audio_output_stream.rate)
 
         resample_format = "fltp"
-        if self.audio_output_stream.format is not None and self.audio_output_stream.format.name:
+        if (self.audio_output_stream.format is not None
+                and self.audio_output_stream.format.name):
             resample_format = self.audio_output_stream.format.name
         self.audio_resampler = av.audio.resampler.AudioResampler(
             format=resample_format,
@@ -1489,7 +861,7 @@ class RenderWorker(QRunnable):
         self._last_error = ""
         return True
 
-    def _mux_audio(self) -> bool:
+    def _mux_audio(self) -> bool | None:
         if self.audio_input_container is None or self.audio_input_stream is None:
             self._last_error = "Missing audio input."
             return False
@@ -1541,4 +913,3 @@ class RenderWorker(QRunnable):
             self._last_error = str(exc)
             return False
         return True
-

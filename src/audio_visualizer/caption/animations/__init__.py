@@ -37,7 +37,16 @@ def _ensure_animations_loaded() -> None:
         return
 
     # Import animation modules to trigger @register decorators
-    from . import blurAnimation, fadeAnimation, scaleAnimation, slideAnimation, wordRevealAnimation
+    from . import (
+        blurAnimation,
+        fadeAnimation,
+        scaleAnimation,
+        slideAnimation,
+        wordRevealAnimation,
+        pulseAnimation,
+        beatPopAnimation,
+        emphasisGlowAnimation,
+    )
 
     _loaded = True
 
@@ -102,6 +111,9 @@ _CLASS_TO_MODULE = {
     "ScaleSettleAnimation": "scaleAnimation",
     "BlurSettleAnimation": "blurAnimation",
     "WordRevealAnimation": "wordRevealAnimation",
+    "PulseAnimation": "pulseAnimation",
+    "BeatPopAnimation": "beatPopAnimation",
+    "EmphasisGlowAnimation": "emphasisGlowAnimation",
 }
 
 
@@ -126,6 +138,9 @@ __all__ = [
     "ScaleSettleAnimation",
     "BlurSettleAnimation",
     "WordRevealAnimation",
+    "PulseAnimation",
+    "BeatPopAnimation",
+    "EmphasisGlowAnimation",
 ]
 
 
