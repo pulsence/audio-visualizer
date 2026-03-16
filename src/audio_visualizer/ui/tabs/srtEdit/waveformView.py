@@ -91,6 +91,11 @@ class WaveformView(QWidget):
 
         self.setLayout(layout)
 
+        # Install event filter on the plot viewport to intercept Ctrl+wheel
+        # before pyqtgraph processes it (the viewport is the actual mouse
+        # event target, so WaveformView.wheelEvent never fires for it).
+        self._plot_widget.viewport().installEventFilter(self)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -275,6 +280,24 @@ class WaveformView(QWidget):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def eventFilter(self, obj, event):
+        """Intercept Ctrl+wheel on the plot viewport for horizontal panning."""
+        if obj is self._plot_widget.viewport() and event.type() == event.Type.Wheel:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                delta = event.angleDelta().y()
+                vb = self._plot_widget.plotItem.vb
+                lo, hi = vb.viewRange()[0]
+                visible = hi - lo
+                shift = visible * 0.1 * (-1 if delta > 0 else 1)
+                new_lo = max(0, lo + shift)
+                new_hi = new_lo + visible
+                if self._duration_s > 0 and new_hi > self._duration_s:
+                    new_hi = self._duration_s
+                    new_lo = max(0, new_hi - visible)
+                vb.setXRange(new_lo, new_hi, padding=0)
+                return True  # consume the event
+        return super().eventFilter(obj, event)
 
     def wheelEvent(self, event) -> None:
         """Ctrl+wheel: horizontal panning. Normal wheel: zoom (default)."""

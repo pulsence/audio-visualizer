@@ -13,6 +13,7 @@ from audio_visualizer.ui.tabs.renderComposition.filterGraph import (
     _duration_seconds,
 )
 from audio_visualizer.ui.tabs.renderComposition.model import (
+    CompositionAudioLayer,
     CompositionLayer,
     CompositionModel,
 )
@@ -405,3 +406,157 @@ class TestMatteSettingsSerialization:
         assert ms["feather"] == 3
         assert ms["despill"] is True
         assert ms["invert"] is False
+
+
+# ------------------------------------------------------------------
+# Audio layers in FFmpeg command
+# ------------------------------------------------------------------
+
+
+class TestAudioLayersInFFmpegCommand:
+    def test_single_audio_layer_included(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=5000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Music",
+            asset_path=Path("/tmp/music.mp3"),
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        assert str(Path("/tmp/music.mp3")) in cmd
+        assert "-c:a" in cmd
+        assert "aac" in cmd
+
+    def test_single_audio_layer_with_delay(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=10000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Music",
+            asset_path=Path("/tmp/music.mp3"),
+            start_ms=2000,
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        cmd_str = " ".join(cmd)
+        assert "adelay=2000|2000" in cmd_str
+
+    def test_single_audio_layer_with_trim(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=10000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Music",
+            asset_path=Path("/tmp/music.mp3"),
+            duration_ms=5000,
+            use_full_length=False,
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        cmd_str = " ".join(cmd)
+        assert "atrim=duration=5.0" in cmd_str
+
+    def test_multiple_audio_layers_produce_amix(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=10000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Music",
+            asset_path=Path("/tmp/music.mp3"),
+            enabled=True,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Narration",
+            asset_path=Path("/tmp/narration.wav"),
+            start_ms=1000,
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        cmd_str = " ".join(cmd)
+        assert str(Path("/tmp/music.mp3")) in cmd
+        assert str(Path("/tmp/narration.wav")) in cmd
+        assert "amix=inputs=2" in cmd_str
+        assert "[amixed]" in cmd_str
+
+    def test_disabled_audio_layer_excluded(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=5000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Disabled",
+            asset_path=Path("/tmp/disabled.mp3"),
+            enabled=False,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        assert str(Path("/tmp/disabled.mp3")) not in cmd
+
+    def test_audio_layer_without_path_excluded(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=5000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="No Path",
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        # Should not have audio codec since no valid audio layer
+        assert "-c:a" not in cmd
+
+    def test_legacy_audio_source_still_works(self):
+        """When no audio_layers, the legacy audio_source_path is used."""
+        model = CompositionModel()
+        model.audio_source_path = Path("/tmp/legacy_audio.mp3")
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=5000,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        assert str(Path("/tmp/legacy_audio.mp3")) in cmd
+        assert "-c:a" in cmd
+
+    def test_audio_layers_take_precedence_over_legacy(self):
+        """When audio_layers exist, they are used instead of legacy audio_source."""
+        model = CompositionModel()
+        model.audio_source_path = Path("/tmp/legacy.mp3")
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=5000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="New Audio",
+            asset_path=Path("/tmp/new_audio.mp3"),
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        assert str(Path("/tmp/new_audio.mp3")) in cmd
+        # Legacy audio should not be included as a separate input
+        assert str(Path("/tmp/legacy.mp3")) not in cmd

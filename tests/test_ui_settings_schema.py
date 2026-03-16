@@ -26,6 +26,7 @@ class TestCreateDefaultSchema:
 
         # Top-level keys
         assert "version" in schema
+        assert "app" in schema
         assert "ui" in schema
         assert "tabs" in schema
         assert "session" in schema
@@ -33,14 +34,18 @@ class TestCreateDefaultSchema:
         # Version matches constant
         assert schema["version"] == CURRENT_SCHEMA_VERSION
 
-        # Tabs has exactly 5 keys
-        assert len(schema["tabs"]) == 5
+        # App section defaults
+        assert schema["app"]["theme_mode"] == "off"
+
+        # Tabs has exactly 6 keys
+        assert len(schema["tabs"]) == 6
         expected_tabs = {
             "audio_visualizer",
             "srt_gen",
             "srt_edit",
             "caption_animate",
             "render_composition",
+            "assets",
         }
         assert set(schema["tabs"].keys()) == expected_tabs
 
@@ -104,7 +109,7 @@ class TestMigrateSettings:
         # Should return a clean default schema, not the old data
         assert migrated["version"] == CURRENT_SCHEMA_VERSION
         assert "tabs" in migrated
-        assert len(migrated["tabs"]) == 5
+        assert len(migrated["tabs"]) == 6
 
         # All tabs should be empty (old data discarded)
         for tab_key in migrated["tabs"]:
@@ -120,14 +125,15 @@ class TestMigrateSettings:
         }
         migrated = migrate_settings(data)
 
-        # All five tabs should be present
-        assert len(migrated["tabs"]) == 5
+        # All six tabs should be present
+        assert len(migrated["tabs"]) == 6
         expected_tabs = {
             "audio_visualizer",
             "srt_gen",
             "srt_edit",
             "caption_animate",
             "render_composition",
+            "assets",
         }
         assert set(migrated["tabs"].keys()) == expected_tabs
 
@@ -139,6 +145,27 @@ class TestMigrateSettings:
         assert migrated["tabs"]["srt_edit"] == {}
         assert migrated["tabs"]["caption_animate"] == {}
         assert migrated["tabs"]["render_composition"] == {}
+        assert migrated["tabs"]["assets"] == {}
+
+    def test_migrate_fills_missing_app_section(self):
+        """Versioned settings without an 'app' key get one filled in."""
+        data = {
+            "version": CURRENT_SCHEMA_VERSION,
+            "tabs": {"audio_visualizer": {}},
+        }
+        migrated = migrate_settings(data)
+        assert "app" in migrated
+        assert migrated["app"]["theme_mode"] == "off"
+
+    def test_migrate_preserves_existing_app_section(self):
+        """Existing app settings are not overwritten during migration."""
+        data = {
+            "version": CURRENT_SCHEMA_VERSION,
+            "app": {"theme_mode": "on"},
+            "tabs": {"audio_visualizer": {}},
+        }
+        migrated = migrate_settings(data)
+        assert migrated["app"]["theme_mode"] == "on"
 
 
 # ------------------------------------------------------------------

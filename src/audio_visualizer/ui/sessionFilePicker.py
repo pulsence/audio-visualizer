@@ -31,6 +31,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def resolve_browse_directory(
+    current_path: str | Path | None = None,
+    session_context: "SessionContext | None" = None,
+) -> str:
+    """Resolve the best starting directory for a file dialog.
+
+    Precedence:
+    1. Parent of *current_path* if valid
+    2. ``SessionContext.project_folder`` if set
+    3. User home directory
+    """
+    if current_path:
+        p = Path(str(current_path))
+        if p.parent.is_dir():
+            return str(p.parent)
+
+    if session_context is not None and session_context.project_folder is not None:
+        pf = session_context.project_folder
+        if pf.is_dir():
+            return str(pf)
+
+    return str(Path.home())
+
+
 class SessionFilePickerDialog(QDialog):
     """Dialog showing session assets alongside a filesystem browse button.
 
@@ -129,10 +153,13 @@ class SessionFilePickerDialog(QDialog):
 
     def _on_browse(self) -> None:
         """Handle Browse button: open a standard file dialog."""
+        start_dir = resolve_browse_directory(
+            session_context=self._session_context,
+        )
         path, _ = QFileDialog.getOpenFileName(
             self,
             self.windowTitle(),
-            "",
+            start_dir,
             self._file_filter,
         )
         if path:

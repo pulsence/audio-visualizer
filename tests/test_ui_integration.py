@@ -106,7 +106,7 @@ class TestSettingsMigration:
 
         assert migrated["version"] == CURRENT_SCHEMA_VERSION
         assert "tabs" in migrated
-        assert len(migrated["tabs"]) == 5
+        assert len(migrated["tabs"]) == 6
 
         # All tabs should be empty (old data discarded)
         for tab_id in migrated["tabs"]:
@@ -129,7 +129,7 @@ class TestSettingsMigration:
 
         assert "ui" in migrated
         assert "session" in migrated
-        assert len(migrated["tabs"]) == 5
+        assert len(migrated["tabs"]) == 6
 
     def test_save_load_migration_roundtrip(self, tmp_path):
         """Save pre-Stage-Three format, load it, verify it falls back to defaults."""

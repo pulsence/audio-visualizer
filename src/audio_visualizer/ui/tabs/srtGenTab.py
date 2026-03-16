@@ -639,8 +639,12 @@ class SrtGenTab(BaseTab):
     # ==================================================================
 
     def _on_add_files(self) -> None:
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+        start_dir = resolve_browse_directory(
+            session_context=self.session_context
+        )
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Select audio/video files", "", _INPUT_FILTERS,
+            self, "Select audio/video files", start_dir, _INPUT_FILTERS,
         )
         for p in paths:
             self._add_input_path(p)
@@ -665,7 +669,11 @@ class SrtGenTab(BaseTab):
         self._input_list.clear()
 
     def _on_browse_output_dir(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "Select output directory")
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+        start_dir = resolve_browse_directory(
+            self._output_dir_edit.text(), self.session_context
+        )
+        d = QFileDialog.getExistingDirectory(self, "Select output directory", start_dir)
         if d:
             self._output_dir_edit.setText(d)
 
@@ -1130,7 +1138,7 @@ class SrtGenTab(BaseTab):
             ))
 
         emitter = AppEventEmitter()
-        worker = SrtGenWorker(jobs=jobs, emitter=emitter, model_manager=self._model_manager)
+        worker = SrtGenWorker(jobs=jobs, emitter=emitter)
         self._active_worker = worker
 
         # Connect signals

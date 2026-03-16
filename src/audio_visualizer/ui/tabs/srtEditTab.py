@@ -43,6 +43,7 @@ from audio_visualizer.ui.sessionFilePicker import pick_session_or_file
 from audio_visualizer.ui.tabs.srtEdit.commands import (
     AddEntryCommand,
     BatchResyncCommand,
+    EditSpeakerCommand,
     EditTextCommand,
     EditTimestampCommand,
     MergeEntriesCommand,
@@ -308,6 +309,9 @@ class SrtEditTab(BaseTab):
             self._on_table_selection_changed
         )
 
+        self._table_model.inline_edit_requested.connect(self._on_inline_edit)
+        self._table_model.dataChanged.connect(self._on_data_changed)
+
     def _setup_shortcuts(self) -> None:
         """Set up keyboard shortcuts."""
         undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
@@ -517,6 +521,39 @@ class SrtEditTab(BaseTab):
         if row >= 0:
             self._waveform_view.highlight_region(row)
 
+    def _on_inline_edit(self, row: int, col: int, value: object) -> None:
+        """Handle inline table edits via undoable commands."""
+        from audio_visualizer.ui.tabs.srtEdit.tableModel import (
+            COL_END,
+            COL_SPEAKER,
+            COL_START,
+            COL_TEXT,
+        )
+
+        if col == COL_START:
+            cmd = EditTimestampCommand(self._document, row, new_start_ms=value)
+            self._push_command(cmd)
+        elif col == COL_END:
+            cmd = EditTimestampCommand(self._document, row, new_end_ms=value)
+            self._push_command(cmd)
+        elif col == COL_TEXT:
+            cmd = EditTextCommand(self._document, row, str(value))
+            self._push_command(cmd)
+        elif col == COL_SPEAKER:
+            cmd = EditSpeakerCommand(self._document, row, value)
+            self._push_command(cmd)
+
+        self._table_model.notify_rows_changed(row, row)
+        self._waveform_view.set_regions(self._document.entries)
+
+    def _on_data_changed(self, top_left, bottom_right, roles=None) -> None:
+        """Resize rows when text content changes."""
+        from audio_visualizer.ui.tabs.srtEdit.tableModel import COL_TEXT
+
+        for row in range(top_left.row(), bottom_right.row() + 1):
+            if top_left.column() <= COL_TEXT <= bottom_right.column():
+                self._table_view.resizeRowToContents(row)
+
     # ------------------------------------------------------------------
     # Lint
     # ------------------------------------------------------------------
@@ -679,8 +716,12 @@ class SrtEditTab(BaseTab):
         if self._subtitle_path:
             path = self._subtitle_path
         else:
+            from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+            start_dir = resolve_browse_directory(
+                session_context=self.session_context
+            )
             path, _ = QFileDialog.getSaveFileName(
-                self, "Save SRT File", "", "SRT Files (*.srt);;All Files (*)"
+                self, "Save SRT File", start_dir, "SRT Files (*.srt);;All Files (*)"
             )
             if not path:
                 return
@@ -698,10 +739,14 @@ class SrtEditTab(BaseTab):
             QMessageBox.warning(self, "Save Error", f"Could not save file:\n{path}")
 
     def _on_export(self) -> None:
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+        start_dir = resolve_browse_directory(
+            session_context=self.session_context
+        )
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Subtitle File",
-            "",
+            start_dir,
             "SRT Files (*.srt);;ASS Files (*.ass);;VTT Files (*.vtt);;All Files (*)",
         )
         if not path:

@@ -131,12 +131,36 @@ class SessionContext(QObject):
     asset_updated = Signal(str)
     asset_removed = Signal(str)
     cache_invalidated = Signal(str)
+    project_folder_changed = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._assets: dict[str, SessionAsset] = {}
         # Keyed by (asset_identity, analysis_type, settings_signature)
         self._analysis_cache: dict[tuple, object] = {}
+        self._project_folder: Path | None = None
+
+    # -- project folder --------------------------------------------
+
+    @property
+    def project_folder(self) -> Path | None:
+        """Return the current project folder, or ``None`` if not set."""
+        return self._project_folder
+
+    def set_project_folder(self, path: Path | str | None) -> None:
+        """Set the project folder used as a default browse directory.
+
+        Parameters
+        ----------
+        path : Path | str | None
+            Filesystem directory to use.  An empty or whitespace-only string
+            is treated as ``None``.
+        """
+        if path is not None and isinstance(path, str):
+            path = Path(path) if path.strip() else None
+        self._project_folder = path
+        self.project_folder_changed.emit(str(path) if path else "")
+        logger.debug("Project folder set: %s", path)
 
     # -- asset CRUD ------------------------------------------------
 
@@ -454,6 +478,7 @@ class SessionContext(QObject):
         return {
             "assets": assets_out,
             "roles": roles_out,
+            "project_folder": str(self._project_folder) if self._project_folder else None,
         }
 
     def from_dict(self, data: dict) -> None:
@@ -494,6 +519,9 @@ class SessionContext(QObject):
             asset = self._assets.get(asset_id)
             if asset is not None:
                 asset.role = role
+
+        pf = data.get("project_folder")
+        self._project_folder = Path(pf) if pf else None
 
         logger.debug(
             "Session restored: %d assets.",

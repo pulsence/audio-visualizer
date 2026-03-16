@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from audio_visualizer.ui.tabs.renderComposition.model import (
+    CompositionAudioLayer,
     CompositionLayer,
     CompositionModel,
 )
@@ -185,27 +186,101 @@ def build_ffmpeg_command(
         if path:
             cmd.extend(["-i", str(path)])
 
-    # Add audio source input
-    audio_path = _resolve_audio_path(model)
+    # Add audio layer inputs
+    audio_layers = _get_audio_layers(model)
+    audio_input_indices: list[int] = []
+    for al in audio_layers:
+        audio_input_indices.append(len(layers) + len(audio_input_indices))
+        cmd.extend(["-i", str(al.asset_path)])
+
+    # Fallback: legacy single audio source (if no audio layers matched)
     audio_input_idx: int | None = None
-    if audio_path:
-        audio_input_idx = len(layers)
-        cmd.extend(["-i", str(audio_path)])
+    if not audio_input_indices:
+        audio_path = _resolve_audio_path(model)
+        if audio_path:
+            audio_input_idx = len(layers)
+            cmd.extend(["-i", str(audio_path)])
+
+    has_audio = bool(audio_input_indices) or audio_input_idx is not None
 
     # Build filter graph
     filter_str = build_filter_graph(model)
-    if filter_str:
-        cmd.extend(["-filter_complex", filter_str])
 
-        # Map the final overlay output
-        # The last overlay label is ovr{n-1}
+    # Build audio mixing filter if multiple audio layers
+    if len(audio_input_indices) > 1:
+        audio_filters: list[str] = []
+        audio_labels: list[str] = []
+        for i, (input_idx, al) in enumerate(zip(audio_input_indices, audio_layers)):
+            label = f"aud{i}"
+            parts: list[str] = []
+            if not al.use_full_length and al.duration_ms > 0:
+                dur_s = al.duration_ms / 1000.0
+                parts.append(f"atrim=duration={dur_s}")
+            if al.start_ms > 0:
+                delay_ms = al.start_ms
+                parts.append(f"adelay={delay_ms}|{delay_ms}")
+            if parts:
+                audio_filters.append(f"[{input_idx}:a]{','.join(parts)}[{label}]")
+            else:
+                audio_filters.append(f"[{input_idx}:a]acopy[{label}]")
+            audio_labels.append(f"[{label}]")
+
+        mix_label = "amixed"
+        audio_filters.append(
+            f"{''.join(audio_labels)}amix=inputs={len(audio_labels)}:duration=longest[{mix_label}]"
+        )
+
+        if filter_str:
+            filter_str += ";\n" + ";\n".join(audio_filters)
+        else:
+            filter_str = ";\n".join(audio_filters)
+
+        cmd.extend(["-filter_complex", filter_str])
         if layers:
             last_label = f"ovr{len(layers) - 1}"
             cmd.extend(["-map", f"[{last_label}]"])
+        cmd.extend(["-map", f"[{mix_label}]"])
+    elif len(audio_input_indices) == 1:
+        # Single audio layer -- apply trim/delay if needed
+        al = audio_layers[0]
+        input_idx = audio_input_indices[0]
+        parts_single: list[str] = []
+        if not al.use_full_length and al.duration_ms > 0:
+            dur_s = al.duration_ms / 1000.0
+            parts_single.append(f"atrim=duration={dur_s}")
+        if al.start_ms > 0:
+            delay_ms = al.start_ms
+            parts_single.append(f"adelay={delay_ms}|{delay_ms}")
 
-    # Map audio
-    if audio_input_idx is not None:
-        cmd.extend(["-map", f"{audio_input_idx}:a?"])
+        if parts_single:
+            single_label = "aud0"
+            audio_filter = f"[{input_idx}:a]{','.join(parts_single)}[{single_label}]"
+            if filter_str:
+                filter_str += ";\n" + audio_filter
+            else:
+                filter_str = audio_filter
+            cmd.extend(["-filter_complex", filter_str])
+            if layers:
+                last_label = f"ovr{len(layers) - 1}"
+                cmd.extend(["-map", f"[{last_label}]"])
+            cmd.extend(["-map", f"[{single_label}]"])
+        else:
+            # No trim/delay needed, simple map
+            if filter_str:
+                cmd.extend(["-filter_complex", filter_str])
+                if layers:
+                    last_label = f"ovr{len(layers) - 1}"
+                    cmd.extend(["-map", f"[{last_label}]"])
+            cmd.extend(["-map", f"{input_idx}:a?"])
+    else:
+        # No audio layers -- use legacy audio path or no audio
+        if filter_str:
+            cmd.extend(["-filter_complex", filter_str])
+            if layers:
+                last_label = f"ovr{len(layers) - 1}"
+                cmd.extend(["-map", f"[{last_label}]"])
+        if audio_input_idx is not None:
+            cmd.extend(["-map", f"{audio_input_idx}:a?"])
 
     # Output settings
     duration_s = _duration_seconds(model)
@@ -219,7 +294,7 @@ def build_ffmpeg_command(
         "-pix_fmt", "yuv420p",
     ])
 
-    if audio_input_idx is not None:
+    if has_audio:
         cmd.extend(["-c:a", "aac", "-b:a", "192k"])
 
     if extra_args:
@@ -254,6 +329,15 @@ def _resolve_layer_path(layer: CompositionLayer) -> Path | None:
     if layer.asset_path is not None:
         return layer.asset_path
     return None
+
+
+def _get_audio_layers(model: CompositionModel) -> list[CompositionAudioLayer]:
+    """Return enabled audio layers with resolved paths."""
+    result: list[CompositionAudioLayer] = []
+    for al in model.audio_layers:
+        if al.asset_path and al.enabled:
+            result.append(al)
+    return result
 
 
 def _resolve_audio_path(model: CompositionModel) -> Path | None:

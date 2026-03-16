@@ -1,6 +1,6 @@
 """Tests for CaptionAnimateTab from audio_visualizer.ui.tabs.captionAnimateTab."""
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QLineEdit, QWidget
 
 app = QApplication.instance() or QApplication([])
 
@@ -402,3 +402,309 @@ class TestCaptionAnimateTabPresetLoading:
         assert tab._max_width_spin.value() == 900
         assert tab._pad_top_spin.value() == 5
         assert tab._margin_l_spin.value() == 5
+
+
+class TestMixedAnimationParamWidgets:
+    """Verify that animation parameter controls handle numeric, string, and None defaults."""
+
+    def test_fade_creates_only_spin_boxes(self):
+        tab = CaptionAnimateTab()
+        tab._animation_type_combo.setCurrentText("fade")
+        # fade has in_ms and out_ms — both numeric
+        assert "in_ms" in tab._anim_param_controls
+        assert "out_ms" in tab._anim_param_controls
+        assert isinstance(tab._anim_param_controls["in_ms"], QDoubleSpinBox)
+        assert isinstance(tab._anim_param_controls["out_ms"], QDoubleSpinBox)
+
+    def test_word_reveal_creates_mixed_controls(self):
+        tab = CaptionAnimateTab()
+        tab._animation_type_combo.setCurrentText("word_reveal")
+        controls = tab._anim_param_controls
+        # word_reveal has: mode (str "even"), lead_in_ms (int), min_word_ms (int),
+        # max_word_ms (int), unrevealed_color (None)
+        assert isinstance(controls["mode"], QLineEdit)
+        assert controls["mode"].text() == "even"
+        assert isinstance(controls["lead_in_ms"], QDoubleSpinBox)
+        assert isinstance(controls["min_word_ms"], QDoubleSpinBox)
+        assert isinstance(controls["max_word_ms"], QDoubleSpinBox)
+        assert isinstance(controls["unrevealed_color"], QLineEdit)
+        # None default results in empty text with placeholder
+        assert controls["unrevealed_color"].text() == ""
+
+    def test_none_animation_type_clears_controls(self):
+        tab = CaptionAnimateTab()
+        tab._animation_type_combo.setCurrentText("fade")
+        assert len(tab._anim_param_controls) > 0
+        tab._animation_type_combo.setCurrentText("(none)")
+        assert len(tab._anim_param_controls) == 0
+
+
+class TestMixedAnimationParamRoundTrip:
+    """Settings round-trip with mixed animation param types."""
+
+    def test_word_reveal_settings_roundtrip(self):
+        tab = CaptionAnimateTab()
+
+        custom = {
+            "subtitle_path": "/tmp/test.srt",
+            "session_subtitle": "(none)",
+            "output_dir": "/tmp/output",
+            "fps": "30",
+            "quality": "small",
+            "safety_scale": 1.12,
+            "reskin": False,
+            "preset_source": "Built-in",
+            "builtin_preset": "clean_outline",
+            "preset_file": "",
+            "library_preset": "",
+            "font": {
+                "name": "Arial",
+                "size": 64,
+                "bold": False,
+                "italic": False,
+                "file": "",
+            },
+            "colors": {
+                "primary": "#FFFFFF",
+                "outline": "#000000",
+                "shadow": "#000000",
+            },
+            "styling": {
+                "outline_px": 4.0,
+                "shadow_px": 2.0,
+                "blur_px": 0.0,
+            },
+            "layout": {
+                "line_spacing": 8,
+                "max_width_px": 1200,
+                "padding": [40, 60, 50, 60],
+                "alignment": 2,
+                "margin_l": 0,
+                "margin_r": 0,
+                "margin_v": 0,
+                "wrap_style": 2,
+            },
+            "animation": {
+                "apply": True,
+                "type": "word_reveal",
+                "params": {
+                    "mode": "even",
+                    "lead_in_ms": 0.0,
+                    "min_word_ms": 60.0,
+                    "max_word_ms": 400.0,
+                    "unrevealed_color": None,
+                },
+            },
+            "mux_audio": False,
+            "audio_reactive": {
+                "enabled": False,
+                "audio_path": "",
+                "session_audio": "(none)",
+            },
+        }
+
+        tab.apply_settings(custom)
+        restored = tab.collect_settings()
+
+        assert restored["animation"]["type"] == "word_reveal"
+        params = restored["animation"]["params"]
+        assert params["mode"] == "even"
+        assert params["lead_in_ms"] == 0.0
+        assert params["min_word_ms"] == 60.0
+        assert params["max_word_ms"] == 400.0
+        assert params["unrevealed_color"] is None
+
+    def test_collect_preset_config_with_word_reveal(self):
+        tab = CaptionAnimateTab()
+        tab._animation_type_combo.setCurrentText("word_reveal")
+        preset = tab._collect_preset_config()
+        assert preset.animation is not None
+        assert preset.animation.type == "word_reveal"
+        assert preset.animation.params["mode"] == "even"
+        assert preset.animation.params["unrevealed_color"] is None
+
+    def test_string_param_roundtrip_via_preset(self):
+        from audio_visualizer.caption.core.config import PresetConfig, AnimationConfig
+
+        tab = CaptionAnimateTab()
+        preset = PresetConfig(
+            animation=AnimationConfig(
+                type="word_reveal",
+                params={
+                    "mode": "timed",
+                    "lead_in_ms": 50,
+                    "min_word_ms": 80,
+                    "max_word_ms": 500,
+                    "unrevealed_color": "#808080",
+                },
+            ),
+        )
+        tab._apply_preset_to_ui(preset)
+
+        controls = tab._anim_param_controls
+        assert controls["mode"].text() == "timed"
+        assert controls["unrevealed_color"].text() == "#808080"
+        assert controls["lead_in_ms"].value() == 50.0
+
+
+class TestGuardedRenderLifecycle:
+    """Ensure no crash when _main_window is None (no MainWindow available)."""
+
+    def test_safe_main_window_returns_none_for_bare_tab(self):
+        tab = CaptionAnimateTab()
+        assert tab._safe_main_window() is None
+
+    def test_safe_main_window_returns_none_for_plain_qwidget_parent(self):
+        parent = QWidget()
+        tab = CaptionAnimateTab(parent)
+        assert tab._safe_main_window() is None
+
+    def test_safe_main_window_returns_fake_main_window(self):
+        mw = _FakeMainWindow()
+        tab = CaptionAnimateTab(mw)
+        assert tab._safe_main_window() is mw
+
+    def test_on_progress_no_crash_without_main_window(self):
+        tab = CaptionAnimateTab()
+        # Should not raise even though _main_window is None
+        tab._on_progress(50.0, "half done", {})
+        assert tab._progress_bar.value() == 50
+        assert tab._status_label.text() == "half done"
+
+    def test_on_stage_no_crash_without_main_window(self):
+        tab = CaptionAnimateTab()
+        tab._on_stage("Encoding", 1, 3, {})
+        assert tab._status_label.text() == "Encoding"
+
+    def test_on_render_completed_no_crash_without_main_window(self, tmp_path):
+        tab = CaptionAnimateTab()
+        ctx = SessionContext()
+        tab.set_session_context(ctx)
+        tab._subtitle_edit.setText(str(tmp_path / "sample.srt"))
+
+        delivery = tmp_path / "sample_caption.mp4"
+        delivery.write_bytes(b"delivery")
+
+        # Should not raise
+        tab._on_render_completed(
+            {
+                "output_path": str(delivery),
+                "delivery_path": str(delivery),
+                "width": 1920,
+                "height": 200,
+                "duration_ms": 5000,
+                "quality": "large",
+            }
+        )
+        assert tab._progress_bar.value() == 100
+        assert tab._start_btn.isEnabled() is True
+        assert tab._cancel_btn.isEnabled() is False
+
+    def test_on_render_failed_no_crash_without_main_window(self):
+        tab = CaptionAnimateTab()
+        tab._on_render_failed("something went wrong", {})
+        assert "Failed" in tab._status_label.text()
+        assert tab._start_btn.isEnabled() is True
+        assert tab._cancel_btn.isEnabled() is False
+
+    def test_on_render_canceled_no_crash_without_main_window(self):
+        tab = CaptionAnimateTab()
+        tab._on_render_canceled("user cancelled")
+        assert "Cancelled" in tab._status_label.text()
+        assert tab._start_btn.isEnabled() is True
+        assert tab._cancel_btn.isEnabled() is False
+
+    def test_on_render_failed_resets_preview_state(self):
+        tab = CaptionAnimateTab()
+        tab._is_preview_render = True
+        tab._preview_render_btn.setEnabled(False)
+        tab._on_render_failed("something went wrong", {})
+        assert tab._is_preview_render is False
+        assert tab._preview_render_btn.isEnabled() is True
+
+    def test_on_render_canceled_resets_preview_state(self):
+        tab = CaptionAnimateTab()
+        tab._is_preview_render = True
+        tab._preview_render_btn.setEnabled(False)
+        tab._on_render_canceled("user cancelled")
+        assert tab._is_preview_render is False
+        assert tab._preview_render_btn.isEnabled() is True
+
+
+class TestCaptionAnimateRenderPreview:
+    """Tests for the Render Preview panel."""
+
+    def test_render_preview_section_exists(self):
+        tab = CaptionAnimateTab()
+        assert hasattr(tab, "_preview_render_btn")
+        assert hasattr(tab, "_preview_duration_label")
+        assert tab._preview_render_btn.text() == "Render Preview"
+        assert "~5 second" in tab._preview_duration_label.text()
+
+    def test_render_preview_initial_state(self):
+        tab = CaptionAnimateTab()
+        assert tab._is_preview_render is False
+        assert tab._preview_temp_dir is None
+        assert tab._preview_render_btn.isEnabled() is True
+
+    def test_preview_completed_does_not_register_assets(self, tmp_path):
+        tab = CaptionAnimateTab()
+        ctx = SessionContext()
+        tab.set_session_context(ctx)
+        tab._subtitle_edit.setText(str(tmp_path / "sample.srt"))
+
+        preview_file = tmp_path / "preview.mp4"
+        preview_file.write_bytes(b"preview")
+
+        tab._on_preview_completed(
+            {
+                "output_path": str(preview_file),
+                "width": 1920,
+                "height": 200,
+                "duration_ms": 5000,
+                "quality": "small",
+            }
+        )
+
+        # No assets should be registered for a preview render
+        video_assets = ctx.list_assets(category="video")
+        assert len(video_assets) == 0
+
+    def test_preview_completed_updates_status(self, tmp_path):
+        tab = CaptionAnimateTab()
+        preview_file = tmp_path / "preview.mp4"
+        preview_file.write_bytes(b"preview")
+
+        tab._on_preview_completed({"output_path": str(preview_file)})
+
+        assert tab._status_label.text() == "Preview ready"
+        assert tab._progress_bar.value() == 100
+
+    def test_preview_completed_resets_button_state(self):
+        tab = CaptionAnimateTab()
+        tab._start_btn.setEnabled(False)
+        tab._preview_render_btn.setEnabled(False)
+        tab._cancel_btn.setEnabled(True)
+        tab._is_preview_render = True
+
+        tab._on_preview_completed({"output_path": ""})
+
+        assert tab._start_btn.isEnabled() is True
+        assert tab._preview_render_btn.isEnabled() is True
+        assert tab._cancel_btn.isEnabled() is False
+        assert tab._is_preview_render is False
+
+    def test_global_busy_disables_preview_render_btn(self):
+        tab = CaptionAnimateTab()
+        assert tab._preview_render_btn.isEnabled() is True
+
+        tab.set_global_busy(True, owner_tab_id="audio_visualizer")
+        assert tab._preview_render_btn.isEnabled() is False
+
+        tab.set_global_busy(False, owner_tab_id="audio_visualizer")
+        assert tab._preview_render_btn.isEnabled() is True
+
+    def test_global_busy_own_tab_does_not_disable_preview_btn(self):
+        tab = CaptionAnimateTab()
+        tab.set_global_busy(True, owner_tab_id="caption_animate")
+        assert tab._preview_render_btn.isEnabled() is True

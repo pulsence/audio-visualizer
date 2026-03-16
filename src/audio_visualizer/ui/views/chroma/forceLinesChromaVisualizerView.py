@@ -32,6 +32,7 @@ from PySide6.QtGui import (
 )
 
 from audio_visualizer.ui.views.general.generalView import View
+from audio_visualizer.ui.widgets.clickableColorSwatch import ClickableColorSwatch
 
 class ForceLinesChromaVisualizerSettings:
     line_thickness = 0
@@ -107,9 +108,9 @@ class ForceLinesChromaVisualizerView(View):
                 ))
                 button.clicked.connect(picker.open)
                 row.addWidget(button)
-                swatch = QLabel()
-                swatch.setFixedSize(18, 18)
-                swatch.setStyleSheet("border: 1px solid #888; background: rgb(227, 209, 169);")
+                swatch = ClickableColorSwatch()
+                swatch.set_color(227, 209, 169)
+                swatch.clicked.connect(picker.open)
                 row.addWidget(swatch)
                 tab_layout.addRow(f"Band {band_index + 1} Color:", row)
                 field.textChanged.connect(lambda _, f=field, s=swatch: self._update_swatch(f, s))

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QEvent, QModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, QEvent, QModelIndex, Qt, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QPlainTextEdit, QStyledItemDelegate, QWidget
 
@@ -72,6 +72,8 @@ class SubtitleTableModel(QAbstractTableModel):
     Editable columns: Start, End, Text, Speaker.
     Read-only columns: #, Duration.
     """
+
+    inline_edit_requested = Signal(int, int, object)  # row, column, value
 
     def __init__(self, document: SubtitleDocument, parent: Any = None) -> None:
         super().__init__(parent)
@@ -170,27 +172,24 @@ class SubtitleTableModel(QAbstractTableModel):
         if row < 0 or row >= len(self._document.entries):
             return False
 
-        entry = self._document.entries[row]
-
         if col == COL_START:
             ms = _timestamp_to_ms(str(value))
             if ms is None:
                 return False
-            self._document.update_entry(row, start_ms=ms)
+            self.inline_edit_requested.emit(row, col, ms)
         elif col == COL_END:
             ms = _timestamp_to_ms(str(value))
             if ms is None:
                 return False
-            self._document.update_entry(row, end_ms=ms)
+            self.inline_edit_requested.emit(row, col, ms)
         elif col == COL_TEXT:
-            self._document.update_entry(row, text=str(value))
+            self.inline_edit_requested.emit(row, col, str(value))
         elif col == COL_SPEAKER:
             val = str(value).strip()
-            self._document.update_entry(row, speaker=val if val else None)
+            self.inline_edit_requested.emit(row, col, val if val else None)
         else:
             return False
 
-        self.dataChanged.emit(index, index, [role])
         return True
 
     # ------------------------------------------------------------------

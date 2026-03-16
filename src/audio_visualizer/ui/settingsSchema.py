@@ -28,6 +28,7 @@ _TAB_KEYS: tuple[str, ...] = (
     "srt_edit",
     "caption_animate",
     "render_composition",
+    "assets",
 )
 
 
@@ -43,6 +44,9 @@ def create_default_schema() -> dict:
     """
     return {
         "version": CURRENT_SCHEMA_VERSION,
+        "app": {
+            "theme_mode": "off",  # "off", "on", "auto"
+        },
         "ui": {
             "last_active_tab": "audio_visualizer",
             "window": {
@@ -112,6 +116,7 @@ def _ensure_complete(data: dict) -> dict:
     """
     defaults = create_default_schema()
 
+    data.setdefault("app", defaults["app"])
     data.setdefault("ui", defaults["ui"])
     data.setdefault("session", defaults["session"])
 

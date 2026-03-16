@@ -13,6 +13,7 @@ from typing import Any
 from PySide6.QtGui import QUndoCommand
 
 from audio_visualizer.ui.tabs.renderComposition.model import (
+    CompositionAudioLayer,
     CompositionLayer,
     CompositionModel,
 )
@@ -245,3 +246,101 @@ class ApplyPresetCommand(QUndoCommand):
         self._model.layers.clear()
         for layer in self._old_layers:
             self._model.layers.append(copy.deepcopy(layer))
+
+
+class AddAudioLayerCommand(QUndoCommand):
+    """Add a new audio layer to the composition model."""
+
+    def __init__(
+        self,
+        model: CompositionModel,
+        layer: CompositionAudioLayer,
+        parent: QUndoCommand | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._layer = copy.deepcopy(layer)
+        self.setText(f"Add audio layer '{layer.display_name}'")
+
+    def redo(self) -> None:
+        self._model.audio_layers.append(copy.deepcopy(self._layer))
+
+    def undo(self) -> None:
+        self._model.audio_layers = [
+            al for al in self._model.audio_layers if al.id != self._layer.id
+        ]
+
+
+class RemoveAudioLayerCommand(QUndoCommand):
+    """Remove an audio layer from the composition model."""
+
+    def __init__(
+        self,
+        model: CompositionModel,
+        layer_id: str,
+        parent: QUndoCommand | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._layer_id = layer_id
+        self._snapshot: CompositionAudioLayer | None = None
+        self._index: int | None = None
+        for i, al in enumerate(model.audio_layers):
+            if al.id == layer_id:
+                self._snapshot = copy.deepcopy(al)
+                self._index = i
+                break
+        self.setText("Remove audio layer")
+
+    def redo(self) -> None:
+        self._model.audio_layers = [
+            al for al in self._model.audio_layers if al.id != self._layer_id
+        ]
+
+    def undo(self) -> None:
+        if self._snapshot is not None:
+            restored = copy.deepcopy(self._snapshot)
+            if self._index is not None and self._index <= len(self._model.audio_layers):
+                self._model.audio_layers.insert(self._index, restored)
+            else:
+                self._model.audio_layers.append(restored)
+
+
+class EditAudioLayerCommand(QUndoCommand):
+    """Edit one or more fields on an audio layer."""
+
+    def __init__(
+        self,
+        model: CompositionModel,
+        layer_id: str,
+        parent: QUndoCommand | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._layer_id = layer_id
+        self._new_values = kwargs
+        self._old_values: dict[str, Any] = {}
+        for al in model.audio_layers:
+            if al.id == layer_id:
+                for key in kwargs:
+                    if hasattr(al, key):
+                        self._old_values[key] = getattr(al, key)
+                break
+        self.setText("Edit audio layer")
+
+    def redo(self) -> None:
+        for al in self._model.audio_layers:
+            if al.id == self._layer_id:
+                for key, val in self._new_values.items():
+                    if hasattr(al, key):
+                        setattr(al, key, val)
+                break
+
+    def undo(self) -> None:
+        for al in self._model.audio_layers:
+            if al.id == self._layer_id:
+                for key, val in self._old_values.items():
+                    if hasattr(al, key):
+                        setattr(al, key, val)
+                break

@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -117,9 +117,9 @@ class CaptionAnimateTab(BaseTab):
         super().__init__(parent)
         self._main_window = parent
         self._active_worker: Optional[CaptionRenderWorker] = None
-        self._thread_pool = QThreadPool()
-        self._thread_pool.setMaxThreadCount(1)
         self._example_presets_seeded = False
+        self._is_preview_render = False
+        self._preview_temp_dir: Optional[str] = None
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -148,6 +148,7 @@ class CaptionAnimateTab(BaseTab):
         layout.addWidget(self._build_animation_section())
         layout.addWidget(self._build_audio_reactive_section())
         layout.addWidget(self._build_preview_section())
+        layout.addWidget(self._build_render_preview_section())
         layout.addWidget(self._build_render_controls())
 
         layout.addStretch()
@@ -519,8 +520,8 @@ class CaptionAnimateTab(BaseTab):
         self._anim_params_widget.setLayout(self._anim_params_layout)
         layout.addWidget(self._anim_params_widget)
 
-        # Dictionary tracking dynamic param spin boxes
-        self._anim_param_spins: Dict[str, QDoubleSpinBox] = {}
+        # Dictionary tracking dynamic param controls (spin boxes or line edits)
+        self._anim_param_controls: Dict[str, QWidget] = {}
 
         # Populate initial params
         self._on_animation_type_changed(self._animation_type_combo.currentText())
@@ -577,6 +578,57 @@ class CaptionAnimateTab(BaseTab):
         refresh_btn = QPushButton("Refresh Preview")
         refresh_btn.clicked.connect(self._update_preview_style)
         layout.addWidget(refresh_btn)
+
+        group.setLayout(layout)
+        return group
+
+    # -- Render preview section ----------------------------------------
+
+    def _build_render_preview_section(self) -> QGroupBox:
+        group = QGroupBox("Render Preview")
+        layout = QVBoxLayout()
+
+        # Preview controls
+        ctrl_row = QHBoxLayout()
+        self._preview_render_btn = QPushButton("Render Preview")
+        self._preview_render_btn.clicked.connect(self._start_preview_render)
+        ctrl_row.addWidget(self._preview_render_btn)
+
+        self._preview_duration_label = QLabel("(~5 second preview)")
+        ctrl_row.addWidget(self._preview_duration_label)
+        ctrl_row.addStretch()
+        layout.addLayout(ctrl_row)
+
+        # Media player for preview playback
+        try:
+            from PySide6.QtMultimediaWidgets import QVideoWidget
+            from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+            self._preview_video_widget = QVideoWidget()
+            self._preview_video_widget.setMinimumHeight(200)
+            self._preview_media_player = QMediaPlayer()
+            self._preview_audio_output = QAudioOutput()
+            self._preview_media_player.setAudioOutput(self._preview_audio_output)
+            self._preview_media_player.setVideoOutput(self._preview_video_widget)
+            layout.addWidget(self._preview_video_widget)
+
+            playback_row = QHBoxLayout()
+            self._preview_play_btn = QPushButton("Play")
+            self._preview_play_btn.clicked.connect(self._on_preview_play)
+            self._preview_play_btn.setEnabled(False)
+            playback_row.addWidget(self._preview_play_btn)
+
+            self._preview_stop_btn = QPushButton("Stop")
+            self._preview_stop_btn.clicked.connect(self._on_preview_stop)
+            self._preview_stop_btn.setEnabled(False)
+            playback_row.addWidget(self._preview_stop_btn)
+            playback_row.addStretch()
+            layout.addLayout(playback_row)
+
+            self._preview_available = True
+        except ImportError:
+            self._preview_available = False
+            layout.addWidget(QLabel("Preview requires Qt Multimedia Widgets"))
 
         group.setLayout(layout)
         return group
@@ -666,8 +718,12 @@ class CaptionAnimateTab(BaseTab):
             QMessageBox.warning(self, "Preset Error", str(exc))
 
     def _browse_preset_file(self) -> None:
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+        start_dir = resolve_browse_directory(
+            self._preset_file_edit.text(), self.session_context
+        )
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Preset File", "",
+            self, "Select Preset File", start_dir,
             "Preset files (*.json *.yaml *.yml);;All files (*)",
         )
         if path:
@@ -794,8 +850,12 @@ class CaptionAnimateTab(BaseTab):
                 self._animation_type_combo.setCurrentIndex(idx)
             # Apply params after type change triggers param rebuild
             for key, val in preset.animation.params.items():
-                if key in self._anim_param_spins:
-                    self._anim_param_spins[key].setValue(float(val))
+                if key in self._anim_param_controls:
+                    ctrl = self._anim_param_controls[key]
+                    if isinstance(ctrl, QDoubleSpinBox):
+                        ctrl.setValue(float(val))
+                    elif isinstance(ctrl, QLineEdit):
+                        ctrl.setText(str(val) if val is not None else "")
 
         self._update_preview_style()
 
@@ -805,8 +865,14 @@ class CaptionAnimateTab(BaseTab):
         atype = self._animation_type_combo.currentText()
         if atype and atype != "(none)":
             params = {}
-            for key, spin in self._anim_param_spins.items():
-                params[key] = spin.value()
+            for key, ctrl in self._anim_param_controls.items():
+                if isinstance(ctrl, QDoubleSpinBox):
+                    params[key] = ctrl.value()
+                elif isinstance(ctrl, QLineEdit):
+                    text = ctrl.text().strip()
+                    params[key] = None if not text or text == "(none)" else text
+                else:
+                    params[key] = ctrl.value()
             animation = AnimationConfig(type=atype, params=params)
 
         return PresetConfig(
@@ -844,9 +910,9 @@ class CaptionAnimateTab(BaseTab):
     def _on_animation_type_changed(self, atype: str) -> None:
         """Rebuild dynamic parameter controls for the selected animation type."""
         # Clear existing
-        for spin in self._anim_param_spins.values():
-            spin.deleteLater()
-        self._anim_param_spins.clear()
+        for ctrl in self._anim_param_controls.values():
+            ctrl.deleteLater()
+        self._anim_param_controls.clear()
 
         # Clear layout items
         while self._anim_params_layout.count():
@@ -866,13 +932,24 @@ class CaptionAnimateTab(BaseTab):
         for key, default_val in defaults.items():
             label = QLabel(f"{key}:")
             self._anim_params_layout.addWidget(label)
-            spin = QDoubleSpinBox()
-            spin.setRange(-10000, 10000)
-            spin.setSingleStep(1.0)
-            spin.setDecimals(1)
-            spin.setValue(float(default_val))
-            self._anim_params_layout.addWidget(spin)
-            self._anim_param_spins[key] = spin
+            if default_val is None:
+                ctrl = QLineEdit()
+                ctrl.setPlaceholderText("(none)")
+                self._anim_params_layout.addWidget(ctrl)
+                self._anim_param_controls[key] = ctrl
+            elif isinstance(default_val, str):
+                ctrl = QLineEdit()
+                ctrl.setText(default_val)
+                self._anim_params_layout.addWidget(ctrl)
+                self._anim_param_controls[key] = ctrl
+            else:
+                spin = QDoubleSpinBox()
+                spin.setRange(-10000, 10000)
+                spin.setSingleStep(1.0)
+                spin.setDecimals(1)
+                spin.setValue(float(default_val))
+                self._anim_params_layout.addWidget(spin)
+                self._anim_param_controls[key] = spin
 
     # ------------------------------------------------------------------
     # File browsing
@@ -884,13 +961,21 @@ class CaptionAnimateTab(BaseTab):
             self._subtitle_edit.setText(str(path))
 
     def _browse_output_dir(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+        start_dir = resolve_browse_directory(
+            self._output_dir_edit.text(), self.session_context
+        )
+        path = QFileDialog.getExistingDirectory(self, "Select Output Directory", start_dir)
         if path:
             self._output_dir_edit.setText(path)
 
     def _browse_font_file(self) -> None:
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+        start_dir = resolve_browse_directory(
+            self._font_file_edit.text(), self.session_context
+        )
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Font File", "",
+            self, "Select Font File", start_dir,
             "Font files (*.ttf *.otf);;All files (*)"
         )
         if path:
@@ -1005,8 +1090,126 @@ class CaptionAnimateTab(BaseTab):
         )
 
     # ------------------------------------------------------------------
+    # Render preview
+    # ------------------------------------------------------------------
+
+    def _start_preview_render(self) -> None:
+        """Start a short preview render (~5 seconds from beginning)."""
+        valid, msg = self.validate_settings()
+        if not valid:
+            QMessageBox.warning(self, "Validation Error", msg)
+            return
+
+        mw = self._safe_main_window()
+        if mw is not None:
+            if not mw.try_start_job(self.tab_id):
+                return
+
+        import tempfile
+        subtitle_path = Path(self._subtitle_edit.text().strip())
+
+        # Create temp output for preview
+        self._preview_temp_dir = tempfile.mkdtemp(prefix="caption_preview_")
+        preview_output = Path(self._preview_temp_dir) / "preview.mp4"
+
+        preset_name = self._current_preset_name()
+        config = RenderConfig(
+            preset=preset_name,
+            fps=self._fps_combo.currentText(),
+            quality="small",  # Always use small for preview
+            safety_scale=self._safety_scale_spin.value(),
+            apply_animation=self._apply_animation_cb.isChecked(),
+            reskin=self._reskin_cb.isChecked(),
+        )
+
+        preset_override = self._collect_preset_config()
+
+        audio_path = None
+        if self._audio_file_edit.text().strip():
+            audio_path = Path(self._audio_file_edit.text().strip())
+
+        spec = CaptionRenderJobSpec(
+            subtitle_path=subtitle_path,
+            output_path=preview_output,
+            config=config,
+            preset_override=preset_override,
+            audio_path=audio_path if self._audio_reactive_group.isChecked() else None,
+            delivery_output_path=preview_output,  # Same as output for preview
+            delivery_audio_path=audio_path,  # Include audio for preview playback
+        )
+
+        emitter = AppEventEmitter()
+        worker = CaptionRenderWorker(spec=spec, emitter=emitter)
+        self._active_worker = worker
+        self._is_preview_render = True
+
+        worker.signals.progress.connect(self._on_progress)
+        worker.signals.stage.connect(self._on_stage)
+        worker.signals.log.connect(self._on_log)
+        worker.signals.completed.connect(self._on_preview_completed)
+        worker.signals.failed.connect(self._on_render_failed)
+        worker.signals.canceled.connect(self._on_render_canceled)
+
+        self._start_btn.setEnabled(False)
+        self._preview_render_btn.setEnabled(False)
+        self._cancel_btn.setEnabled(True)
+        self._status_label.setText("Rendering preview...")
+
+        mw = self._safe_main_window()
+        if mw is not None:
+            mw.show_job_status(
+                "caption_preview", self.tab_id, f"Preview render for {subtitle_path.name}..."
+            )
+            mw.render_thread_pool.start(worker)
+        else:
+            from PySide6.QtCore import QThreadPool
+            QThreadPool.globalInstance().start(worker)
+
+    def _on_preview_completed(self, data: dict) -> None:
+        """Handle preview render completion — do NOT register assets."""
+        self._active_worker = None
+        self._is_preview_render = False
+        self._start_btn.setEnabled(True)
+        self._preview_render_btn.setEnabled(True)
+        self._cancel_btn.setEnabled(False)
+        self._progress_bar.setValue(100)
+
+        output_path = data.get("output_path", "")
+        self._status_label.setText("Preview ready")
+
+        mw = self._safe_main_window()
+        if mw is not None:
+            mw.show_job_completed(
+                "Preview render complete",
+                output_path=output_path,
+                owner_tab_id=self.tab_id,
+            )
+
+        # Load preview into media player
+        if self._preview_available and output_path and Path(output_path).exists():
+            from PySide6.QtCore import QUrl
+            self._preview_media_player.setSource(QUrl.fromLocalFile(str(output_path)))
+            self._preview_play_btn.setEnabled(True)
+            self._preview_stop_btn.setEnabled(True)
+
+    def _on_preview_play(self) -> None:
+        if self._preview_available:
+            self._preview_media_player.play()
+
+    def _on_preview_stop(self) -> None:
+        if self._preview_available:
+            self._preview_media_player.stop()
+
+    # ------------------------------------------------------------------
     # Render lifecycle
     # ------------------------------------------------------------------
+
+    def _safe_main_window(self):
+        """Return the main window if available and has the expected interface."""
+        mw = self._main_window
+        if mw is not None and hasattr(mw, "try_start_job"):
+            return mw
+        return None
 
     def _start_render(self) -> None:
         valid, msg = self.validate_settings()
@@ -1015,8 +1218,10 @@ class CaptionAnimateTab(BaseTab):
             return
 
         # Acquire shared job slot
-        if not self._main_window.try_start_job(self.tab_id):
-            return
+        mw = self._safe_main_window()
+        if mw is not None:
+            if not mw.try_start_job(self.tab_id):
+                return
 
         subtitle_path = Path(self._subtitle_edit.text().strip())
         output_dir = self._output_dir_edit.text().strip()
@@ -1078,11 +1283,19 @@ class CaptionAnimateTab(BaseTab):
         self._status_label.setText("Starting caption render...")
 
         # Show in global progress
-        self._main_window.show_job_status(
-            "caption_render", self.tab_id, f"Rendering captions for {subtitle_path.name}..."
-        )
+        mw = self._safe_main_window()
+        if mw is not None:
+            mw.show_job_status(
+                "caption_render", self.tab_id, f"Rendering captions for {subtitle_path.name}..."
+            )
 
-        self._thread_pool.start(worker)
+        # Start worker on shared or fallback thread pool
+        if mw is not None:
+            mw.render_thread_pool.start(worker)
+        else:
+            from PySide6.QtCore import QThreadPool
+            pool = QThreadPool.globalInstance()
+            pool.start(worker)
         logger.info("Started CaptionRenderWorker for %s", subtitle_path.name)
 
     def cancel_job(self) -> None:
@@ -1098,13 +1311,17 @@ class CaptionAnimateTab(BaseTab):
     def _on_progress(self, percent: float, message: str, data: dict) -> None:
         if percent >= 0:
             self._progress_bar.setValue(int(percent))
-            self._main_window.update_job_progress(percent, message or "")
+            mw = self._safe_main_window()
+            if mw is not None:
+                mw.update_job_progress(percent, message or "")
         if message:
             self._status_label.setText(message)
 
     def _on_stage(self, name: str, index: int, total: int, data: dict) -> None:
         self._status_label.setText(name)
-        self._main_window.update_job_status(name)
+        mw = self._safe_main_window()
+        if mw is not None:
+            mw.update_job_status(name)
 
     def _on_log(self, level: str, message: str, data: dict) -> None:
         logger.log(
@@ -1133,11 +1350,13 @@ class CaptionAnimateTab(BaseTab):
         self._status_label.setText(
             f"Render complete: {Path(delivery_path).name} ({width}x{height})"
         )
-        self._main_window.show_job_completed(
-            f"Caption render complete: {Path(delivery_path).name}",
-            output_path=delivery_path,
-            owner_tab_id=self.tab_id,
-        )
+        mw = self._safe_main_window()
+        if mw is not None:
+            mw.show_job_completed(
+                f"Caption render complete: {Path(delivery_path).name}",
+                output_path=delivery_path,
+                owner_tab_id=self.tab_id,
+            )
 
         # Register the user-facing delivery asset.
         if delivery_path and Path(delivery_path).exists():
@@ -1198,25 +1417,33 @@ class CaptionAnimateTab(BaseTab):
     def _on_render_failed(self, error_message: str, data: dict) -> None:
         self._active_worker = None
         self._start_btn.setEnabled(True)
+        self._preview_render_btn.setEnabled(True)
+        self._is_preview_render = False
         self._cancel_btn.setEnabled(False)
         self._progress_bar.setValue(0)
         self._status_label.setText(f"Failed: {error_message}")
-        self._main_window.show_job_failed(
-            f"Caption render error: {error_message}",
-            owner_tab_id=self.tab_id,
-        )
+        mw = self._safe_main_window()
+        if mw is not None:
+            mw.show_job_failed(
+                f"Caption render error: {error_message}",
+                owner_tab_id=self.tab_id,
+            )
         logger.error("Caption render failed: %s", error_message)
 
     def _on_render_canceled(self, message: str) -> None:
         self._active_worker = None
         self._start_btn.setEnabled(True)
+        self._preview_render_btn.setEnabled(True)
+        self._is_preview_render = False
         self._cancel_btn.setEnabled(False)
         self._progress_bar.setValue(0)
         self._status_label.setText(f"Cancelled: {message}")
-        self._main_window.show_job_canceled(
-            f"Caption render cancelled: {message}",
-            owner_tab_id=self.tab_id,
-        )
+        mw = self._safe_main_window()
+        if mw is not None:
+            mw.show_job_canceled(
+                f"Caption render cancelled: {message}",
+                owner_tab_id=self.tab_id,
+            )
         logger.info("Caption render cancelled: %s", message)
 
     # ------------------------------------------------------------------
@@ -1283,7 +1510,9 @@ class CaptionAnimateTab(BaseTab):
                 "apply": self._apply_animation_cb.isChecked(),
                 "type": self._animation_type_combo.currentText(),
                 "params": {
-                    k: spin.value() for k, spin in self._anim_param_spins.items()
+                    k: (ctrl.value() if isinstance(ctrl, QDoubleSpinBox) else
+                        (None if not ctrl.text().strip() or ctrl.text().strip() == "(none)" else ctrl.text().strip()))
+                    for k, ctrl in self._anim_param_controls.items()
                 },
             },
             "mux_audio": self._mux_audio_cb.isChecked(),
@@ -1394,8 +1623,12 @@ class CaptionAnimateTab(BaseTab):
             self._animation_type_combo.setCurrentIndex(idx)
         anim_params = anim_data.get("params", {})
         for key, val in anim_params.items():
-            if key in self._anim_param_spins:
-                self._anim_param_spins[key].setValue(float(val))
+            if key in self._anim_param_controls:
+                ctrl = self._anim_param_controls[key]
+                if isinstance(ctrl, QDoubleSpinBox):
+                    ctrl.setValue(float(val))
+                elif isinstance(ctrl, QLineEdit):
+                    ctrl.setText(str(val) if val is not None else "")
 
         # Audio-reactive
         ar = data.get("audio_reactive", {})
@@ -1415,6 +1648,7 @@ class CaptionAnimateTab(BaseTab):
         if owner_tab_id == self.tab_id:
             return
         self._start_btn.setEnabled(not is_busy)
+        self._preview_render_btn.setEnabled(not is_busy)
 
     def _current_preset_name(self) -> str:
         source_idx = self._preset_source_combo.currentIndex()

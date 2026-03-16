@@ -63,6 +63,7 @@ class MainWindow(QMainWindow):
     """
 
     def __init__(self) -> None:
+        _t0 = time.monotonic()
         super().__init__()
         self._log_path = setup_logging()
         self.setWindowTitle("Audio Visualizer")
@@ -75,12 +76,18 @@ class MainWindow(QMainWindow):
         self._background_thread_pool = QThreadPool()
         self._global_busy = False
         self._busy_owner_tab_id: str | None = None
+        self._current_theme_mode = "off"
 
         # Tab registry
         self._tabs: list[BaseTab] = []
         self._tab_map: dict[str, BaseTab] = {}
         self._bound_undo_action: QAction | None = None
         self._bound_redo_action: QAction | None = None
+
+        # Lazy tab registry
+        self._lazy_tab_defs: dict[str, str] = {}  # tab_id -> title
+        self._lazy_placeholders: dict[str, QWidget] = {}  # tab_id -> placeholder
+        self._pending_tab_settings: dict[str, dict] = {}  # unapplied settings
 
         # Build shell layout
         self._build_shell()
@@ -91,6 +98,8 @@ class MainWindow(QMainWindow):
 
         # Load last settings
         self._load_last_settings_if_present()
+
+        logger.info("MainWindow startup: %.1f ms", (time.monotonic() - _t0) * 1000)
 
     # ------------------------------------------------------------------
     # Shell layout
@@ -139,27 +148,120 @@ class MainWindow(QMainWindow):
         logger.info("Tab registered: %s (%s)", tab.tab_id, tab.tab_title)
 
     def _register_all_tabs(self) -> None:
-        """Register all application tabs in order."""
+        """Register all application tabs in order.
+
+        Only the default tab (AudioVisualizerTab) is instantiated eagerly.
+        Remaining tabs are registered as lazy placeholders and created on
+        first activation.
+        """
+        # Eagerly instantiate AudioVisualizerTab
         from audio_visualizer.ui.tabs.audioVisualizerTab import AudioVisualizerTab
         self.add_tab(AudioVisualizerTab(self))
 
-        from audio_visualizer.ui.tabs.srtGenTab import SrtGenTab
-        self.add_tab(SrtGenTab(self))
-
-        from audio_visualizer.ui.tabs.srtEditTab import SrtEditTab
-        self.add_tab(SrtEditTab(self))
-
-        from audio_visualizer.ui.tabs.captionAnimateTab import CaptionAnimateTab
-        self.add_tab(CaptionAnimateTab(self))
-
-        from audio_visualizer.ui.tabs.renderCompositionTab import RenderCompositionTab
-        self.add_tab(RenderCompositionTab(self))
+        # Register lazy tabs with placeholder widgets
+        lazy_defs = [
+            ("srt_gen", "SRT Gen"),
+            ("srt_edit", "SRT Edit"),
+            ("caption_animate", "Caption Animate"),
+            ("render_composition", "Render Composition"),
+            ("assets", "Assets"),
+        ]
+        for tab_id, title in lazy_defs:
+            placeholder = QWidget()
+            index = self._stack.addWidget(placeholder)
+            self._sidebar.add_tab(tab_id, title, index)
+            self._lazy_tab_defs[tab_id] = title
+            self._lazy_placeholders[tab_id] = placeholder
+            logger.debug("Lazy tab registered: %s (%s)", tab_id, title)
 
         # Default to first tab
-        if self._tabs:
-            self._sidebar.set_active(0)
-            self._stack.setCurrentIndex(0)
-            self._update_undo_actions()
+        self._sidebar.set_active(0)
+        self._stack.setCurrentIndex(0)
+        self._update_undo_actions()
+
+    # ------------------------------------------------------------------
+    # Lazy tab instantiation
+    # ------------------------------------------------------------------
+
+    def _find_stack_index_for_tab_id(self, tab_id: str) -> int:
+        """Return the QStackedWidget index for a tab_id, or -1 if not found.
+
+        Searches both instantiated tabs and lazy placeholders.
+        """
+        for i in range(self._stack.count()):
+            widget = self._stack.widget(i)
+            if isinstance(widget, BaseTab) and widget.tab_id == tab_id:
+                return i
+            for tid, placeholder in self._lazy_placeholders.items():
+                if placeholder is widget and tid == tab_id:
+                    return i
+        return -1
+
+    def _instantiate_tab(self, tab_id: str) -> BaseTab | None:
+        """Create a tab instance by tab_id (deferred import)."""
+        if tab_id == "srt_gen":
+            from audio_visualizer.ui.tabs.srtGenTab import SrtGenTab
+            return SrtGenTab(self)
+        elif tab_id == "srt_edit":
+            from audio_visualizer.ui.tabs.srtEditTab import SrtEditTab
+            return SrtEditTab(self)
+        elif tab_id == "caption_animate":
+            from audio_visualizer.ui.tabs.captionAnimateTab import CaptionAnimateTab
+            return CaptionAnimateTab(self)
+        elif tab_id == "render_composition":
+            from audio_visualizer.ui.tabs.renderCompositionTab import RenderCompositionTab
+            return RenderCompositionTab(self)
+        elif tab_id == "assets":
+            from audio_visualizer.ui.tabs.assetsTab import AssetsTab
+            return AssetsTab(self)
+        return None
+
+    def _ensure_tab_instantiated(self, index: int) -> BaseTab | None:
+        """If the widget at *index* is a lazy placeholder, instantiate it now.
+
+        Returns the real tab widget (whether newly created or already
+        present), or ``None`` if the index does not correspond to a tab.
+        """
+        widget = self._stack.widget(index)
+        if isinstance(widget, BaseTab):
+            return widget  # Already instantiated
+
+        # Find which lazy tab this placeholder belongs to
+        tab_id = None
+        for tid, placeholder in self._lazy_placeholders.items():
+            if placeholder is widget:
+                tab_id = tid
+                break
+
+        if tab_id is None:
+            return None
+
+        tab = self._instantiate_tab(tab_id)
+        if tab is None:
+            return None
+
+        tab.set_session_context(self.session_context)
+
+        # Replace the placeholder widget at this index
+        self._stack.removeWidget(widget)
+        widget.deleteLater()
+        self._stack.insertWidget(index, tab)
+
+        self._tabs.append(tab)
+        self._tab_map[tab.tab_id] = tab
+        del self._lazy_placeholders[tab_id]
+
+        # Apply pending settings if any
+        pending = self._pending_tab_settings.pop(tab_id, None)
+        if pending:
+            tab.apply_settings(pending)
+
+        # Apply current global busy state
+        if self._global_busy:
+            tab.set_global_busy(True, self._busy_owner_tab_id)
+
+        logger.info("Lazy tab instantiated: %s", tab_id)
+        return tab
 
     # ------------------------------------------------------------------
     # Navigation
@@ -167,6 +269,7 @@ class MainWindow(QMainWindow):
 
     def _on_tab_selected(self, index: int) -> None:
         """Handle sidebar navigation click."""
+        self._ensure_tab_instantiated(index)
         self._stack.setCurrentIndex(index)
         self._update_undo_actions()
 
@@ -206,6 +309,11 @@ class MainWindow(QMainWindow):
         self._recipe_library_action = QAction("Recipe Library...", self)
         self._recipe_library_action.triggered.connect(self.open_recipe_library)
         file_menu.addAction(self._recipe_library_action)
+
+        file_menu.addSeparator()
+        self._settings_action = QAction("Settings...", self)
+        self._settings_action.triggered.connect(self._open_settings)
+        file_menu.addAction(self._settings_action)
 
         # Edit menu
         edit_menu = menu_bar.addMenu("Edit")
@@ -369,9 +477,11 @@ class MainWindow(QMainWindow):
             if asset is not None:
                 self.session_context.set_role(asset_id, role)
 
-        # Switch to target tab
-        for i, tab in enumerate(self._tabs):
-            if tab.tab_id == target_tab_id:
+        # Switch to target tab — search both real tabs and lazy placeholders
+        for i in range(self._stack.count()):
+            widget = self._stack.widget(i)
+            # Check instantiated tabs
+            if isinstance(widget, BaseTab) and widget.tab_id == target_tab_id:
                 self._sidebar.set_active(i)
                 self._stack.setCurrentIndex(i)
                 self._update_undo_actions()
@@ -382,6 +492,20 @@ class MainWindow(QMainWindow):
                     role,
                 )
                 return
+            # Check lazy placeholders
+            for tid, placeholder in self._lazy_placeholders.items():
+                if placeholder is widget and tid == target_tab_id:
+                    self._ensure_tab_instantiated(i)
+                    self._sidebar.set_active(i)
+                    self._stack.setCurrentIndex(i)
+                    self._update_undo_actions()
+                    logger.info(
+                        "Handoff to tab '%s' (asset=%s, role=%s)",
+                        target_tab_id,
+                        asset_id,
+                        role,
+                    )
+                    return
 
         logger.warning("Handoff target tab '%s' not found.", target_tab_id)
 
@@ -408,14 +532,11 @@ class MainWindow(QMainWindow):
         for tab in self._tabs:
             tab.set_global_busy(is_busy, owner_tab_id)
         if is_busy and owner_tab_id:
-            idx = next(
-                (i for i, t in enumerate(self._tabs) if t.tab_id == owner_tab_id),
-                -1,
-            )
+            idx = self._find_stack_index_for_tab_id(owner_tab_id)
             if idx >= 0:
                 self._sidebar.set_busy(idx, True)
         elif not is_busy:
-            for i in range(len(self._tabs)):
+            for i in range(self._stack.count()):
                 self._sidebar.set_busy(i, False)
 
     def is_global_busy(self) -> bool:
@@ -541,6 +662,75 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "Check for Updates", error)
 
     # ------------------------------------------------------------------
+    # Settings dialog & theme
+    # ------------------------------------------------------------------
+
+    def _open_settings(self) -> None:
+        """Open the Settings dialog."""
+        from audio_visualizer.ui.settingsDialog import SettingsDialog
+        current = self._collect_settings()
+        dialog = SettingsDialog(current, self)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            result = dialog.result_settings
+            app_settings = result.get("app", {})
+            theme_mode = app_settings.get("theme_mode", "off")
+            self._apply_theme(theme_mode)
+            # Apply project folder
+            project_folder = result.get("project_folder", "")
+            if project_folder:
+                self.session_context.set_project_folder(Path(project_folder))
+            else:
+                self.session_context.set_project_folder(None)
+            # Save immediately
+            self._save_settings_to_path(self._default_settings_path())
+
+    def _apply_theme(self, mode: str) -> None:
+        """Apply the theme based on mode: 'off', 'on', 'auto'."""
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QPalette, QColor
+        from PySide6.QtCore import Qt
+
+        self._current_theme_mode = mode
+
+        app = QApplication.instance()
+        if app is None:
+            return
+
+        if mode == "on":
+            # Dark theme
+            palette = QPalette()
+            palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
+            palette.setColor(QPalette.ColorRole.WindowText, QColor(255, 255, 255))
+            palette.setColor(QPalette.ColorRole.Base, QColor(35, 35, 35))
+            palette.setColor(QPalette.ColorRole.AlternateBase, QColor(53, 53, 53))
+            palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(25, 25, 25))
+            palette.setColor(QPalette.ColorRole.ToolTipText, QColor(255, 255, 255))
+            palette.setColor(QPalette.ColorRole.Text, QColor(255, 255, 255))
+            palette.setColor(QPalette.ColorRole.Button, QColor(53, 53, 53))
+            palette.setColor(QPalette.ColorRole.ButtonText, QColor(255, 255, 255))
+            palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 0, 0))
+            palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
+            palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
+            palette.setColor(QPalette.ColorRole.HighlightedText, QColor(35, 35, 35))
+            palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(128, 128, 128))
+            palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(128, 128, 128))
+            app.setPalette(palette)
+        elif mode == "auto":
+            # Try system theme detection, fall back to default
+            try:
+                scheme = app.styleHints().colorScheme()
+                if hasattr(scheme, 'name') and 'dark' in str(scheme).lower():
+                    self._apply_theme("on")
+                    return
+            except (AttributeError, RuntimeError):
+                pass
+            # Fall back to system default
+            app.setPalette(app.style().standardPalette())
+        else:
+            # Light theme (off) - restore default
+            app.setPalette(app.style().standardPalette())
+
+    # ------------------------------------------------------------------
     # Settings persistence (versioned schema)
     # ------------------------------------------------------------------
 
@@ -550,6 +740,8 @@ class MainWindow(QMainWindow):
     def _collect_settings(self) -> dict:
         """Collect settings from all tabs into the versioned schema."""
         schema = create_default_schema()
+        # App settings
+        schema["app"]["theme_mode"] = self._current_theme_mode
         # UI state
         active = self.active_tab()
         schema["ui"]["last_active_tab"] = active.tab_id if active else "audio_visualizer"
@@ -557,9 +749,14 @@ class MainWindow(QMainWindow):
         schema["ui"]["window"]["height"] = self.height()
         schema["ui"]["window"]["maximized"] = self.isMaximized()
 
-        # Tab settings
+        # Tab settings (instantiated tabs)
         for tab in self._tabs:
             schema["tabs"][tab.tab_id] = tab.collect_settings()
+
+        # Include pending settings for tabs not yet instantiated
+        for tab_id, settings in self._pending_tab_settings.items():
+            if tab_id not in schema["tabs"] or not schema["tabs"][tab_id]:
+                schema["tabs"][tab_id] = settings
 
         # Session
         schema["session"] = self.session_context.to_dict()
@@ -568,6 +765,11 @@ class MainWindow(QMainWindow):
     def _apply_settings(self, data: dict) -> None:
         """Apply settings from a versioned schema to all tabs."""
         data = migrate_settings(data)
+
+        # App settings
+        app_data = data.get("app", {})
+        theme_mode = app_data.get("theme_mode", "off")
+        self._apply_theme(theme_mode)
 
         # UI state
         ui_state = data.get("ui", {})
@@ -579,12 +781,16 @@ class MainWindow(QMainWindow):
             h = window.get("height", 1000)
             self.resize(w, h)
 
-        # Tab settings
+        # Tab settings — apply to instantiated tabs, store for lazy ones
         tabs_data = data.get("tabs", {})
         for tab in self._tabs:
             tab_data = tabs_data.get(tab.tab_id, {})
             if tab_data:
                 tab.apply_settings(tab_data)
+
+        for tab_id in list(self._lazy_placeholders.keys()):
+            if tab_id in tabs_data and tabs_data[tab_id]:
+                self._pending_tab_settings[tab_id] = tabs_data[tab_id]
 
         # Session
         session_data = data.get("session", {})
@@ -593,11 +799,11 @@ class MainWindow(QMainWindow):
 
         # Restore active tab
         last_tab = ui_state.get("last_active_tab", "audio_visualizer")
-        for i, tab in enumerate(self._tabs):
-            if tab.tab_id == last_tab:
-                self._sidebar.set_active(i)
-                self._stack.setCurrentIndex(i)
-                break
+        idx = self._find_stack_index_for_tab_id(last_tab)
+        if idx >= 0:
+            self._ensure_tab_instantiated(idx)
+            self._sidebar.set_active(idx)
+            self._stack.setCurrentIndex(idx)
         self._update_undo_actions()
 
     def _save_settings_to_path(self, path: Path) -> bool:

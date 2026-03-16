@@ -39,6 +39,7 @@ from PySide6.QtGui import (
 
 from audio_visualizer.ui.views.general.generalView import View
 from audio_visualizer.ui.views.general.utilities import Fonts
+from audio_visualizer.ui.widgets.clickableColorSwatch import ClickableColorSwatch
 
 from audio_visualizer.visualizers import utilities
 
@@ -98,9 +99,9 @@ class GeneralVisualizerView(View):
         ))
         self.visualizer_bg_color_button.clicked.connect(self.visualizer_bg_color.open)
         bg_row.addWidget(self.visualizer_bg_color_button)
-        self.visualizer_bg_color_swatch = QLabel()
-        self.visualizer_bg_color_swatch.setFixedSize(18, 18)
-        self.visualizer_bg_color_swatch.setStyleSheet("border: 1px solid #888; background: rgb(227, 209, 169);")
+        self.visualizer_bg_color_swatch = ClickableColorSwatch()
+        self.visualizer_bg_color_swatch.set_color(227, 209, 169)
+        self.visualizer_bg_color_swatch.clicked.connect(self.visualizer_bg_color.open)
         bg_row.addWidget(self.visualizer_bg_color_swatch)
         form_layout.addRow("Background Color:", bg_row)
 
@@ -119,9 +120,9 @@ class GeneralVisualizerView(View):
         ))
         self.visualizer_border_color_button.clicked.connect(self.visualizer_border_color.open)
         border_row.addWidget(self.visualizer_border_color_button)
-        self.visualizer_border_color_swatch = QLabel()
-        self.visualizer_border_color_swatch.setFixedSize(18, 18)
-        self.visualizer_border_color_swatch.setStyleSheet("border: 1px solid #888; background: rgb(227, 209, 169);")
+        self.visualizer_border_color_swatch = ClickableColorSwatch()
+        self.visualizer_border_color_swatch.set_color(227, 209, 169)
+        self.visualizer_border_color_swatch.clicked.connect(self.visualizer_border_color.open)
         border_row.addWidget(self.visualizer_border_color_swatch)
         form_layout.addRow("Border Color:", border_row)
 

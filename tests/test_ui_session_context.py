@@ -248,3 +248,68 @@ class TestSessionContextSignals:
         # Remove triggers asset_removed
         ctx.remove_asset("a1")
         assert removed == ["a1"]
+
+
+class TestSessionContextProjectFolder:
+    def test_default_project_folder_is_none(self):
+        ctx = SessionContext()
+        assert ctx.project_folder is None
+
+    def test_set_project_folder_with_path(self, tmp_path):
+        ctx = SessionContext()
+        ctx.set_project_folder(tmp_path)
+        assert ctx.project_folder == tmp_path
+
+    def test_set_project_folder_with_string(self, tmp_path):
+        ctx = SessionContext()
+        ctx.set_project_folder(str(tmp_path))
+        assert ctx.project_folder == tmp_path
+
+    def test_set_project_folder_empty_string_clears(self):
+        ctx = SessionContext()
+        ctx.set_project_folder(Path("/tmp"))
+        ctx.set_project_folder("")
+        assert ctx.project_folder is None
+
+    def test_set_project_folder_none_clears(self):
+        ctx = SessionContext()
+        ctx.set_project_folder(Path("/tmp"))
+        ctx.set_project_folder(None)
+        assert ctx.project_folder is None
+
+    def test_project_folder_signal_emitted(self, tmp_path):
+        ctx = SessionContext()
+        signals: list[str] = []
+        ctx.project_folder_changed.connect(lambda s: signals.append(s))
+        ctx.set_project_folder(tmp_path)
+        assert len(signals) == 1
+        assert signals[0] == str(tmp_path)
+        ctx.set_project_folder(None)
+        assert len(signals) == 2
+        assert signals[1] == ""
+
+    def test_to_dict_includes_project_folder(self, tmp_path):
+        ctx = SessionContext()
+        ctx.set_project_folder(tmp_path)
+        data = ctx.to_dict()
+        assert data["project_folder"] == str(tmp_path)
+
+    def test_to_dict_project_folder_none(self):
+        ctx = SessionContext()
+        data = ctx.to_dict()
+        assert data["project_folder"] is None
+
+    def test_from_dict_restores_project_folder(self, tmp_path):
+        ctx = SessionContext()
+        ctx.set_project_folder(tmp_path)
+        data = ctx.to_dict()
+
+        ctx2 = SessionContext()
+        ctx2.from_dict(data)
+        assert ctx2.project_folder == tmp_path
+
+    def test_from_dict_without_project_folder_key(self):
+        ctx = SessionContext()
+        ctx.set_project_folder(Path("/tmp"))
+        ctx.from_dict({"assets": [], "roles": {}})
+        assert ctx.project_folder is None

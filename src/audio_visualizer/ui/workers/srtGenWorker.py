@@ -3,9 +3,15 @@
 Iterates through a queue of input files, calling transcribe_file for each.
 Uses AppEventEmitter + WorkerBridge for progress forwarding. Supports batch
 cancel (stops before next file) by checking a threading flag between items.
+
+The worker always loads the model on its own thread to ensure GPU handles
+(CUDA/cuBLAS) stay on the same thread that performs inference.  This avoids
+cross-thread cublas errors and hangs that occur when a model is loaded on one
+thread (e.g. the _ModelLoadWorker UI preload) and used on another.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import threading
 from dataclasses import dataclass
@@ -47,29 +53,27 @@ class SrtGenJobSpec:
 class SrtGenWorker(QRunnable):
     """QRunnable that processes a batch of transcription jobs.
 
+    The worker always loads the Whisper model on its own thread so that GPU
+    handles stay thread-local, avoiding cross-thread cuBLAS / CUDA errors.
+
     Parameters
     ----------
     jobs:
         Ordered list of job specs to process.
     emitter:
         Shared event emitter that transcribe_file writes into.
-    model_manager:
-        Optional shared ModelManager. When provided, the worker uses it
-        for model loading so the tab can track loaded state.
     """
 
     def __init__(
         self,
         jobs: List[SrtGenJobSpec],
         emitter: AppEventEmitter,
-        model_manager: Any | None = None,
     ) -> None:
         super().__init__()
         self.setAutoDelete(True)
 
         self._jobs = jobs
         self._emitter = emitter
-        self._model_manager = model_manager
         self._cancel_flag = threading.Event()
         self.signals = WorkerSignals()
         self._bridge = WorkerBridge(emitter, self.signals)
@@ -124,24 +128,23 @@ class SrtGenWorker(QRunnable):
                 data={"stage_number": 0, "total_stages": total + 1},
             ))
 
-            if self._model_manager is not None:
-                # Use the shared ModelManager for consistent state
-                model = self._model_manager.load(
+            # Always load the model on THIS thread so GPU handles (CUDA /
+            # cuBLAS) stay thread-local.  We wrap in a ThreadPoolExecutor so
+            # we can poll for cancel while the blocking load_model runs.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    load_model,
                     model_name=first.model_name,
                     device=first.device,
                     strict_cuda=False,
                     emitter=self._emitter,
                 )
-                info = self._model_manager.model_info()
-                device_used = info.device if info else first.device
-                compute_type_used = info.compute_type if info else "default"
-            else:
-                model, device_used, compute_type_used = load_model(
-                    model_name=first.model_name,
-                    device=first.device,
-                    strict_cuda=False,
-                    emitter=self._emitter,
-                )
+                while not future.done():
+                    if self._cancel_flag.wait(timeout=0.5):
+                        future.cancel()
+                        self.signals.canceled.emit("Cancelled during model load")
+                        return
+                model, device_used, compute_type_used = future.result()
 
             if self._cancel_flag.is_set():
                 self.signals.canceled.emit("Cancelled after model load")

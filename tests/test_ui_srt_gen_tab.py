@@ -195,6 +195,7 @@ class _FakeSignal:
 
 class _FakeWorker:
     def __init__(self, *args, **kwargs):
+        self.captured_kwargs = kwargs
         self.signals = MagicMock(
             progress=_FakeSignal(),
             stage=_FakeSignal(),
@@ -240,3 +241,27 @@ class TestSrtGenJobShellIntegration:
         assert len(main_window.job_status_calls) == 1
         assert main_window.job_status_calls[0][0] == "srt_gen"
         main_window.render_thread_pool.start.assert_called_once()
+
+    def test_worker_constructed_without_model_manager(self, monkeypatch):
+        """SrtGenWorker must not receive model_manager from the tab."""
+        main_window = _FakeMainWindow()
+        tab = SrtGenTab(main_window)
+        tab._add_input_path("/tmp/test.mp3")
+
+        captured_workers = []
+        original_fake = _FakeWorker
+
+        class _CapturingWorker(original_fake):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured_workers.append(self)
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.tabs.srtGenTab.SrtGenWorker",
+            _CapturingWorker,
+        )
+
+        tab._start_transcription()
+
+        assert len(captured_workers) == 1
+        assert "model_manager" not in captured_workers[0].captured_kwargs

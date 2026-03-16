@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -42,19 +42,25 @@ from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
 from audio_visualizer.ui.sessionFilePicker import pick_session_or_file
 from audio_visualizer.ui.tabs.baseTab import BaseTab
 from audio_visualizer.ui.tabs.renderComposition.commands import (
+    AddAudioLayerCommand,
     AddLayerCommand,
     ApplyPresetCommand,
     ChangeAudioSourceCommand,
     ChangeSourceCommand,
+    EditAudioLayerCommand,
     MoveLayerCommand,
+    RemoveAudioLayerCommand,
     RemoveLayerCommand,
     ReorderLayerCommand,
     ResizeLayerCommand,
 )
 from audio_visualizer.ui.tabs.renderComposition.model import (
     DEFAULT_MATTE_SETTINGS,
+    RESOLUTION_PRESET_LABELS,
+    RESOLUTION_PRESETS,
     VALID_BEHAVIORS,
     VALID_LAYER_TYPES,
+    CompositionAudioLayer,
     CompositionLayer,
     CompositionModel,
 )
@@ -113,6 +119,7 @@ class RenderCompositionTab(BaseTab):
 
         self._init_undo_stack(100)
         self._build_ui()
+        self._setup_shortcuts()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -197,6 +204,9 @@ class RenderCompositionTab(BaseTab):
 
         splitter.setSizes([300, 500])
         content_layout.addWidget(splitter)
+
+        # -- Timeline --
+        self._build_timeline_section(content_layout)
 
         # -- Audio source selector --
         self._build_audio_section(content_layout)
@@ -392,17 +402,55 @@ class RenderCompositionTab(BaseTab):
         parent_layout.addWidget(group)
 
     def _build_audio_section(self, parent_layout: QVBoxLayout) -> None:
-        group = QGroupBox("Audio Source")
-        layout = QHBoxLayout()
+        group = QGroupBox("Audio Sources")
+        layout = QVBoxLayout()
 
+        # Keep legacy combo hidden but present for backward compat in tests
         self._audio_combo = QComboBox()
         self._audio_combo.addItem("(none)")
         self._audio_combo.currentIndexChanged.connect(self._on_audio_source_changed)
-        layout.addWidget(self._audio_combo, 1)
+        self._audio_combo.hide()
+        layout.addWidget(self._audio_combo)
+
+        self._audio_layer_list = QListWidget()
+        self._audio_layer_list.currentRowChanged.connect(self._on_audio_layer_selected)
+        layout.addWidget(self._audio_layer_list)
+
+        btn_row = QHBoxLayout()
+        self._add_audio_btn = QPushButton("Add Audio")
+        self._add_audio_btn.clicked.connect(self._on_add_audio_layer)
+        btn_row.addWidget(self._add_audio_btn)
+
+        self._remove_audio_btn = QPushButton("Remove")
+        self._remove_audio_btn.clicked.connect(self._on_remove_audio_layer)
+        btn_row.addWidget(self._remove_audio_btn)
 
         self._browse_audio_btn = QPushButton("Browse...")
         self._browse_audio_btn.clicked.connect(self._on_browse_audio)
-        layout.addWidget(self._browse_audio_btn)
+        btn_row.addWidget(self._browse_audio_btn)
+
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        # Audio layer editor (shown for selected audio layer)
+        editor_row = QHBoxLayout()
+        editor_row.addWidget(QLabel("Start (ms):"))
+        self._audio_start_spin = QSpinBox()
+        self._audio_start_spin.setRange(0, 999999999)
+        self._audio_start_spin.editingFinished.connect(self._on_audio_layer_edited)
+        editor_row.addWidget(self._audio_start_spin)
+
+        editor_row.addWidget(QLabel("Duration (ms):"))
+        self._audio_duration_spin = QSpinBox()
+        self._audio_duration_spin.setRange(0, 999999999)
+        self._audio_duration_spin.editingFinished.connect(self._on_audio_layer_edited)
+        editor_row.addWidget(self._audio_duration_spin)
+
+        self._audio_full_length_cb = QCheckBox("Full Length")
+        self._audio_full_length_cb.setChecked(True)
+        self._audio_full_length_cb.toggled.connect(self._on_audio_layer_edited)
+        editor_row.addWidget(self._audio_full_length_cb)
+        layout.addLayout(editor_row)
 
         group.setLayout(layout)
         parent_layout.addWidget(group)
@@ -440,6 +488,15 @@ class RenderCompositionTab(BaseTab):
     def _build_output_section(self, parent_layout: QVBoxLayout) -> None:
         group = QGroupBox("Output Settings")
         layout = QHBoxLayout()
+
+        layout.addWidget(QLabel("Resolution:"))
+        self._resolution_preset_combo = QComboBox()
+        for key, label in RESOLUTION_PRESET_LABELS:
+            self._resolution_preset_combo.addItem(label, key)
+        self._resolution_preset_combo.currentIndexChanged.connect(
+            self._on_resolution_preset_changed,
+        )
+        layout.addWidget(self._resolution_preset_combo)
 
         layout.addWidget(QLabel("Width:"))
         self._out_width_spin = QSpinBox()
@@ -501,6 +558,82 @@ class RenderCompositionTab(BaseTab):
 
         group.setLayout(layout)
         parent_layout.addWidget(group)
+
+    def _build_timeline_section(self, parent_layout: QVBoxLayout) -> None:
+        from audio_visualizer.ui.tabs.renderComposition.timelineWidget import TimelineWidget
+
+        group = QGroupBox("Timeline")
+        layout = QVBoxLayout()
+
+        self._timeline = TimelineWidget()
+        self._timeline.item_selected.connect(self._on_timeline_item_selected)
+        self._timeline.item_moved.connect(self._on_timeline_item_moved)
+        self._timeline.item_trimmed.connect(self._on_timeline_item_trimmed)
+        layout.addWidget(self._timeline)
+
+        group.setLayout(layout)
+        parent_layout.addWidget(group)
+
+    def _refresh_timeline(self) -> None:
+        """Rebuild timeline items from model."""
+        from audio_visualizer.ui.tabs.renderComposition.timelineWidget import TimelineItem
+
+        items: list[TimelineItem] = []
+        for layer in self._model.layers:
+            items.append(TimelineItem(
+                item_id=layer.id,
+                display_name=layer.display_name,
+                start_ms=layer.start_ms,
+                end_ms=layer.end_ms,
+                track_type="visual",
+                enabled=layer.enabled,
+            ))
+        for al in getattr(self._model, "audio_layers", []):
+            items.append(TimelineItem(
+                item_id=al.id,
+                display_name=al.display_name,
+                start_ms=al.start_ms,
+                end_ms=al.start_ms + (
+                    al.duration_ms
+                    if not al.use_full_length and al.duration_ms > 0
+                    else 5000
+                ),
+                track_type="audio",
+                enabled=al.enabled,
+            ))
+        if hasattr(self, "_timeline"):
+            self._timeline.set_items(items)
+
+    def _on_timeline_item_selected(self, item_id: str) -> None:
+        """Sync timeline selection with layer list."""
+        if not item_id:
+            return
+        for i, layer in enumerate(self._model.layers):
+            if layer.id == item_id:
+                self._layer_list.setCurrentRow(i)
+                return
+
+    def _on_timeline_item_moved(self, item_id: str, new_start: int, new_end: int) -> None:
+        """Handle timeline item drag."""
+        layer = self._model.get_layer(item_id)
+        if layer:
+            layer.start_ms = new_start
+            layer.end_ms = new_end
+            self._refresh_layer_list()
+            self._load_layer_properties(layer)
+            self.settings_changed.emit()
+
+    def _on_timeline_item_trimmed(self, item_id: str, which: str, ms: int) -> None:
+        """Handle timeline trim."""
+        layer = self._model.get_layer(item_id)
+        if layer:
+            if which == "start":
+                layer.start_ms = ms
+            else:
+                layer.end_ms = ms
+            self._refresh_layer_list()
+            self._load_layer_properties(layer)
+            self.settings_changed.emit()
 
     # ------------------------------------------------------------------
     # Session context
@@ -566,6 +699,38 @@ class RenderCompositionTab(BaseTab):
         finally:
             self._updating_ui = False
 
+        # Refresh the audio layer list
+        self._refresh_audio_layer_list()
+
+    # ------------------------------------------------------------------
+    # Keyboard shortcuts
+    # ------------------------------------------------------------------
+
+    def _setup_shortcuts(self) -> None:
+        """Set up keyboard shortcuts for undo/redo."""
+        undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
+        undo_shortcut.activated.connect(self._on_undo)
+        redo_shortcut = QShortcut(QKeySequence.StandardKey.Redo, self)
+        redo_shortcut.activated.connect(self._on_redo)
+
+    def _on_undo(self) -> None:
+        if self._undo_stack is not None and self._undo_stack.canUndo():
+            self._undo_stack.undo()
+            self._refresh_layer_list()
+            self._refresh_audio_layer_list()
+            layer = self._selected_layer()
+            if layer is not None:
+                self._load_layer_properties(layer)
+
+    def _on_redo(self) -> None:
+        if self._undo_stack is not None and self._undo_stack.canRedo():
+            self._undo_stack.redo()
+            self._refresh_layer_list()
+            self._refresh_audio_layer_list()
+            layer = self._selected_layer()
+            if layer is not None:
+                self._load_layer_properties(layer)
+
     # ------------------------------------------------------------------
     # Layer list management
     # ------------------------------------------------------------------
@@ -587,6 +752,7 @@ class RenderCompositionTab(BaseTab):
                 self._layer_list.setCurrentRow(0)
         finally:
             self._updating_ui = False
+        self._refresh_timeline()
 
     def _selected_layer(self) -> CompositionLayer | None:
         """Return the currently selected layer, or None."""
@@ -830,6 +996,7 @@ class RenderCompositionTab(BaseTab):
             return
         layer.start_ms = self._start_ms_spin.value()
         layer.end_ms = self._end_ms_spin.value()
+        self._refresh_timeline()
         self.settings_changed.emit()
 
     def _on_behavior_changed(self, text: str) -> None:
@@ -875,7 +1042,7 @@ class RenderCompositionTab(BaseTab):
             self._on_matte_changed()
 
     # ------------------------------------------------------------------
-    # Audio source
+    # Audio source (legacy combo — kept for backward compat)
     # ------------------------------------------------------------------
 
     def _on_audio_source_changed(self, index: int) -> None:
@@ -898,12 +1065,122 @@ class RenderCompositionTab(BaseTab):
         self._push_command(cmd)
         self.settings_changed.emit()
 
+    # ------------------------------------------------------------------
+    # Audio layer management
+    # ------------------------------------------------------------------
+
+    def _refresh_audio_layer_list(self) -> None:
+        """Rebuild the audio layer list widget from the model."""
+        self._updating_ui = True
+        try:
+            current_row = self._audio_layer_list.currentRow()
+            self._audio_layer_list.clear()
+            for al in self._model.audio_layers:
+                prefix = "[x]" if al.enabled else "[ ]"
+                item = QListWidgetItem(f"{prefix} {al.display_name}")
+                item.setData(Qt.ItemDataRole.UserRole, al.id)
+                self._audio_layer_list.addItem(item)
+            if 0 <= current_row < self._audio_layer_list.count():
+                self._audio_layer_list.setCurrentRow(current_row)
+            elif self._audio_layer_list.count() > 0:
+                self._audio_layer_list.setCurrentRow(0)
+        finally:
+            self._updating_ui = False
+        self._refresh_timeline()
+
+    def _selected_audio_layer(self) -> CompositionAudioLayer | None:
+        """Return the currently selected audio layer, or None."""
+        row = self._audio_layer_list.currentRow()
+        if row < 0 or row >= len(self._model.audio_layers):
+            return None
+        return self._model.audio_layers[row]
+
+    def _on_audio_layer_selected(self, row: int) -> None:
+        """Update editor controls when an audio layer is selected."""
+        if self._updating_ui:
+            return
+        al = self._selected_audio_layer()
+        if al is None:
+            return
+        self._load_audio_layer_properties(al)
+
+    def _load_audio_layer_properties(self, al: CompositionAudioLayer) -> None:
+        """Populate audio layer editor controls."""
+        self._updating_ui = True
+        try:
+            self._audio_start_spin.setValue(al.start_ms)
+            self._audio_duration_spin.setValue(al.duration_ms)
+            self._audio_full_length_cb.setChecked(al.use_full_length)
+        finally:
+            self._updating_ui = False
+
+    def _on_add_audio_layer(self) -> None:
+        """Add a new empty audio layer."""
+        al = CompositionAudioLayer(
+            display_name=f"Audio {len(self._model.audio_layers) + 1}",
+        )
+        cmd = AddAudioLayerCommand(self._model, al)
+        self._push_command(cmd)
+        self._refresh_audio_layer_list()
+        self._audio_layer_list.setCurrentRow(self._audio_layer_list.count() - 1)
+        self.settings_changed.emit()
+
+    def _on_remove_audio_layer(self) -> None:
+        """Remove the selected audio layer."""
+        al = self._selected_audio_layer()
+        if al is None:
+            return
+        cmd = RemoveAudioLayerCommand(self._model, al.id)
+        self._push_command(cmd)
+        self._refresh_audio_layer_list()
+        self.settings_changed.emit()
+
+    def _on_audio_layer_edited(self, *_args: Any) -> None:
+        """Apply edits from the audio layer editor to the selected layer."""
+        if self._updating_ui:
+            return
+        al = self._selected_audio_layer()
+        if al is None:
+            return
+        cmd = EditAudioLayerCommand(
+            self._model,
+            al.id,
+            start_ms=self._audio_start_spin.value(),
+            duration_ms=self._audio_duration_spin.value(),
+            use_full_length=self._audio_full_length_cb.isChecked(),
+        )
+        self._push_command(cmd)
+        self.settings_changed.emit()
+
     def _on_browse_audio(self) -> None:
         path = self._pick_session_or_file(None, "Select Audio Source", _AUDIO_FILTERS)
         if path is not None:
-            cmd = ChangeAudioSourceCommand(self._model, None, path)
-            self._push_command(cmd)
-            # Show the direct file in the audio combo
+            # If an audio layer is selected, update it; otherwise add a new one
+            al = self._selected_audio_layer()
+            if al is not None:
+                cmd = EditAudioLayerCommand(
+                    self._model,
+                    al.id,
+                    asset_path=path,
+                    display_name=path.name,
+                )
+                self._push_command(cmd)
+                self._refresh_audio_layer_list()
+            else:
+                new_al = CompositionAudioLayer(
+                    display_name=path.name,
+                    asset_path=path,
+                )
+                cmd_add = AddAudioLayerCommand(self._model, new_al)
+                self._push_command(cmd_add)
+                self._refresh_audio_layer_list()
+                self._audio_layer_list.setCurrentRow(
+                    self._audio_layer_list.count() - 1
+                )
+            # Also update legacy fields for backward compat
+            self._model.audio_source_path = path
+            self._model.audio_source_asset_id = None
+            # Update hidden legacy combo
             self._updating_ui = True
             try:
                 file_data = f"file:{path}"
@@ -946,10 +1223,50 @@ class RenderCompositionTab(BaseTab):
         self._model.output_width = self._out_width_spin.value()
         self._model.output_height = self._out_height_spin.value()
         self._model.output_fps = self._out_fps_spin.value()
+        # Check if current values match any preset
+        matched = False
+        for key, (pw, ph) in RESOLUTION_PRESETS.items():
+            if self._model.output_width == pw and self._model.output_height == ph:
+                self._updating_ui = True
+                idx = self._resolution_preset_combo.findData(key)
+                if idx >= 0:
+                    self._resolution_preset_combo.setCurrentIndex(idx)
+                self._model.resolution_preset = key
+                self._updating_ui = False
+                matched = True
+                break
+        if not matched:
+            self._updating_ui = True
+            idx = self._resolution_preset_combo.findData("custom")
+            if idx >= 0:
+                self._resolution_preset_combo.setCurrentIndex(idx)
+            self._model.resolution_preset = "custom"
+            self._updating_ui = False
         self.settings_changed.emit()
 
+    def _on_resolution_preset_changed(self, index: int) -> None:
+        if self._updating_ui:
+            return
+        key = self._resolution_preset_combo.currentData()
+        if key and key != "custom" and key in RESOLUTION_PRESETS:
+            w, h = RESOLUTION_PRESETS[key]
+            self._updating_ui = True
+            self._out_width_spin.setValue(w)
+            self._out_height_spin.setValue(h)
+            self._model.output_width = w
+            self._model.output_height = h
+            self._model.resolution_preset = key
+            self._updating_ui = False
+            self.settings_changed.emit()
+        elif key == "custom":
+            self._model.resolution_preset = "custom"
+
     def _on_browse_output(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Save Output", "", _OUTPUT_FILTERS)
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+        start_dir = resolve_browse_directory(
+            self._output_path_edit.text(), self.session_context
+        )
+        path, _ = QFileDialog.getSaveFileName(self, "Save Output", start_dir, _OUTPUT_FILTERS)
         if path:
             self._output_path_edit.setText(path)
 
@@ -1103,10 +1420,14 @@ class RenderCompositionTab(BaseTab):
                 height=self._model.output_height,
                 fps=self._model.output_fps,
                 duration_ms=self._model.get_duration_ms(),
-                has_audio=self._model.audio_source_path is not None,
+                has_audio=(
+                    self._model.audio_source_path is not None
+                    or any(al.enabled and al.asset_path for al in self._model.audio_layers)
+                ),
                 metadata={
                     "audio_source_asset_id": self._model.audio_source_asset_id,
                     "layer_count": len(self._model.layers),
+                    "audio_layer_count": len(self._model.audio_layers),
                     "export_profile": "ffmpeg_filter_complex",
                 },
             )
@@ -1185,6 +1506,7 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._refresh_asset_combos()
             self._sync_output_ui()
+            self._refresh_timeline()
             current_layer = self._selected_layer()
             if current_layer is not None:
                 self._load_layer_properties(current_layer)
@@ -1205,6 +1527,12 @@ class RenderCompositionTab(BaseTab):
             self._out_width_spin.setValue(self._model.output_width)
             self._out_height_spin.setValue(self._model.output_height)
             self._out_fps_spin.setValue(self._model.output_fps)
+            if hasattr(self, "_resolution_preset_combo"):
+                idx = self._resolution_preset_combo.findData(
+                    self._model.resolution_preset,
+                )
+                if idx >= 0:
+                    self._resolution_preset_combo.setCurrentIndex(idx)
         finally:
             self._updating_ui = False
 

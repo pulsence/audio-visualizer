@@ -40,6 +40,30 @@ class EditTextCommand(QUndoCommand):
         self._document.update_entry(self._index, text=self._old_text)
 
 
+class EditSpeakerCommand(QUndoCommand):
+    """Change the speaker of a subtitle entry."""
+
+    def __init__(
+        self,
+        document: SubtitleDocument,
+        index: int,
+        new_speaker: str | None,
+        parent: QUndoCommand | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._document = document
+        self._index = index
+        self._old_speaker = document.entries[index].speaker
+        self._new_speaker = new_speaker
+        self.setText(f"Edit speaker at #{index + 1}")
+
+    def redo(self) -> None:
+        self._document.update_entry(self._index, speaker=self._new_speaker)
+
+    def undo(self) -> None:
+        self._document.update_entry(self._index, speaker=self._old_speaker)
+
+
 class EditTimestampCommand(QUndoCommand):
     """Change start and/or end time of a subtitle entry."""
 

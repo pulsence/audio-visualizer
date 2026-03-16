@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -100,6 +100,12 @@ class JobStatusWidget(QWidget):
         layout.addWidget(self._cancel_button)
         self.setLayout(layout)
 
+        # Auto-reset timer for terminal states.
+        self._auto_reset_timer = QTimer(self)
+        self._auto_reset_timer.setSingleShot(True)
+        self._auto_reset_timer.setInterval(5000)  # 5 seconds
+        self._auto_reset_timer.timeout.connect(self.reset)
+
         # Start hidden — nothing to show until a job begins.
         self.setVisible(False)
 
@@ -118,6 +124,7 @@ class JobStatusWidget(QWidget):
         label : str
             Descriptive label for the current operation.
         """
+        self._auto_reset_timer.stop()
         self._state = _STATE_ACTIVE
         self._output_path = None
         self._job_info_label.setText(f"[{owner_tab}] {job_type}: {label}")
@@ -182,9 +189,10 @@ class JobStatusWidget(QWidget):
         self._job_info_label.setText("")
         self._status_label.setText(message)
         self._set_action_buttons_visible(bool(output_path))
-        self._cancel_button.setText("Dismiss")
+        self._cancel_button.setText("Finished")
         self._cancel_button.setEnabled(True)
         self._rewire_cancel_button(self.reset)
+        self._auto_reset_timer.start()
         logger.debug("Job completed: %s", message)
 
     def show_failed(self, error: str) -> None:
@@ -204,6 +212,7 @@ class JobStatusWidget(QWidget):
         self._cancel_button.setText("Dismiss")
         self._cancel_button.setEnabled(True)
         self._rewire_cancel_button(self.reset)
+        self._auto_reset_timer.start()
         logger.warning("Job failed: %s", error)
 
     def show_canceled(self, message: str) -> None:
@@ -223,10 +232,12 @@ class JobStatusWidget(QWidget):
         self._cancel_button.setText("Dismiss")
         self._cancel_button.setEnabled(True)
         self._rewire_cancel_button(self.reset)
+        self._auto_reset_timer.start()
         logger.debug("Job canceled: %s", message)
 
     def reset(self) -> None:
         """Hide all job information and return to the idle state."""
+        self._auto_reset_timer.stop()
         # Ensure the button is wired back to the cancel handler for the
         # next job, regardless of which handler is currently connected.
         try:

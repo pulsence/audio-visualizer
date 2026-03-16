@@ -23,7 +23,8 @@ SOFTWARE.
 '''
 
 from PySide6.QtWidgets import (
-    QFormLayout, QLineEdit, QComboBox, QHBoxLayout, QPushButton, QColorDialog, QLabel
+    QFormLayout, QLineEdit, QComboBox, QHBoxLayout, QPushButton, QColorDialog, QLabel,
+    QTabWidget, QWidget
 )
 
 from PySide6.QtGui import (
@@ -31,6 +32,7 @@ from PySide6.QtGui import (
 )
 
 from audio_visualizer.ui.views.general.generalView import View
+from audio_visualizer.ui.widgets.clickableColorSwatch import ClickableColorSwatch
 
 class ForceCircleChromaVisualizerSettings:
     color_mode = "Single"
@@ -69,9 +71,9 @@ class ForceCircleChromaVisualizerView(View):
         ))
         self.gradient_start_button.clicked.connect(self.gradient_start_picker.open)
         gradient_start_row.addWidget(self.gradient_start_button)
-        self.gradient_start_swatch = QLabel()
-        self.gradient_start_swatch.setFixedSize(18, 18)
-        self.gradient_start_swatch.setStyleSheet("border: 1px solid #888; background: rgb(227, 209, 169);")
+        self.gradient_start_swatch = ClickableColorSwatch()
+        self.gradient_start_swatch.set_color(227, 209, 169)
+        self.gradient_start_swatch.clicked.connect(self.gradient_start_picker.open)
         gradient_start_row.addWidget(self.gradient_start_swatch)
         self.layout.addRow("Gradient Start:", gradient_start_row)
 
@@ -86,15 +88,48 @@ class ForceCircleChromaVisualizerView(View):
         ))
         self.gradient_end_button.clicked.connect(self.gradient_end_picker.open)
         gradient_end_row.addWidget(self.gradient_end_button)
-        self.gradient_end_swatch = QLabel()
-        self.gradient_end_swatch.setFixedSize(18, 18)
-        self.gradient_end_swatch.setStyleSheet("border: 1px solid #888; background: rgb(255, 255, 255);")
+        self.gradient_end_swatch = ClickableColorSwatch()
+        self.gradient_end_swatch.set_color(255, 255, 255)
+        self.gradient_end_swatch.clicked.connect(self.gradient_end_picker.open)
         gradient_end_row.addWidget(self.gradient_end_swatch)
         self.layout.addRow("Gradient End:", gradient_end_row)
 
-        self.band_colors = QLineEdit("")
-        self.band_colors.setPlaceholderText("12 colors: r,g,b|r,g,b|...")
-        self.layout.addRow("Per-band Colors:", self.band_colors)
+        self.band_color_fields = []
+        self.band_color_swatches = []
+        self.band_color_buttons = []
+        self.band_color_pickers = []
+        self.band_color_tabs = QTabWidget()
+
+        for tab_index in range(2):
+            tab = QWidget()
+            tab_layout = QFormLayout()
+            for i in range(6):
+                band_index = tab_index * 6 + i
+                row = QHBoxLayout()
+                field = QLineEdit("227, 209, 169")
+                field.setPlaceholderText("R, G, B")
+                row.addWidget(field)
+                button = QPushButton("Select Color")
+                picker = QColorDialog(self.controler)
+                picker.colorSelected.connect(lambda color, f=field: f.setText(
+                    f"{color.red()}, {color.green()}, {color.blue()}"
+                ))
+                button.clicked.connect(picker.open)
+                row.addWidget(button)
+                swatch = ClickableColorSwatch()
+                swatch.set_color(227, 209, 169)
+                swatch.clicked.connect(picker.open)
+                row.addWidget(swatch)
+                tab_layout.addRow(f"Band {band_index + 1} Color:", row)
+                field.textChanged.connect(lambda _, f=field, s=swatch: self._update_swatch(f, s))
+                self.band_color_fields.append(field)
+                self.band_color_swatches.append(swatch)
+                self.band_color_buttons.append(button)
+                self.band_color_pickers.append(picker)
+            tab.setLayout(tab_layout)
+            self.band_color_tabs.addTab(tab, f"Bands {tab_index * 6 + 1}-{tab_index * 6 + 6}")
+
+        self.layout.addRow("Band Colors:", self.band_color_tabs)
 
         self.controler.setLayout(self.layout)
         self.gradient_start.textChanged.connect(lambda _: self._update_swatch(self.gradient_start, self.gradient_start_swatch))
@@ -108,7 +143,7 @@ class ForceCircleChromaVisualizerView(View):
                 self._parse_color(self.gradient_start.text())
                 self._parse_color(self.gradient_end.text())
             elif self.color_mode.currentText() == "Per-band":
-                colors = self._parse_band_colors(self.band_colors.text())
+                colors = self._parse_band_colors()
                 if len(colors) != 12:
                     return False
         except:
@@ -122,7 +157,7 @@ class ForceCircleChromaVisualizerView(View):
         settings.color_mode = self.color_mode.currentText()
         settings.gradient_start = self._parse_color_optional(self.gradient_start.text())
         settings.gradient_end = self._parse_color_optional(self.gradient_end.text())
-        settings.band_colors = self._parse_band_colors(self.band_colors.text())
+        settings.band_colors = self._parse_band_colors()
         return settings
 
     @staticmethod
@@ -142,13 +177,10 @@ class ForceCircleChromaVisualizerView(View):
             return (0, 0, 0)
         return ForceCircleChromaVisualizerView._parse_color(text)
 
-    @staticmethod
-    def _parse_band_colors(text: str):
-        if not text.strip():
-            return []
+    def _parse_band_colors(self):
         colors = []
-        for chunk in text.split("|"):
-            colors.append(ForceCircleChromaVisualizerView._parse_color(chunk))
+        for field in self.band_color_fields:
+            colors.append(self._parse_color(field.text()))
         return colors
 
     @staticmethod
