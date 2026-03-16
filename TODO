@@ -48,12 +48,6 @@ Both work flows should be integrated into this single app.
 
 
 ## Future Work
-### General
-- Make the UI and render/visualizers clearly decupled so that the render path
-can be used as a separate library
-### GUI
-- Clicking on color swatches should open color dialogue
-- Chroma gradients should follow tabs like the chroma lines view
 ### Visualizers
 - Set video dimensions by number of objects in visualizer
 - Future visualizers:
