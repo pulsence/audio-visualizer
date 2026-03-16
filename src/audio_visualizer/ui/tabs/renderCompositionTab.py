@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
+from audio_visualizer.ui.workspaceContext import SessionAsset, WorkspaceContext
 from audio_visualizer.ui.sessionFilePicker import pick_session_or_file
 from audio_visualizer.ui.tabs.baseTab import BaseTab
 from audio_visualizer.ui.tabs.renderComposition.commands import (
@@ -639,8 +639,8 @@ class RenderCompositionTab(BaseTab):
     # Session context
     # ------------------------------------------------------------------
 
-    def set_session_context(self, context: SessionContext) -> None:
-        super().set_session_context(context)
+    def set_workspace_context(self, context: WorkspaceContext) -> None:
+        super().set_workspace_context(context)
         context.asset_added.connect(self._refresh_asset_combos)
         context.asset_updated.connect(self._refresh_asset_combos)
         context.asset_removed.connect(self._refresh_asset_combos)
@@ -654,8 +654,8 @@ class RenderCompositionTab(BaseTab):
             current_source = self._source_combo.currentText()
             self._source_combo.clear()
             self._source_combo.addItem("(none)")
-            if self._session_context is not None:
-                for asset in self._session_context.list_assets():
+            if self._workspace_context is not None:
+                for asset in self._workspace_context.list_assets():
                     if asset.category in ("video", "image"):
                         self._source_combo.addItem(
                             f"{asset.display_name} [{asset.id[:8]}]",
@@ -681,8 +681,8 @@ class RenderCompositionTab(BaseTab):
             current_audio = self._audio_combo.currentText()
             self._audio_combo.clear()
             self._audio_combo.addItem("(none)")
-            if self._session_context is not None:
-                for asset in self._session_context.list_assets():
+            if self._workspace_context is not None:
+                for asset in self._workspace_context.list_assets():
                     if asset.category in ("audio", "video"):
                         label = f"{asset.display_name} [{asset.id[:8]}]"
                         self._audio_combo.addItem(label, asset.id)
@@ -900,9 +900,9 @@ class RenderCompositionTab(BaseTab):
         if data and isinstance(data, str):
             if data.startswith("file:"):
                 asset_path = Path(data[5:])
-            elif self._session_context:
+            elif self._workspace_context:
                 asset_id = data
-                asset = self._session_context.get_asset(asset_id)
+                asset = self._workspace_context.get_asset(asset_id)
                 if asset:
                     asset_path = asset.path
 
@@ -1055,9 +1055,9 @@ class RenderCompositionTab(BaseTab):
         if data and isinstance(data, str):
             if data.startswith("file:"):
                 audio_path = Path(data[5:])
-            elif self._session_context:
+            elif self._workspace_context:
                 asset_id = data
-                asset = self._session_context.get_asset(asset_id)
+                asset = self._workspace_context.get_asset(asset_id)
                 if asset:
                     audio_path = asset.path
 
@@ -1201,7 +1201,7 @@ class RenderCompositionTab(BaseTab):
     ) -> Path | None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
 
-        ctx = self.session_context
+        ctx = self.workspace_context
         if ctx is None:
             start_dir = resolve_browse_directory()
             path, _ = QFileDialog.getOpenFileName(self, title, start_dir, file_filter)
@@ -1267,7 +1267,7 @@ class RenderCompositionTab(BaseTab):
     def _on_browse_output(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
-            self._output_path_edit.text(), self.session_context
+            self._output_path_edit.text(), self.workspace_context
         )
         path, _ = QFileDialog.getSaveFileName(self, "Save Output", start_dir, _OUTPUT_FILTERS)
         if path:
@@ -1361,7 +1361,7 @@ class RenderCompositionTab(BaseTab):
             from audio_visualizer.ui.sessionFilePicker import resolve_output_directory
 
             default_parent = resolve_output_directory(
-                session_context=self.session_context,
+                workspace_context=self.workspace_context,
             )
             output_path = str(default_parent / "composition_output.mp4")
         elif not Path(output_path).suffix:
@@ -1416,7 +1416,7 @@ class RenderCompositionTab(BaseTab):
         self._status_label.setText(f"Render complete: {output_path}")
 
         # Register as session asset
-        if output_path and self._session_context:
+        if output_path and self._workspace_context:
             asset = SessionAsset(
                 id=str(uuid.uuid4()),
                 display_name="Composition Output",

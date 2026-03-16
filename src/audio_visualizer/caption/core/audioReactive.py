@@ -2,7 +2,7 @@
 
 Provides amplitude analysis from audio files to drive reactive caption
 animations (pulse, beat_pop, emphasis_glow).  Results are cached in the
-SessionContext analysis cache to avoid recomputation across re-renders.
+WorkspaceContext analysis cache to avoid recomputation across re-renders.
 """
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def analyze_audio(
 
 
 def make_cache_key(audio_path: Path, fps: float, duration_ms: int) -> tuple:
-    """Build a SessionContext analysis cache key for audio-reactive data.
+    """Build a WorkspaceContext analysis cache key for audio-reactive data.
 
     Parameters
     ----------
@@ -177,6 +177,6 @@ def make_cache_key(audio_path: Path, fps: float, duration_ms: int) -> tuple:
     Returns
     -------
     tuple
-        Cache key suitable for SessionContext.store_analysis().
+        Cache key suitable for WorkspaceContext.store_analysis().
     """
     return (str(audio_path), "audio_reactive", f"{fps}_{duration_ms}")

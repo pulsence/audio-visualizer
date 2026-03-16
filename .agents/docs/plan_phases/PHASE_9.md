@@ -518,7 +518,32 @@ Deliver the requested drag/drop timeline and reshape the tab layout around loade
 
 **Success criteria:** Render Composition presents the requested workspace shape, shows visual and audio layers on a real timeline, supports drag/trim interactions that update the composition model, and keeps preview/render output aligned with the same timeline state.
 
-### 9.15: Phase 9 Code Review
+### 9.15: SessionContext to WorkspaceContext Rename
+
+Rename the shared runtime-state type from `SessionContext` to `WorkspaceContext` so the code matches the broader responsibility added during Stage Three.
+
+**Tasks:**
+- Rename the primary class from `SessionContext` to `WorkspaceContext` everywhere in the UI/runtime code that now treats it as the shared working-state model for the current app workspace.
+- Rename `src/audio_visualizer/ui/sessionContext.py` to `src/audio_visualizer/ui/workspaceContext.py` and update imports throughout the repo.
+- Decide and document the compatibility strategy. For Phase 9, prefer a thin compatibility shim only if needed to avoid a flag day during the refactor; otherwise remove the old name completely once all internal references are updated.
+- Keep the persisted settings schema semantics stable. The top-level settings section may remain `session` if changing the serialized key would create unnecessary migration churn; this subphase is about the runtime type name, not forcing a project-file schema rename.
+- Update any helper names, type-checking imports, test fixtures, and architecture docs that still refer to `SessionContext`.
+- Review related UI labels/comments/docstrings so they use `workspace` terminology only where the meaning is actually broader than a transient session.
+- Create/update automated coverage for the renamed imports/aliases and for any compatibility shim retained during the transition.
+- Run tests: `pytest tests/ -v`
+- Update `.agents/docs/` architecture documentation as needed.
+- Commit following `COMMIT_MESSAGE.md` format and then push.
+
+**Files:**
+- Rename `src/audio_visualizer/ui/sessionContext.py` to `src/audio_visualizer/ui/workspaceContext.py`
+- Modify all imports/usages under `src/audio_visualizer/ui/`
+- Modify any non-UI imports/usages that still reference `SessionContext`
+- Modify affected tests under `tests/`
+- Modify relevant documentation under `.agents/docs/`
+
+**Success criteria:** The shared runtime-state type is consistently named `WorkspaceContext` across code, tests, and docs; any retained compatibility shim is intentional and documented; and persisted project/autosave data continues to load without unnecessary schema churn.
+
+### 9.16: Phase 9 Code Review
 
 Review the completed Phase 9 work as an integrated whole and clean up any temporary scaffolding left behind while implementing the user-debug fixes.
 

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
 
-from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
+from audio_visualizer.ui.workspaceContext import SessionAsset, WorkspaceContext
 from audio_visualizer.ui.settingsSchema import (
     CURRENT_SCHEMA_VERSION,
     create_default_schema,
@@ -156,7 +156,7 @@ class TestCrossTabSessionFlow:
     """Test that outputs registered by one tab are visible to another."""
 
     def test_srt_gen_output_visible_to_srt_edit(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
 
         # SRT Gen registers an output subtitle file
         srt_asset = _make_asset(
@@ -176,7 +176,7 @@ class TestCrossTabSessionFlow:
         assert subtitle_assets[0].source_tab == "srt_gen"
 
     def test_caption_animate_output_visible_to_composition(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
 
         # Caption Animate registers an overlay video
         overlay_asset = _make_asset(
@@ -199,7 +199,7 @@ class TestCrossTabSessionFlow:
         assert video_assets[0].is_overlay_ready is True
 
     def test_audio_visualizer_output_visible_to_composition(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
 
         # Audio Visualizer registers a visualizer output
         viz_asset = _make_asset(
@@ -219,7 +219,7 @@ class TestCrossTabSessionFlow:
 
     def test_multi_asset_workflow(self):
         """Full pipeline: audio -> SRT Gen -> SRT Edit -> Caption Animate -> Composition."""
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
 
         # Step 1: User loads audio
         ctx.register_asset(_make_asset(
@@ -297,14 +297,14 @@ class TestRecipeRoundTrip:
 
 
 # ------------------------------------------------------------------
-# 4. Recipe application with populated SessionContext
+# 4. Recipe application with populated WorkspaceContext
 # ------------------------------------------------------------------
 
 
 class TestRecipeApplication:
     def test_apply_binds_roles(self):
         tabs = [_make_mock_tab("audio_visualizer")]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset(
             "a1", path=Path("/tmp/audio.wav"), category="audio",
         ))
@@ -327,7 +327,7 @@ class TestRecipeApplication:
 
     def test_apply_with_multiple_roles(self):
         tabs = [_make_mock_tab("audio_visualizer")]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset(
             "a1", path=Path("/tmp/audio.wav"), category="audio",
         ))
@@ -392,7 +392,7 @@ class TestHandoffFlow:
 
     def test_handoff_to_tab_assigns_role(self, main_window):
         """handoff_to_tab assigns a role to the specified asset."""
-        ctx = main_window.session_context
+        ctx = main_window.workspace_context
 
         # Register a test asset (clean up first)
         test_id = "handoff_test_asset"
@@ -455,7 +455,7 @@ class TestSessionFilePicker:
         """SessionFilePickerDialog can be instantiated."""
         from audio_visualizer.ui.sessionFilePicker import SessionFilePickerDialog
 
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         dialog = SessionFilePickerDialog(None, ctx, "audio", "Test", "All (*)")
         assert dialog is not None
         assert dialog.result_source == ""
@@ -465,7 +465,7 @@ class TestSessionFilePicker:
         """Dialog populates the asset list from session context."""
         from audio_visualizer.ui.sessionFilePicker import SessionFilePickerDialog
 
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset(
             "a1", display_name="My Audio", category="audio",
         ))
@@ -482,7 +482,7 @@ class TestSessionFilePicker:
         """Dialog shows all assets when category is None."""
         from audio_visualizer.ui.sessionFilePicker import SessionFilePickerDialog
 
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset(
             "a1", display_name="Audio", category="audio",
         ))
@@ -497,7 +497,7 @@ class TestSessionFilePicker:
         """Dialog shows placeholder when no matching assets."""
         from audio_visualizer.ui.sessionFilePicker import SessionFilePickerDialog
 
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         dialog = SessionFilePickerDialog(None, ctx, "audio", "Test", "All (*)")
         # Should have exactly 1 item: the placeholder
         assert dialog._asset_list.count() == 1

@@ -45,7 +45,7 @@ from audio_visualizer.srt.models import (
     SilenceConfig,
     TranscriptionConfig,
 )
-from audio_visualizer.ui.sessionContext import SessionAsset
+from audio_visualizer.ui.workspaceContext import SessionAsset
 from audio_visualizer.ui.tabs.baseTab import BaseTab
 from audio_visualizer.ui.workers.workerBridge import WorkerBridge, WorkerSignals
 from audio_visualizer.ui.workers.srtGenWorker import SrtGenJobSpec, SrtGenWorker
@@ -641,7 +641,7 @@ class SrtGenTab(BaseTab):
     def _on_add_files(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
-            session_context=self.session_context
+            workspace_context=self.workspace_context
         )
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Select audio/video files", start_dir, _INPUT_FILTERS,
@@ -650,7 +650,7 @@ class SrtGenTab(BaseTab):
             self._add_input_path(p)
 
     def _on_add_session_files(self) -> None:
-        ctx = self.session_context
+        ctx = self.workspace_context
         if ctx is None:
             QMessageBox.information(self, "No Session", "No session context available.")
             return
@@ -671,7 +671,7 @@ class SrtGenTab(BaseTab):
     def _on_browse_output_dir(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
-            self._output_dir_edit.text(), self.session_context
+            self._output_dir_edit.text(), self.workspace_context
         )
         d = QFileDialog.getExistingDirectory(self, "Select output directory", start_dir)
         if d:
@@ -695,7 +695,7 @@ class SrtGenTab(BaseTab):
     def _on_import_config(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
 
-        start_dir = resolve_browse_directory(session_context=self.session_context)
+        start_dir = resolve_browse_directory(workspace_context=self.workspace_context)
         path, _ = QFileDialog.getOpenFileName(
             self, "Import config file", start_dir, "JSON files (*.json);;All files (*)",
         )
@@ -901,7 +901,7 @@ class SrtGenTab(BaseTab):
 
         parent = resolve_output_directory(
             explicit_directory=self._output_dir_edit.text().strip(),
-            session_context=self.session_context,
+            workspace_context=self.workspace_context,
             source_path=input_path,
         )
         return parent / f"{input_path.stem}.{fmt}"
@@ -914,7 +914,7 @@ class SrtGenTab(BaseTab):
 
         parent = resolve_output_directory(
             explicit_directory=self._output_dir_edit.text().strip(),
-            session_context=self.session_context,
+            workspace_context=self.workspace_context,
             source_path=input_path,
         )
         return parent / f"{input_path.stem}{ext}"

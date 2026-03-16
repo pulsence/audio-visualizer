@@ -9,18 +9,18 @@ app = QApplication.instance() or QApplication([])
 import pytest
 
 from audio_visualizer.ui.tabs.assetsTab import AssetsTab
-from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
+from audio_visualizer.ui.workspaceContext import SessionAsset, WorkspaceContext
 
 
 @pytest.fixture
 def ctx():
-    return SessionContext()
+    return WorkspaceContext()
 
 
 @pytest.fixture
 def tab(ctx):
     t = AssetsTab()
-    t.set_session_context(ctx)
+    t.set_workspace_context(ctx)
     return t
 
 

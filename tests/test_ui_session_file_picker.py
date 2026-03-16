@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from audio_visualizer.ui.sessionContext import SessionContext
+from audio_visualizer.ui.workspaceContext import WorkspaceContext
 from audio_visualizer.ui.sessionFilePicker import (
     resolve_browse_directory,
     resolve_output_directory,
@@ -20,7 +20,7 @@ class TestResolveBrowseDirectory:
         assert resolved == str(current_file.parent)
 
     def test_uses_selected_asset_parent_before_project_folder(self, tmp_path):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         project_folder = tmp_path / "project"
         project_folder.mkdir()
         ctx.set_project_folder(project_folder)
@@ -30,19 +30,19 @@ class TestResolveBrowseDirectory:
         asset_path.touch()
 
         resolved = resolve_browse_directory(
-            session_context=ctx,
+            workspace_context=ctx,
             selected_asset_path=asset_path,
         )
 
         assert resolved == str(asset_path.parent)
 
     def test_falls_back_to_project_folder(self, tmp_path):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         project_folder = tmp_path / "project"
         project_folder.mkdir()
         ctx.set_project_folder(project_folder)
 
-        resolved = resolve_browse_directory(session_context=ctx)
+        resolved = resolve_browse_directory(workspace_context=ctx)
 
         assert resolved == str(project_folder)
 
@@ -56,14 +56,14 @@ class TestResolveOutputDirectory:
         assert resolved == explicit
 
     def test_project_folder_wins_over_source_parent(self, tmp_path):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         project_folder = tmp_path / "project"
         project_folder.mkdir()
         ctx.set_project_folder(project_folder)
         source_path = tmp_path / "input" / "clip.mp4"
 
         resolved = resolve_output_directory(
-            session_context=ctx,
+            workspace_context=ctx,
             source_path=source_path,
         )
 

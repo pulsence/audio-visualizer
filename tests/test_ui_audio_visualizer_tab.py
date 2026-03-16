@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QWidget
 app = QApplication.instance() or QApplication([])
 
 from audio_visualizer.ui.tabs.audioVisualizerTab import AudioVisualizerTab
-from audio_visualizer.ui.sessionContext import SessionContext
+from audio_visualizer.ui.workspaceContext import WorkspaceContext
 from audio_visualizer.ui.tabs.baseTab import BaseTab
 
 
@@ -74,14 +74,14 @@ class TestAudioVisualizerTabVisualizerRegistry:
         tab.visualizer_selection_changed("Volume: Circle")
 
 
-class TestAudioVisualizerTabSessionContext:
+class TestAudioVisualizerTabWorkspaceContext:
 
-    def test_session_context_injection(self):
+    def test_workspace_context_injection(self):
         tab = AudioVisualizerTab()
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
-        assert tab.session_context is ctx
-        assert tab.generalSettingsView.session_context is ctx
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
+        assert tab.workspace_context is ctx
+        assert tab.generalSettingsView.workspace_context is ctx
 
 
 class TestAudioVisualizerTabGlobalBusy:

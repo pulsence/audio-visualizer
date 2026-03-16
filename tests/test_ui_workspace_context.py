@@ -1,4 +1,4 @@
-"""Tests for SessionContext and SessionAsset from audio_visualizer.ui.sessionContext."""
+"""Tests for WorkspaceContext and SessionAsset from audio_visualizer.ui.workspaceContext."""
 
 from pathlib import Path
 from typing import Any
@@ -9,9 +9,9 @@ app = QApplication.instance() or QApplication([])
 
 import pytest
 
-from audio_visualizer.ui.sessionContext import (
+from audio_visualizer.ui.workspaceContext import (
     SessionAsset,
-    SessionContext,
+    WorkspaceContext,
     VALID_CATEGORIES,
     VALID_ROLES,
 )
@@ -44,27 +44,27 @@ def _make_asset(
 # ------------------------------------------------------------------
 
 
-class TestSessionContextAssetCRUD:
+class TestWorkspaceContextAssetCRUD:
     def test_register_asset(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         asset = _make_asset()
         ctx.register_asset(asset)
         assert ctx.get_asset("a1") is asset
 
     def test_register_duplicate_raises(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset())
         with pytest.raises(ValueError, match="already registered"):
             ctx.register_asset(_make_asset())
 
     def test_register_invalid_category_raises(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         asset = _make_asset(category="bogus_category")
         with pytest.raises(ValueError, match="Invalid category"):
             ctx.register_asset(asset)
 
     def test_update_asset(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset())
         ctx.update_asset("a1", display_name="Updated Name", duration_ms=5000)
         asset = ctx.get_asset("a1")
@@ -73,32 +73,32 @@ class TestSessionContextAssetCRUD:
         assert asset.duration_ms == 5000
 
     def test_update_nonexistent_raises(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         with pytest.raises(KeyError, match="No asset with id"):
             ctx.update_asset("nonexistent", display_name="X")
 
     def test_remove_asset(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset())
         ctx.remove_asset("a1")
         assert ctx.get_asset("a1") is None
 
     def test_remove_nonexistent_raises(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         with pytest.raises(KeyError, match="No asset with id"):
             ctx.remove_asset("nonexistent")
 
 
-class TestSessionContextQuery:
+class TestWorkspaceContextQuery:
     def test_list_assets_no_filter(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset("a1", category="audio"))
         ctx.register_asset(_make_asset("a2", category="video", path=Path("/tmp/test.mp4")))
         result = ctx.list_assets()
         assert len(result) == 2
 
     def test_list_assets_by_category(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset("a1", category="audio"))
         ctx.register_asset(_make_asset("a2", category="video", path=Path("/tmp/test.mp4")))
         result = ctx.list_assets(category="audio")
@@ -106,7 +106,7 @@ class TestSessionContextQuery:
         assert result[0].id == "a1"
 
     def test_list_assets_by_source_tab(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset("a1", source_tab="srt"))
         ctx.register_asset(_make_asset("a2", source_tab="caption", path=Path("/tmp/test.mp4"), category="video"))
         result = ctx.list_assets(source_tab="srt")
@@ -114,7 +114,7 @@ class TestSessionContextQuery:
         assert result[0].id == "a1"
 
     def test_list_assets_by_role(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset("a1", role="primary_audio"))
         ctx.register_asset(_make_asset("a2", role="background", path=Path("/tmp/bg.png"), category="image"))
         result = ctx.list_assets(role="primary_audio")
@@ -122,15 +122,15 @@ class TestSessionContextQuery:
         assert result[0].id == "a1"
 
     def test_find_asset_by_path(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         asset = _make_asset("a1", path=Path("/tmp/audio.wav"))
         ctx.register_asset(asset)
         assert ctx.find_asset_by_path("/tmp/audio.wav") is asset
 
 
-class TestSessionContextRoles:
+class TestWorkspaceContextRoles:
     def test_set_role(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset())
         ctx.set_role("a1", "primary_audio")
         asset = ctx.get_asset("a1")
@@ -138,7 +138,7 @@ class TestSessionContextRoles:
         assert asset.role == "primary_audio"
 
     def test_clear_role(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset("a1", role="primary_audio"))
         ctx.register_asset(
             _make_asset("a2", role="primary_audio", path=Path("/tmp/other.wav"))
@@ -148,16 +148,16 @@ class TestSessionContextRoles:
         assert ctx.get_asset("a2").role is None
 
 
-class TestSessionContextAnalysisCache:
+class TestWorkspaceContextAnalysisCache:
     def test_analysis_cache_store_get(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         key = ("a1", "rms", "default")
         ctx.store_analysis(key, {"rms": [0.1, 0.2, 0.3]})
         result = ctx.get_analysis(key)
         assert result == {"rms": [0.1, 0.2, 0.3]}
 
     def test_analysis_cache_invalidate(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         key1 = ("a1", "rms", "default")
         key2 = ("a1", "chroma", "default")
         key3 = ("a2", "rms", "default")
@@ -170,7 +170,7 @@ class TestSessionContextAnalysisCache:
         assert ctx.get_analysis(key3) == "data3"
 
     def test_make_analysis_cache_key_uses_asset_identity(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         asset = _make_asset("a1", path=Path("/tmp/audio.wav"))
         ctx.register_asset(asset)
         key = ctx.make_analysis_cache_key(asset, "waveform", "mono")
@@ -178,9 +178,9 @@ class TestSessionContextAnalysisCache:
         assert key[1:] == ("waveform", "mono")
 
 
-class TestSessionContextBulk:
+class TestWorkspaceContextBulk:
     def test_clear_session(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset("a1"))
         ctx.register_asset(_make_asset("a2", path=Path("/tmp/other.wav")))
         ctx.store_analysis(("a1", "rms", "default"), "data")
@@ -192,9 +192,9 @@ class TestSessionContextBulk:
         assert ctx.project_folder is None
 
 
-class TestSessionContextSerialization:
+class TestWorkspaceContextSerialization:
     def test_to_dict_from_dict(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         asset = _make_asset(
             "a1",
             display_name="My Audio",
@@ -213,7 +213,7 @@ class TestSessionContextSerialization:
         assert snapshot["roles"] == {"primary_audio": "a1"}
 
         # Restore into a fresh context
-        ctx2 = SessionContext()
+        ctx2 = WorkspaceContext()
         ctx2.from_dict(snapshot)
 
         restored = ctx2.get_asset("a1")
@@ -228,9 +228,9 @@ class TestSessionContextSerialization:
         assert ctx2.get_analysis(("a1", "rms", "v1")) is None
 
 
-class TestSessionContextSignals:
+class TestWorkspaceContextSignals:
     def test_signals_emitted(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         added: list[str] = []
         updated: list[str] = []
         removed: list[str] = []
@@ -252,35 +252,35 @@ class TestSessionContextSignals:
         assert removed == ["a1"]
 
 
-class TestSessionContextProjectFolder:
+class TestWorkspaceContextProjectFolder:
     def test_default_project_folder_is_none(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         assert ctx.project_folder is None
 
     def test_set_project_folder_with_path(self, tmp_path):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.set_project_folder(tmp_path)
         assert ctx.project_folder == tmp_path
 
     def test_set_project_folder_with_string(self, tmp_path):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.set_project_folder(str(tmp_path))
         assert ctx.project_folder == tmp_path
 
     def test_set_project_folder_empty_string_clears(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.set_project_folder(Path("/tmp"))
         ctx.set_project_folder("")
         assert ctx.project_folder is None
 
     def test_set_project_folder_none_clears(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.set_project_folder(Path("/tmp"))
         ctx.set_project_folder(None)
         assert ctx.project_folder is None
 
     def test_project_folder_signal_emitted(self, tmp_path):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         signals: list[str] = []
         ctx.project_folder_changed.connect(lambda s: signals.append(s))
         ctx.set_project_folder(tmp_path)
@@ -291,40 +291,40 @@ class TestSessionContextProjectFolder:
         assert signals[1] == ""
 
     def test_to_dict_includes_project_folder(self, tmp_path):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.set_project_folder(tmp_path)
         data = ctx.to_dict()
         assert data["project_folder"] == str(tmp_path)
 
     def test_to_dict_project_folder_none(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         data = ctx.to_dict()
         assert data["project_folder"] is None
 
     def test_from_dict_restores_project_folder(self, tmp_path):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.set_project_folder(tmp_path)
         data = ctx.to_dict()
 
-        ctx2 = SessionContext()
+        ctx2 = WorkspaceContext()
         ctx2.from_dict(data)
         assert ctx2.project_folder == tmp_path
 
     def test_from_dict_without_project_folder_key(self):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.set_project_folder(Path("/tmp"))
         ctx.from_dict({"assets": [], "roles": {}})
         assert ctx.project_folder is None
 
 
-class TestSessionContextImports:
+class TestWorkspaceContextImports:
     def test_import_asset_file_registers_metadata(self, tmp_path, monkeypatch):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         asset_path = tmp_path / "clip.mp4"
         asset_path.touch()
 
         monkeypatch.setattr(
-            "audio_visualizer.ui.sessionContext.probe_media",
+            "audio_visualizer.ui.workspaceContext.probe_media",
             lambda _path: {
                 "width": 1920,
                 "height": 1080,
@@ -346,7 +346,7 @@ class TestSessionContextImports:
         assert ctx.find_asset_by_path(asset_path) is asset
 
     def test_import_asset_file_deduplicates(self, tmp_path):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         asset_path = tmp_path / "clip.mp3"
         asset_path.touch()
 
@@ -357,13 +357,13 @@ class TestSessionContextImports:
         assert len(ctx.list_assets()) == 1
 
     def test_import_asset_folder_scans_supported_files(self, tmp_path, monkeypatch):
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         (tmp_path / "a.mp3").touch()
         (tmp_path / "b.srt").touch()
         (tmp_path / "ignored.txt").touch()
 
         monkeypatch.setattr(
-            "audio_visualizer.ui.sessionContext.probe_media",
+            "audio_visualizer.ui.workspaceContext.probe_media",
             lambda _path: None,
         )
 

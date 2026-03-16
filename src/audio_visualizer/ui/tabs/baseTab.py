@@ -1,7 +1,7 @@
 """Base tab abstraction for the multi-tab Audio Visualizer shell.
 
 Defines the shared contract that every tab must implement: identification,
-settings serialization, validation, session context injection, and optional
+settings serialization, validation, workspace context injection, and optional
 undo/redo support.
 """
 
@@ -16,7 +16,7 @@ from PySide6.QtGui import QAction, QUndoStack
 from PySide6.QtWidgets import QWidget
 
 if TYPE_CHECKING:
-    from audio_visualizer.ui.sessionContext import SessionContext
+    from audio_visualizer.ui.workspaceContext import WorkspaceContext
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class BaseTab(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._session_context: SessionContext | None = None
+        self._workspace_context: WorkspaceContext | None = None
         self._undo_stack: QUndoStack | None = None
 
     # ------------------------------------------------------------------
@@ -93,26 +93,26 @@ class BaseTab(QWidget):
         """
 
     # ------------------------------------------------------------------
-    # Session context
+    # Workspace context
     # ------------------------------------------------------------------
 
     @property
-    def session_context(self) -> SessionContext | None:
-        """Return the currently injected session context, or ``None``."""
-        return self._session_context
+    def workspace_context(self) -> WorkspaceContext | None:
+        """Return the currently injected workspace context, or ``None``."""
+        return self._workspace_context
 
-    def set_session_context(self, context: SessionContext) -> None:
-        """Inject the shared session context into this tab.
+    def set_workspace_context(self, context: WorkspaceContext) -> None:
+        """Inject the shared workspace context into this tab.
 
-        Called by the main window shell after session creation or change.
+        Called by the main window shell after workspace creation or change.
         Subclasses may override to react to context changes but should
-        call ``super().set_session_context(context)`` first.
+        call ``super().set_workspace_context(context)`` first.
 
         Args:
-            context: The new session context to use.
+            context: The new workspace context to use.
         """
-        self._session_context = context
-        logger.debug("Session context set for tab '%s'", self.tab_id)
+        self._workspace_context = context
+        logger.debug("Workspace context set for tab '%s'", self.tab_id)
 
     # ------------------------------------------------------------------
     # Global busy state
@@ -140,22 +140,22 @@ class BaseTab(QWidget):
     # ------------------------------------------------------------------
 
     def register_output_asset(self, asset: Any) -> None:
-        """Register a single output asset in the session context.
+        """Register a single output asset in the workspace context.
 
-        Convenience helper that delegates to the session context.  Tabs
+        Convenience helper that delegates to the workspace context.  Tabs
         call this after a job completes to make its outputs available to
         downstream tabs.
 
         Args:
             asset: A :class:`SessionAsset` instance to register.
         """
-        if self._session_context is None:
+        if self._workspace_context is None:
             logger.warning(
-                "Cannot register asset for tab '%s': no session context",
+                "Cannot register asset for tab '%s': no workspace context",
                 self.tab_id,
             )
             return
-        self._session_context.register_asset(asset)
+        self._workspace_context.register_asset(asset)
         logger.info(
             "Tab '%s' registered asset '%s'",
             self.tab_id,

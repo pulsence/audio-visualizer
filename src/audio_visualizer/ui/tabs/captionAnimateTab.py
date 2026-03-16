@@ -42,7 +42,7 @@ from audio_visualizer.caption.presets.loader import (
     get_caption_preset_dir,
 )
 from audio_visualizer.caption.animations import AnimationRegistry
-from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
+from audio_visualizer.ui.workspaceContext import SessionAsset, WorkspaceContext
 from audio_visualizer.ui.sessionFilePicker import pick_session_or_file
 from audio_visualizer.ui.tabs.baseTab import BaseTab
 from audio_visualizer.ui.workers.captionRenderWorker import (
@@ -720,7 +720,7 @@ class CaptionAnimateTab(BaseTab):
     def _browse_preset_file(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
-            self._preset_file_edit.text(), self.session_context
+            self._preset_file_edit.text(), self.workspace_context
         )
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Preset File", start_dir,
@@ -957,7 +957,7 @@ class CaptionAnimateTab(BaseTab):
 
     def _session_asset_path(self, combo: QComboBox) -> Path | None:
         """Return the currently selected session asset path for *combo*."""
-        ctx = self.session_context
+        ctx = self.workspace_context
         asset_id = combo.currentData()
         if ctx is None or not asset_id:
             return None
@@ -979,7 +979,7 @@ class CaptionAnimateTab(BaseTab):
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
             self._output_dir_edit.text(),
-            self.session_context,
+            self.workspace_context,
             selected_asset_path=(
                 self._subtitle_edit.text().strip()
                 or self._session_asset_path(self._session_subtitle_combo)
@@ -992,7 +992,7 @@ class CaptionAnimateTab(BaseTab):
     def _browse_font_file(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
-            self._font_file_edit.text(), self.session_context
+            self._font_file_edit.text(), self.workspace_context
         )
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Font File", start_dir,
@@ -1022,7 +1022,7 @@ class CaptionAnimateTab(BaseTab):
     ) -> Path | None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
 
-        ctx = self.session_context
+        ctx = self.workspace_context
         if ctx is None:
             start_dir = resolve_browse_directory(
                 current_path=current_path,
@@ -1044,14 +1044,14 @@ class CaptionAnimateTab(BaseTab):
     # Session context integration
     # ------------------------------------------------------------------
 
-    def set_session_context(self, context: SessionContext) -> None:
-        super().set_session_context(context)
+    def set_workspace_context(self, context: WorkspaceContext) -> None:
+        super().set_workspace_context(context)
         context.asset_added.connect(self._refresh_session_combos)
         context.asset_removed.connect(self._refresh_session_combos)
         self._refresh_session_combos()
 
     def _refresh_session_combos(self, _asset_id: str | None = None) -> None:
-        ctx = self.session_context
+        ctx = self.workspace_context
         if ctx is None:
             return
 
@@ -1081,17 +1081,17 @@ class CaptionAnimateTab(BaseTab):
 
     def _on_session_subtitle_changed(self, index: int) -> None:
         asset_id = self._session_subtitle_combo.currentData()
-        if not asset_id or not self.session_context:
+        if not asset_id or not self.workspace_context:
             return
-        asset = self.session_context.get_asset(asset_id)
+        asset = self.workspace_context.get_asset(asset_id)
         if asset:
             self._subtitle_edit.setText(str(asset.path))
 
     def _on_session_audio_changed(self, index: int) -> None:
         asset_id = self._session_audio_combo.currentData()
-        if not asset_id or not self.session_context:
+        if not asset_id or not self.workspace_context:
             return
-        asset = self.session_context.get_asset(asset_id)
+        asset = self.workspace_context.get_asset(asset_id)
         if asset:
             self._audio_file_edit.setText(str(asset.path))
 
@@ -1262,7 +1262,7 @@ class CaptionAnimateTab(BaseTab):
 
         out_parent = resolve_output_directory(
             explicit_directory=self._output_dir_edit.text().strip(),
-            session_context=self.session_context,
+            workspace_context=self.workspace_context,
             source_path=subtitle_path,
         )
 

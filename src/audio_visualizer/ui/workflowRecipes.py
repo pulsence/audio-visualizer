@@ -16,7 +16,7 @@ from typing import Any, TYPE_CHECKING
 from audio_visualizer.app_paths import get_data_dir
 
 if TYPE_CHECKING:
-    from audio_visualizer.ui.sessionContext import SessionContext
+    from audio_visualizer.ui.workspaceContext import WorkspaceContext
     from audio_visualizer.ui.tabs.baseTab import BaseTab
 
 logger = logging.getLogger(__name__)
@@ -258,7 +258,7 @@ def list_saved_recipes() -> list[dict]:
 
 def create_recipe_from_session(
     tabs: list[Any],
-    session_context: SessionContext,
+    workspace_context: WorkspaceContext,
     name: str = "",
 ) -> WorkflowRecipe:
     """Build a WorkflowRecipe from the current application state.
@@ -267,7 +267,7 @@ def create_recipe_from_session(
     ----------
     tabs : list[BaseTab]
         The registered tab instances.
-    session_context : SessionContext
+    workspace_context : WorkspaceContext
         The live session context.
     name : str
         Recipe display name.
@@ -292,7 +292,7 @@ def create_recipe_from_session(
     # Resolve current asset role bindings from session
     asset_roles: dict[str, str | None] = {}
     for role_key in RECIPE_ASSET_ROLES:
-        assets = session_context.list_assets(role=role_key)
+        assets = workspace_context.list_assets(role=role_key)
         if assets:
             asset_roles[role_key] = str(assets[0].path)
         else:
@@ -327,9 +327,9 @@ def create_recipe_from_session(
 def apply_recipe(
     recipe: WorkflowRecipe,
     tabs: list[Any],
-    session_context: SessionContext,
+    workspace_context: WorkspaceContext,
 ) -> None:
-    """Apply a recipe to tabs, resolving asset roles through SessionContext.
+    """Apply a recipe to tabs, resolving asset roles through WorkspaceContext.
 
     Asset roles are resolved through the session context first; roles that
     cannot be resolved are left as ``None`` (the caller can prompt the user
@@ -341,7 +341,7 @@ def apply_recipe(
         The recipe to apply.
     tabs : list[BaseTab]
         The registered tab instances.
-    session_context : SessionContext
+    workspace_context : WorkspaceContext
         The live session context.
     """
     # Build tab lookup
@@ -366,7 +366,7 @@ def apply_recipe(
             continue
 
         # Try to find an asset in the session with this role
-        existing = session_context.list_assets(role=role_key)
+        existing = workspace_context.list_assets(role=role_key)
         if existing:
             # Already bound in session — nothing to do
             logger.debug(
@@ -378,10 +378,10 @@ def apply_recipe(
 
         # Check if an asset with the matching path exists
         role_path_obj = Path(role_path)
-        all_assets = session_context.list_assets()
+        all_assets = workspace_context.list_assets()
         matched = [a for a in all_assets if a.path == role_path_obj]
         if matched:
-            session_context.set_role(matched[0].id, role_key)
+            workspace_context.set_role(matched[0].id, role_key)
             logger.debug(
                 "Bound asset '%s' to role '%s' from recipe path",
                 matched[0].id,

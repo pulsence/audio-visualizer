@@ -262,9 +262,9 @@ class TestEmphasisGlowAnimation:
 
 class TestAudioReactiveCacheIntegration:
     def test_store_and_retrieve_analysis(self):
-        from audio_visualizer.ui.sessionContext import SessionContext
+        from audio_visualizer.ui.workspaceContext import WorkspaceContext
 
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         analysis = AudioReactiveAnalysis(
             smoothed_amplitude=[0.5, 0.8, 0.3],
             peak_markers=[1],
@@ -283,8 +283,8 @@ class TestAudioReactiveCacheIntegration:
         assert cached.bpm_estimate == 120.0
 
     def test_cache_miss_returns_none(self):
-        from audio_visualizer.ui.sessionContext import SessionContext
+        from audio_visualizer.ui.workspaceContext import WorkspaceContext
 
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         key = make_cache_key(Path("/tmp/nonexistent.mp3"), 30.0, 0)
         assert ctx.get_analysis(key) is None

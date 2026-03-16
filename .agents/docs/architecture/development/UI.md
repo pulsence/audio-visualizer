@@ -34,16 +34,16 @@ Startup work is split so theme and shell state are ready before heavy tabs impor
 
 This keeps startup responsive while preserving autosave/project correctness.
 
-## Shared Session State
+## Shared Workspace State
 
-`SessionContext` is injected into every tab and holds:
+`WorkspaceContext` is injected into every tab and holds:
 
 - Session assets and role bindings
 - Cached analysis results
 - The session `project_folder`
 - Imported external assets used by the Assets screen
 
-Tabs should treat `SessionContext.project_folder` as the default browse/output root when no stronger local context exists.
+Tabs should treat `WorkspaceContext.project_folder` as the default browse/output root when no stronger local context exists.
 
 ## Default Path Resolution
 
@@ -72,7 +72,7 @@ The persisted UI schema is versioned and split into four top-level sections:
 - `app`: machine-level UI state such as `theme_mode`
 - `ui`: active tab and window geometry
 - `tabs`: per-tab settings payloads
-- `session`: serialized `SessionContext` state, including project folder and assets
+- `session`: serialized `WorkspaceContext` state, including project folder and assets
 
 `SettingsDialog` edits the app theme and the current session project folder. Changes are applied only when the dialog is accepted.
 
@@ -89,7 +89,7 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 
 `AudioVisualizerTab` still owns the legacy visualizer-specific view registry.
 
-- `GeneralSettingsView` handles input/output file paths and now receives session context so project-folder defaults apply there too.
+- `GeneralSettingsView` handles input/output file paths and now receives workspace context so project-folder defaults apply there too.
 - `GeneralVisualizerView` and the chroma force views use clickable swatches for color selection.
 - Per-band chroma force controls use tabbed 12-band editors instead of a single pipe-delimited text field.
 - Live preview remains a debounced 5-second render driven from the shared render pool.
@@ -108,5 +108,5 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 `AssetsTab` is a support screen rather than a workflow stage.
 
 - Shows a live table of current `SessionAsset` entries.
-- Imports individual external files or folders through `SessionContext` helper methods.
+- Imports individual external files or folders through `WorkspaceContext` helper methods.
 - Persists the visible imported-source list through tab settings so autosave/project restore can explain where external assets came from.

@@ -35,7 +35,7 @@ from pathlib import Path
 from audio_visualizer.app_logging import setup_logging
 from audio_visualizer.app_paths import get_config_dir
 from audio_visualizer import updater
-from audio_visualizer.ui.sessionContext import SessionContext
+from audio_visualizer.ui.workspaceContext import WorkspaceContext
 from audio_visualizer.ui.navigationSidebar import NavigationSidebar
 from audio_visualizer.ui.jobStatusWidget import JobStatusWidget
 from audio_visualizer.ui.tabs.baseTab import BaseTab
@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     """Thin multi-tab shell hosting all workflow tabs.
 
-    Owns the shared thread pools, SessionContext, navigation sidebar,
+    Owns the shared thread pools, WorkspaceContext, navigation sidebar,
     job status widget, and menu/status behaviour.  All workflow logic
     lives inside the individual tab classes.
     """
@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1600, 1000)
 
         # Shared state
-        self.session_context = SessionContext(self)
+        self.workspace_context = WorkspaceContext(self)
         self.render_thread_pool = QThreadPool()
         self.render_thread_pool.setMaxThreadCount(1)
         self._background_thread_pool = QThreadPool()
@@ -150,7 +150,7 @@ class MainWindow(QMainWindow):
 
     def add_tab(self, tab: BaseTab) -> None:
         """Register a tab in the shell."""
-        tab.set_session_context(self.session_context)
+        tab.set_workspace_context(self.workspace_context)
         index = self._stack.addWidget(tab)
         self._sidebar.add_tab(tab.tab_id, tab.tab_title, index)
         self._tabs.append(tab)
@@ -250,7 +250,7 @@ class MainWindow(QMainWindow):
         if tab is None:
             return None
 
-        tab.set_session_context(self.session_context)
+        tab.set_workspace_context(self.workspace_context)
 
         # Replace the placeholder widget at this index
         self._stack.removeWidget(widget)
@@ -413,7 +413,7 @@ class MainWindow(QMainWindow):
             return
 
         recipe = create_recipe_from_session(
-            self._tabs, self.session_context, name.strip()
+            self._tabs, self.workspace_context, name.strip()
         )
 
         valid, msg = validate_recipe(recipe)
@@ -451,7 +451,7 @@ class MainWindow(QMainWindow):
                     "Unable to load the recipe file.",
                 )
                 return
-            apply_recipe(recipe, self._tabs, self.session_context)
+            apply_recipe(recipe, self._tabs, self.workspace_context)
             logger.info("Recipe applied: %s", recipe.name)
 
     def open_recipe_library(self) -> None:
@@ -483,9 +483,9 @@ class MainWindow(QMainWindow):
         """
         # Assign role if requested
         if asset_id and role:
-            asset = self.session_context.get_asset(asset_id)
+            asset = self.workspace_context.get_asset(asset_id)
             if asset is not None:
-                self.session_context.set_role(asset_id, role)
+                self.workspace_context.set_role(asset_id, role)
 
         # Switch to target tab — search both real tabs and lazy placeholders
         for i in range(self._stack.count()):
@@ -688,9 +688,9 @@ class MainWindow(QMainWindow):
             # Apply project folder
             project_folder = result.get("project_folder", "")
             if project_folder:
-                self.session_context.set_project_folder(Path(project_folder))
+                self.workspace_context.set_project_folder(Path(project_folder))
             else:
-                self.session_context.set_project_folder(None)
+                self.workspace_context.set_project_folder(None)
             # Save immediately
             self._save_settings_to_path(self._default_settings_path())
 
@@ -770,7 +770,7 @@ class MainWindow(QMainWindow):
                 schema["tabs"][tab_id] = settings
 
         # Session
-        schema["session"] = self.session_context.to_dict()
+        schema["session"] = self.workspace_context.to_dict()
         return schema
 
     def _apply_settings(self, data: dict) -> None:
@@ -806,7 +806,7 @@ class MainWindow(QMainWindow):
         # Session
         session_data = data.get("session", {})
         if session_data:
-            self.session_context.from_dict(session_data)
+            self.workspace_context.from_dict(session_data)
 
         # Restore active tab
         last_tab = ui_state.get("last_active_tab", "audio_visualizer")

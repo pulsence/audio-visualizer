@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 from audio_visualizer.ui.tabs.captionAnimateTab import CaptionAnimateTab
 from audio_visualizer.ui.tabs.baseTab import BaseTab
-from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
+from audio_visualizer.ui.workspaceContext import SessionAsset, WorkspaceContext
 
 
 # ------------------------------------------------------------------
@@ -252,17 +252,17 @@ class _FakeCaptionMainWindow(QWidget):
         return None
 
 
-class TestCaptionAnimateTabSessionContext:
-    def test_set_session_context(self):
+class TestCaptionAnimateTabWorkspaceContext:
+    def test_set_workspace_context(self):
         tab = CaptionAnimateTab()
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
-        assert tab.session_context is ctx
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
+        assert tab.workspace_context is ctx
 
     def test_session_subtitle_assets_populate(self):
         tab = CaptionAnimateTab()
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
 
         # Add a subtitle asset
         ctx.register_asset(SessionAsset(
@@ -279,8 +279,8 @@ class TestCaptionAnimateTabSessionContext:
 
     def test_session_audio_assets_populate(self):
         tab = CaptionAnimateTab()
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
 
         ctx.register_asset(SessionAsset(
             id="audio1",
@@ -296,11 +296,11 @@ class TestCaptionAnimateTabSessionContext:
     def test_render_defaults_to_project_folder_when_output_dir_blank(self, tmp_path, monkeypatch):
         main_window = _FakeCaptionMainWindow()
         tab = CaptionAnimateTab(main_window)
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         project_folder = tmp_path / "project"
         project_folder.mkdir()
         ctx.set_project_folder(project_folder)
-        tab.set_session_context(ctx)
+        tab.set_workspace_context(ctx)
         tab._subtitle_edit.setText(str(tmp_path / "example.srt"))
 
         captured = []
@@ -361,8 +361,8 @@ class TestCaptionAnimateOutputs:
     def test_render_completion_registers_delivery_and_overlay_assets(self, tmp_path):
         main_window = _FakeMainWindow()
         tab = CaptionAnimateTab(main_window)
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
         tab._subtitle_edit.setText(str(tmp_path / "sample.srt"))
 
         delivery = tmp_path / "sample_caption.mp4"
@@ -641,8 +641,8 @@ class TestGuardedRenderLifecycle:
 
     def test_on_render_completed_no_crash_without_main_window(self, tmp_path):
         tab = CaptionAnimateTab()
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
         tab._subtitle_edit.setText(str(tmp_path / "sample.srt"))
 
         delivery = tmp_path / "sample_caption.mp4"
@@ -712,8 +712,8 @@ class TestCaptionAnimateRenderPreview:
 
     def test_preview_completed_does_not_register_assets(self, tmp_path):
         tab = CaptionAnimateTab()
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
         tab._subtitle_edit.setText(str(tmp_path / "sample.srt"))
 
         preview_file = tmp_path / "preview.mp4"

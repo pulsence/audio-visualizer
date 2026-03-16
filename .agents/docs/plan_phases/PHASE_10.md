@@ -43,7 +43,7 @@ Run the full regression and integration pass against the completed Stage Three a
 ### 10.3: Architecture Documentation Update
 
 **Tasks:**
-- Update `ARCHITECTURE.md` to reflect the tab-based app structure, `SessionContext`, worker architecture, and new persistence model
+- Update `ARCHITECTURE.md` to reflect the tab-based app structure, `WorkspaceContext`, worker architecture, and new persistence model
 - Update `INDEX.md` to reference the new Stage Three UI architecture and any new package docs
 - Update `.agents/docs/architecture/development/OVERVIEW.md` with the new end-to-end tab workflow
 - Update `.agents/docs/architecture/development/UI.md` for the new `MainWindow`, tab classes, shared status shell, and undo/menu behavior

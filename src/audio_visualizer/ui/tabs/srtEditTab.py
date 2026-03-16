@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 from audio_visualizer.ui.tabs.baseTab import BaseTab
-from audio_visualizer.ui.sessionContext import SessionAsset
+from audio_visualizer.ui.workspaceContext import SessionAsset
 from audio_visualizer.ui.sessionFilePicker import pick_session_or_file
 from audio_visualizer.ui.tabs.srtEdit.commands import (
     AddEntryCommand,
@@ -719,7 +719,7 @@ class SrtEditTab(BaseTab):
             from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
             start_dir = resolve_browse_directory(
                 current_path=self._subtitle_path,
-                session_context=self.session_context,
+                workspace_context=self.workspace_context,
                 selected_asset_path=self._subtitle_combo.currentData(),
             )
             path, _ = QFileDialog.getSaveFileName(
@@ -744,7 +744,7 @@ class SrtEditTab(BaseTab):
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
             current_path=self._subtitle_path,
-            session_context=self.session_context,
+            workspace_context=self.workspace_context,
             selected_asset_path=self._subtitle_combo.currentData(),
         )
         path, _ = QFileDialog.getSaveFileName(
@@ -795,12 +795,12 @@ class SrtEditTab(BaseTab):
                 self._lint_profile_combo.setCurrentIndex(idx)
 
     # ------------------------------------------------------------------
-    # Session context integration
+    # Workspace context integration
     # ------------------------------------------------------------------
 
-    def set_session_context(self, context) -> None:
-        """React to session context injection by populating asset combos."""
-        super().set_session_context(context)
+    def set_workspace_context(self, context) -> None:
+        """React to workspace context injection by populating asset combos."""
+        super().set_workspace_context(context)
         self._refresh_asset_combos()
         if context is not None:
             context.asset_added.connect(lambda _: self._refresh_asset_combos())
@@ -809,7 +809,7 @@ class SrtEditTab(BaseTab):
 
     def _refresh_asset_combos(self) -> None:
         """Populate audio and subtitle combos from session assets."""
-        ctx = self.session_context
+        ctx = self.workspace_context
         if ctx is None:
             return
 
@@ -866,7 +866,7 @@ class SrtEditTab(BaseTab):
     ) -> Path | None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
 
-        ctx = self.session_context
+        ctx = self.workspace_context
         if ctx is None:
             start_dir = resolve_browse_directory()
             path, _ = QFileDialog.getOpenFileName(self, title, start_dir, file_filter)
@@ -882,7 +882,7 @@ class SrtEditTab(BaseTab):
         return path
 
     def _load_waveform_data(self, path: str) -> tuple[np.ndarray, int]:
-        ctx = self.session_context
+        ctx = self.workspace_context
         cache_key: tuple[str, str, str] | None = None
         if ctx is not None:
             cache_key = ctx.make_analysis_cache_key(path, "waveform", "mono@native_sr")
@@ -898,7 +898,7 @@ class SrtEditTab(BaseTab):
         return samples, sr
 
     def _publish_subtitle_asset(self, path: str | Path) -> str | None:
-        ctx = self.session_context
+        ctx = self.workspace_context
         if ctx is None:
             return None
 

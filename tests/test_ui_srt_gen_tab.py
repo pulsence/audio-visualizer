@@ -8,7 +8,7 @@ app = QApplication.instance() or QApplication([])
 import pytest
 from unittest.mock import MagicMock
 
-from audio_visualizer.ui.sessionContext import SessionContext
+from audio_visualizer.ui.workspaceContext import WorkspaceContext
 from audio_visualizer.ui.tabs.srtGenTab import SrtGenTab
 
 
@@ -170,11 +170,11 @@ class TestSrtGenTabValidation:
 
     def test_resolve_output_path_prefers_project_folder(self, tmp_path):
         tab = SrtGenTab()
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         project_folder = tmp_path / "project"
         project_folder.mkdir()
         ctx.set_project_folder(project_folder)
-        tab.set_session_context(ctx)
+        tab.set_workspace_context(ctx)
 
         output_path = tab._resolve_output_path(tmp_path / "input.mp3", "srt")
 

@@ -1,9 +1,9 @@
-"""Session context and cross-tab asset management.
+"""Workspace context and cross-tab asset management.
 
 Provides SessionAsset (a dataclass representing a shared media asset) and
-SessionContext (a QObject that maintains the live asset registry and an
+WorkspaceContext (a QObject that maintains the live asset registry and an
 analysis cache).  Tabs register, query, and update assets through
-SessionContext; signals notify other tabs of changes so they can refresh
+WorkspaceContext; signals notify other tabs of changes so they can refresh
 their views without polling.
 """
 from __future__ import annotations
@@ -132,13 +132,13 @@ class SessionAsset:
 
 
 # ------------------------------------------------------------------
-# SessionContext QObject
+# WorkspaceContext QObject
 # ------------------------------------------------------------------
 
-class SessionContext(QObject):
+class WorkspaceContext(QObject):
     """Central registry of shared assets and cached analysis results.
 
-    Every tab holds a reference to the same ``SessionContext`` instance.
+    Every tab holds a reference to the same ``WorkspaceContext`` instance.
     Assets are registered, queried, and mutated through this object; Qt
     signals propagate changes to any connected listener.
 

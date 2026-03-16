@@ -34,7 +34,7 @@ Collects general application settings: audio file path, video output path, resol
 
 - **Settings class:** `GeneralSettings`
 - **Fields:** `video_width`, `video_height`, `fps`, `codec`, `bitrate`, `crf`, `hardware_accel`, `include_audio`, `audio_file_path`, `video_file_path`
-- Receives `SessionContext` from `AudioVisualizerTab` so file dialogs can honor the session project folder.
+- Receives `WorkspaceContext` from `AudioVisualizerTab` so file dialogs can honor the session project folder.
 
 ### GeneralVisualizerView
 

@@ -174,9 +174,9 @@ class AudioVisualizerTab(BaseTab):
 
         self._connect_live_preview_updates()
 
-    def set_session_context(self, context) -> None:
-        super().set_session_context(context)
-        self.generalSettingsView.set_session_context(context)
+    def set_workspace_context(self, context) -> None:
+        super().set_workspace_context(context)
+        self.generalSettingsView.set_workspace_context(context)
 
     # ------------------------------------------------------------------
     # Layout builders
@@ -1189,7 +1189,7 @@ class AudioVisualizerTab(BaseTab):
         general_settings = self.generalSettingsView.read_view_values()
         visualizer_settings = self.generalVisualizerView.read_view_values()
 
-        from audio_visualizer.ui.sessionContext import SessionAsset
+        from audio_visualizer.ui.workspaceContext import SessionAsset
         asset = SessionAsset(
             id=str(uuid.uuid4()),
             display_name=Path(video_data.file_path).name,

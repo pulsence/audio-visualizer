@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
 
-from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
+from audio_visualizer.ui.workspaceContext import SessionAsset, WorkspaceContext
 from audio_visualizer.ui.tabs.srtEdit.commands import (
     EditSpeakerCommand,
     EditTextCommand,
@@ -30,8 +30,8 @@ from audio_visualizer.ui.tabs.srtEditTab import SrtEditTab
 class TestSrtEditTabSessionIntegration:
     def test_selecting_session_audio_loads_the_asset(self, monkeypatch):
         tab = SrtEditTab()
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
 
         audio_path = Path("/tmp/session-audio.wav")
         ctx.register_asset(
@@ -54,8 +54,8 @@ class TestSrtEditTabSessionIntegration:
 
     def test_waveform_loading_reuses_session_cache(self, monkeypatch):
         tab = SrtEditTab()
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
 
         audio_path = Path("/tmp/cached-audio.wav")
         ctx.register_asset(
@@ -85,8 +85,8 @@ class TestSrtEditTabSessionIntegration:
 
     def test_save_registers_subtitle_asset(self, tmp_path):
         tab = SrtEditTab()
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
 
         output_path = tmp_path / "edited.srt"
         tab._subtitle_path = str(output_path)

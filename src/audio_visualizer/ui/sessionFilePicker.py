@@ -26,14 +26,14 @@ from PySide6.QtWidgets import (
 )
 
 if TYPE_CHECKING:
-    from audio_visualizer.ui.sessionContext import SessionContext
+    from audio_visualizer.ui.workspaceContext import WorkspaceContext
 
 logger = logging.getLogger(__name__)
 
 
 def resolve_browse_directory(
     current_path: str | Path | None = None,
-    session_context: "SessionContext | None" = None,
+    workspace_context: "WorkspaceContext | None" = None,
     selected_asset_path: str | Path | None = None,
 ) -> str:
     """Resolve the best starting directory for a file dialog.
@@ -41,7 +41,7 @@ def resolve_browse_directory(
     Precedence:
     1. Parent of *current_path* if valid
     2. Parent of *selected_asset_path* if valid
-    3. ``SessionContext.project_folder`` if set
+    3. ``WorkspaceContext.project_folder`` if set
     4. User home directory
     """
     for candidate in (current_path, selected_asset_path):
@@ -53,8 +53,8 @@ def resolve_browse_directory(
         if path.parent.is_dir():
             return str(path.parent)
 
-    if session_context is not None and session_context.project_folder is not None:
-        pf = session_context.project_folder
+    if workspace_context is not None and workspace_context.project_folder is not None:
+        pf = workspace_context.project_folder
         if pf.is_dir():
             return str(pf)
 
@@ -63,14 +63,14 @@ def resolve_browse_directory(
 
 def resolve_output_directory(
     explicit_directory: str | Path | None = None,
-    session_context: "SessionContext | None" = None,
+    workspace_context: "WorkspaceContext | None" = None,
     source_path: str | Path | None = None,
 ) -> Path:
     """Resolve the parent directory for auto-derived output paths.
 
     Precedence:
     1. *explicit_directory* when the user chose one
-    2. ``SessionContext.project_folder`` when configured
+    2. ``WorkspaceContext.project_folder`` when configured
     3. Parent of *source_path* when available
     4. User home directory
     """
@@ -78,8 +78,8 @@ def resolve_output_directory(
         directory = Path(str(explicit_directory)).expanduser()
         return directory
 
-    if session_context is not None and session_context.project_folder is not None:
-        project_folder = session_context.project_folder
+    if workspace_context is not None and workspace_context.project_folder is not None:
+        project_folder = workspace_context.project_folder
         if project_folder is not None:
             return project_folder
 
@@ -104,7 +104,7 @@ class SessionFilePickerDialog(QDialog):
     def __init__(
         self,
         parent: QWidget | None,
-        session_context: SessionContext,
+        workspace_context: WorkspaceContext,
         category: str | None,
         title: str = "Select File",
         file_filter: str = "All Files (*)",
@@ -114,7 +114,7 @@ class SessionFilePickerDialog(QDialog):
         self.setMinimumWidth(420)
         self.setMinimumHeight(300)
 
-        self._session_context = session_context
+        self._workspace_context = workspace_context
         self._category = category
         self._file_filter = file_filter
 
@@ -156,7 +156,7 @@ class SessionFilePickerDialog(QDialog):
 
     def _populate_assets(self) -> None:
         """Fill the list with assets from the session context."""
-        assets = self._session_context.list_assets(category=self._category)
+        assets = self._workspace_context.list_assets(category=self._category)
         for asset in assets:
             item = QListWidgetItem(f"{asset.display_name}  ({asset.path.name})")
             item.setData(Qt.ItemDataRole.UserRole, str(asset.path))
@@ -195,7 +195,7 @@ class SessionFilePickerDialog(QDialog):
         if selected_item is not None:
             selected_path = selected_item.data(Qt.ItemDataRole.UserRole)
         start_dir = resolve_browse_directory(
-            session_context=self._session_context,
+            workspace_context=self._workspace_context,
             selected_asset_path=selected_path,
         )
         path, _ = QFileDialog.getOpenFileName(
@@ -212,7 +212,7 @@ class SessionFilePickerDialog(QDialog):
 
 def pick_session_or_file(
     parent: QWidget | None,
-    session_context: SessionContext,
+    workspace_context: WorkspaceContext,
     category: str | None,
     title: str = "Select File",
     file_filter: str = "All Files (*)",
@@ -223,7 +223,7 @@ def pick_session_or_file(
     ----------
     parent : QWidget | None
         Parent widget for the dialog.
-    session_context : SessionContext
+    workspace_context : WorkspaceContext
         The live session context to query for assets.
     category : str | None
         Asset category filter (e.g. ``"audio"``, ``"subtitle"``).
@@ -240,7 +240,7 @@ def pick_session_or_file(
         ``"file"``.  Returns ``("", None)`` if the user canceled.
     """
     dialog = SessionFilePickerDialog(
-        parent, session_context, category, title, file_filter
+        parent, workspace_context, category, title, file_filter
     )
     result = dialog.exec()
 

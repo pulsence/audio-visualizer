@@ -62,7 +62,7 @@ class GeneralSettingsView(View):
     def __init__(self,):
         super().__init__()
         self.last_error = ""
-        self.session_context = None
+        self.workspace_context = None
 
         form_layout = QFormLayout()
 
@@ -136,13 +136,13 @@ class GeneralSettingsView(View):
 
         self.layout.addLayout(form_layout, 1, 0)
 
-    def set_session_context(self, context) -> None:
-        self.session_context = context
+    def set_workspace_context(self, context) -> None:
+        self.workspace_context = context
 
     def _on_audio_file_button_clicked(self):
         initial_dir = resolve_browse_directory(
             self.audio_file_path.text(),
-            self.session_context,
+            self.workspace_context,
         )
         self.audio_file_dialog.setDirectory(initial_dir)
         self.audio_file_dialog.open()
@@ -150,7 +150,7 @@ class GeneralSettingsView(View):
     def _on_video_file_button_clicked(self):
         initial_dir = resolve_browse_directory(
             self.video_file_path.text(),
-            self.session_context,
+            self.workspace_context,
             selected_asset_path=self.audio_file_path.text(),
         )
         self.video_file_dialog.setDirectory(initial_dir)

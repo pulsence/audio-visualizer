@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from audio_visualizer.ui.sessionContext import SessionContext
+from audio_visualizer.ui.workspaceContext import WorkspaceContext
 from audio_visualizer.ui.tabs.baseTab import BaseTab
 
 logger = logging.getLogger(__name__)
@@ -94,15 +94,15 @@ class AssetsTab(BaseTab):
 
     # -- Session context --
 
-    def set_session_context(self, context: SessionContext) -> None:
-        super().set_session_context(context)
+    def set_workspace_context(self, context: WorkspaceContext) -> None:
+        super().set_workspace_context(context)
         context.asset_added.connect(lambda _: self._refresh_table())
         context.asset_updated.connect(lambda _: self._refresh_table())
         context.asset_removed.connect(lambda _: self._refresh_table())
         self._refresh_table()
 
     def _refresh_table(self) -> None:
-        ctx = self.session_context
+        ctx = self.workspace_context
         if ctx is None:
             return
         assets = ctx.list_assets()
@@ -129,7 +129,7 @@ class AssetsTab(BaseTab):
     def _on_import_files(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
 
-        start_dir = resolve_browse_directory(session_context=self.session_context)
+        start_dir = resolve_browse_directory(workspace_context=self.workspace_context)
         files, _ = QFileDialog.getOpenFileNames(
             self, "Import Files", start_dir,
             "Media Files (*.mp3 *.wav *.flac *.mp4 *.mkv *.png *.jpg *.srt *.ass);;All Files (*)"
@@ -145,7 +145,7 @@ class AssetsTab(BaseTab):
     def _on_import_folder(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
 
-        start_dir = resolve_browse_directory(session_context=self.session_context)
+        start_dir = resolve_browse_directory(workspace_context=self.workspace_context)
         folder = QFileDialog.getExistingDirectory(self, "Import Folder", start_dir)
         if not folder:
             return
@@ -156,7 +156,7 @@ class AssetsTab(BaseTab):
         self._update_imported_label()
 
     def _import_single_file(self, path: Path):
-        ctx = self.session_context
+        ctx = self.workspace_context
         if ctx is None:
             return None
         asset = ctx.import_asset_file(path, source_tab="assets")
@@ -165,7 +165,7 @@ class AssetsTab(BaseTab):
         return asset
 
     def _scan_and_import_folder(self, folder: Path) -> None:
-        ctx = self.session_context
+        ctx = self.workspace_context
         if ctx is None:
             return
         ctx.import_asset_folder(folder, source_tab="assets")

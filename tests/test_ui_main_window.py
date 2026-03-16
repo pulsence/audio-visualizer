@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 app = QApplication.instance() or QApplication([])
 
 from audio_visualizer.ui.mainWindow import MainWindow
-from audio_visualizer.ui.sessionContext import SessionContext
+from audio_visualizer.ui.workspaceContext import WorkspaceContext
 from audio_visualizer.ui.tabs.baseTab import BaseTab
 
 
@@ -64,13 +64,13 @@ class TestMainWindowTabs:
         lazy_ids = set(main_window._lazy_placeholders.keys())
         assert expected_lazy <= (instantiated_ids | lazy_ids)
 
-    def test_session_context_injected(self, main_window):
-        """All instantiated tabs have session_context set."""
+    def test_workspace_context_injected(self, main_window):
+        """All instantiated tabs have workspace_context set."""
         for tab in main_window._tabs:
-            assert tab.session_context is not None, (
-                f"Tab '{tab.tab_id}' has no session_context"
+            assert tab.workspace_context is not None, (
+                f"Tab '{tab.tab_id}' has no workspace_context"
             )
-            assert tab.session_context is main_window.session_context
+            assert tab.workspace_context is main_window.workspace_context
 
 
 class TestLazyTabInstantiation:
@@ -88,7 +88,7 @@ class TestLazyTabInstantiation:
 
         # Should now be in _tabs and _tab_map
         assert "srt_gen" in main_window._tab_map
-        assert tab.session_context is main_window.session_context
+        assert tab.workspace_context is main_window.workspace_context
 
     def test_ensure_tab_instantiated_returns_existing(self, main_window):
         """_ensure_tab_instantiated returns an already-instantiated tab."""

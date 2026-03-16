@@ -6,7 +6,7 @@ PySide6 application shell and shared UI infrastructure.
 
 `MainWindow` is now a thin six-tab shell rather than the old single-screen visualizer window.
 
-- Owns the shared `SessionContext`, the render `QThreadPool`, a background pool for update checks, the navigation sidebar, and the global `JobStatusWidget`.
+- Owns the shared `WorkspaceContext`, the render `QThreadPool`, a background pool for update checks, the navigation sidebar, and the global `JobStatusWidget`.
 - Instantiates `AudioVisualizerTab` eagerly, then registers lazy placeholders for `SRT Gen`, `SRT Edit`, `Caption Animate`, `Render Composition`, and `Assets`.
 - Loads the saved settings file once during startup so app theme can be applied before lazy tab creation.
 - Persists a versioned settings schema with top-level `app`, `ui`, `tabs`, and `session` sections.
@@ -17,13 +17,13 @@ PySide6 application shell and shared UI infrastructure.
 - `_ensure_tab_instantiated()` swaps a placeholder for the real tab on first activation and replays pending tab settings.
 - `try_start_job()` / `finish_job()` enforce the single shared render/transcription slot.
 - `show_job_*()` forwards lifecycle state into `JobStatusWidget`.
-- `_open_settings()` shows `SettingsDialog`, applies theme changes, updates `SessionContext.project_folder`, and immediately saves the app state.
+- `_open_settings()` shows `SettingsDialog`, applies theme changes, updates `WorkspaceContext.project_folder`, and immediately saves the app state.
 
 ### Theme and settings
 
 - Theme mode lives in `settings["app"]["theme_mode"]` with allowed values `off`, `on`, and `auto`.
 - `auto` resolves against Qt color-scheme hints when available, but the stored mode remains `auto`.
-- Session state is serialized through `SessionContext.to_dict()`, so project folder and imported assets travel with autosave/project files.
+- Session state is serialized through `WorkspaceContext.to_dict()`, so project folder and imported assets travel with autosave/project files.
 
 ## JobStatusWidget
 
@@ -34,9 +34,9 @@ Persistent bottom-row status widget shared across tabs.
 - Completion actions (`Preview`, `Open Output`, `Open Folder`) stay available during the 5-second completed state when an output path exists.
 - A widget-owned `QTimer` handles the timed auto-reset and is cancelled/restarted safely when the user clears the row or a new job begins.
 
-## SessionContext
+## WorkspaceContext
 
-Cross-tab session registry for assets, roles, analysis cache, and project-level defaults.
+Cross-tab workspace registry for assets, roles, analysis cache, and project-level defaults.
 
 - Stores `project_folder: Path | None` plus a `project_folder_changed` signal.
 - Tracks generated and imported `SessionAsset` records.
@@ -50,11 +50,11 @@ Shared browse-path resolver and session-aware chooser dialog.
 - `resolve_browse_directory()` centralizes default-directory precedence:
   1. Current path (directory or parent of file path)
   2. Selected session asset parent
-  3. `SessionContext.project_folder`
+  3. `WorkspaceContext.project_folder`
   4. User home directory
 - `resolve_output_directory()` centralizes auto-derived output parents:
   1. Explicit output directory
-  2. `SessionContext.project_folder`
+  2. `WorkspaceContext.project_folder`
   3. Source file parent
   4. User home directory
 - `SessionFilePickerDialog` lets tabs choose from session assets first, then fall back to the filesystem.

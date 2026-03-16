@@ -9,7 +9,7 @@ app = QApplication.instance() or QApplication([])
 import pytest
 
 from audio_visualizer.ui.tabs.baseTab import BaseTab
-from audio_visualizer.ui.sessionContext import SessionContext
+from audio_visualizer.ui.workspaceContext import WorkspaceContext
 
 
 # ------------------------------------------------------------------
@@ -79,14 +79,14 @@ class TestBaseTabSettings:
         assert restored["muted"] is True
 
 
-class TestBaseTabSessionContext:
-    def test_set_session_context(self):
+class TestBaseTabWorkspaceContext:
+    def test_set_workspace_context(self):
         tab = DummyTab()
-        assert tab.session_context is None
+        assert tab.workspace_context is None
 
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
-        assert tab.session_context is ctx
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
+        assert tab.workspace_context is ctx
 
 
 class TestBaseTabUndo:

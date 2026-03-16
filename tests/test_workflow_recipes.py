@@ -25,7 +25,7 @@ from audio_visualizer.ui.workflowRecipes import (
     save_recipe,
     validate_recipe,
 )
-from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
+from audio_visualizer.ui.workspaceContext import SessionAsset, WorkspaceContext
 
 
 # ------------------------------------------------------------------
@@ -367,7 +367,7 @@ class TestCreateRecipeFromSession:
             _make_mock_tab("caption_animate"),
             _make_mock_tab("render_composition"),
         ]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
 
         recipe = create_recipe_from_session(tabs, ctx, name="Test")
         assert recipe.name == "Test"
@@ -386,7 +386,7 @@ class TestCreateRecipeFromSession:
 
     def test_asset_roles_from_session(self):
         tabs = [_make_mock_tab("audio_visualizer")]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset(
             "a1", path=Path("/tmp/audio.wav"),
             category="audio", role="primary_audio",
@@ -414,7 +414,7 @@ class TestApplyRecipe:
             _make_mock_tab("audio_visualizer"),
             _make_mock_tab("srt_gen"),
         ]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
 
         recipe = _minimal_recipe(
             tabs={
@@ -431,7 +431,7 @@ class TestApplyRecipe:
     def test_skips_missing_tabs(self):
         """Recipe references a tab_id not present in the tab list."""
         tabs = [_make_mock_tab("audio_visualizer")]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
 
         recipe = _minimal_recipe(
             tabs={
@@ -447,7 +447,7 @@ class TestApplyRecipe:
     def test_asset_role_binding_from_session(self):
         """Recipe binds asset roles through session context."""
         tabs = [_make_mock_tab("audio_visualizer")]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset(
             "a1", path=Path("/tmp/audio.wav"), category="audio",
         ))
@@ -471,7 +471,7 @@ class TestApplyRecipe:
     def test_role_already_bound_in_session(self):
         """Recipe role already bound — no duplicate assignment."""
         tabs = [_make_mock_tab("audio_visualizer")]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset(
             "a1", path=Path("/tmp/audio.wav"),
             category="audio", role="primary_audio",
@@ -494,7 +494,7 @@ class TestApplyRecipe:
     def test_missing_binding_left_unbound(self):
         """Recipe references a path not in session — role stays unbound."""
         tabs = [_make_mock_tab("audio_visualizer")]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
 
         recipe = _minimal_recipe(
             asset_roles={
@@ -515,7 +515,7 @@ class TestApplyRecipe:
     def test_empty_tabs_dict(self):
         """Recipe with empty tabs dict still applies without error."""
         tabs = [_make_mock_tab("audio_visualizer")]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         recipe = _minimal_recipe(tabs={})
 
         apply_recipe(recipe, tabs, ctx)
@@ -537,7 +537,7 @@ class TestRecipeFullRoundTrip:
             _make_mock_tab("caption_animate", {"preset": "default"}),
             _make_mock_tab("render_composition"),
         ]
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         ctx.register_asset(_make_asset(
             "audio1", path=Path("/tmp/song.wav"),
             category="audio", role="primary_audio",
@@ -566,7 +566,7 @@ class TestRecipeFullRoundTrip:
             _make_mock_tab("caption_animate"),
             _make_mock_tab("render_composition"),
         ]
-        apply_ctx = SessionContext()
+        apply_ctx = WorkspaceContext()
         # Register the same asset so role binding can work
         apply_ctx.register_asset(_make_asset(
             "audio1", path=Path("/tmp/song.wav"), category="audio",

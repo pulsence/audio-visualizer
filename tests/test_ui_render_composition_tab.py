@@ -9,7 +9,7 @@ app = QApplication.instance() or QApplication([])
 import pytest
 from unittest.mock import MagicMock
 
-from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
+from audio_visualizer.ui.workspaceContext import SessionAsset, WorkspaceContext
 from audio_visualizer.ui.tabs.renderCompositionTab import RenderCompositionTab
 from audio_visualizer.ui.tabs.renderComposition.model import (
     CompositionAudioLayer,
@@ -553,10 +553,10 @@ class TestDirectFileSourceHandling:
     def test_load_layer_properties_session_asset(self):
         """When a layer has an asset_id matching a combo entry, it selects correctly."""
         tab = RenderCompositionTab()
-        from audio_visualizer.ui.sessionContext import SessionContext
+        from audio_visualizer.ui.workspaceContext import WorkspaceContext
 
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
 
         ctx.register_asset(SessionAsset(
             id="vid-abc",
@@ -589,10 +589,10 @@ class TestDirectFileSourceHandling:
     def test_refresh_asset_combos_preserves_direct_files(self):
         """Direct-file entries survive asset combo refresh."""
         tab = RenderCompositionTab()
-        from audio_visualizer.ui.sessionContext import SessionContext
+        from audio_visualizer.ui.workspaceContext import WorkspaceContext
 
-        ctx = SessionContext()
-        tab.set_session_context(ctx)
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
 
         # Add a layer with a direct file path
         layer = CompositionLayer(
@@ -677,11 +677,11 @@ class TestDirectFileSourceHandling:
 
         main_window = _FakeMainWindow()
         tab = RenderCompositionTab(main_window)
-        ctx = SessionContext()
+        ctx = WorkspaceContext()
         project_folder = tmp_path / "project"
         project_folder.mkdir()
         ctx.set_project_folder(project_folder)
-        tab.set_session_context(ctx)
+        tab.set_workspace_context(ctx)
         tab._model.add_layer(CompositionLayer(
             display_name="BG",
             asset_path=tmp_path / "bg.mp4",
