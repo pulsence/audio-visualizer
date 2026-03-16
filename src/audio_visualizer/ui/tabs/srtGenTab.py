@@ -693,8 +693,11 @@ class SrtGenTab(BaseTab):
         logger.info("Applied preset '%s'", name)
 
     def _on_import_config(self) -> None:
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+
+        start_dir = resolve_browse_directory(session_context=self.session_context)
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import config file", "", "JSON files (*.json);;All files (*)",
+            self, "Import config file", start_dir, "JSON files (*.json);;All files (*)",
         )
         if not path:
             return
@@ -894,22 +897,26 @@ class SrtGenTab(BaseTab):
 
     def _resolve_output_path(self, input_path: Path, fmt: str) -> Path:
         """Determine the output file path for a given input."""
-        output_dir = self._output_dir_edit.text().strip()
-        if output_dir:
-            parent = Path(output_dir)
-        else:
-            parent = input_path.parent
+        from audio_visualizer.ui.sessionFilePicker import resolve_output_directory
+
+        parent = resolve_output_directory(
+            explicit_directory=self._output_dir_edit.text().strip(),
+            session_context=self.session_context,
+            source_path=input_path,
+        )
         return parent / f"{input_path.stem}.{fmt}"
 
     def _resolve_side_output(self, input_path: Path, ext: str, enabled: bool) -> Optional[Path]:
         """Return a side-output path if the checkbox is enabled, else None."""
         if not enabled:
             return None
-        output_dir = self._output_dir_edit.text().strip()
-        if output_dir:
-            parent = Path(output_dir)
-        else:
-            parent = input_path.parent
+        from audio_visualizer.ui.sessionFilePicker import resolve_output_directory
+
+        parent = resolve_output_directory(
+            explicit_directory=self._output_dir_edit.text().strip(),
+            session_context=self.session_context,
+            source_path=input_path,
+        )
         return parent / f"{input_path.stem}{ext}"
 
     # ==================================================================

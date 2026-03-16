@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
         self._global_busy = False
         self._busy_owner_tab_id: str | None = None
         self._current_theme_mode = "off"
+        self._startup_settings_data: dict | None = None
 
         # Tab registry
         self._tabs: list[BaseTab] = []
@@ -90,6 +91,7 @@ class MainWindow(QMainWindow):
         self._pending_tab_settings: dict[str, dict] = {}  # unapplied settings
 
         # Build shell layout
+        self._prime_startup_settings()
         self._build_shell()
         self._setup_menu()
 
@@ -104,6 +106,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Shell layout
     # ------------------------------------------------------------------
+
+    def _prime_startup_settings(self) -> None:
+        """Load persisted settings once so theme can apply before tab creation."""
+        self._startup_settings_data = load_settings(self._default_settings_path())
+        if self._startup_settings_data is None:
+            return
+        app_data = self._startup_settings_data.get("app", {})
+        self._apply_theme(app_data.get("theme_mode", "off"))
 
     def _build_shell(self) -> None:
         """Build the central QStackedWidget + NavigationSidebar + JobStatusWidget."""
@@ -688,16 +698,16 @@ class MainWindow(QMainWindow):
         """Apply the theme based on mode: 'off', 'on', 'auto'."""
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QPalette, QColor
-        from PySide6.QtCore import Qt
 
+        if mode not in {"off", "on", "auto"}:
+            mode = "off"
         self._current_theme_mode = mode
 
         app = QApplication.instance()
         if app is None:
             return
 
-        if mode == "on":
-            # Dark theme
+        def build_dark_palette() -> QPalette:
             palette = QPalette()
             palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
             palette.setColor(QPalette.ColorRole.WindowText, QColor(255, 255, 255))
@@ -714,21 +724,22 @@ class MainWindow(QMainWindow):
             palette.setColor(QPalette.ColorRole.HighlightedText, QColor(35, 35, 35))
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(128, 128, 128))
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(128, 128, 128))
-            app.setPalette(palette)
-        elif mode == "auto":
-            # Try system theme detection, fall back to default
+            return palette
+
+        prefers_dark = False
+        if mode == "auto":
             try:
-                scheme = app.styleHints().colorScheme()
-                if hasattr(scheme, 'name') and 'dark' in str(scheme).lower():
-                    self._apply_theme("on")
-                    return
+                prefers_dark = "dark" in str(app.styleHints().colorScheme()).lower()
             except (AttributeError, RuntimeError):
-                pass
-            # Fall back to system default
-            app.setPalette(app.style().standardPalette())
-        else:
-            # Light theme (off) - restore default
-            app.setPalette(app.style().standardPalette())
+                prefers_dark = False
+        elif mode == "on":
+            prefers_dark = True
+
+        if prefers_dark:
+            app.setPalette(build_dark_palette())
+            return
+
+        app.setPalette(app.style().standardPalette())
 
     # ------------------------------------------------------------------
     # Settings persistence (versioned schema)
@@ -823,6 +834,11 @@ class MainWindow(QMainWindow):
         return True
 
     def _load_last_settings_if_present(self) -> None:
+        if self._startup_settings_data is not None:
+            self._apply_settings(self._startup_settings_data)
+            self._startup_settings_data = None
+            return
+
         path = self._default_settings_path()
         if path.exists():
             self._load_settings_from_path(path)

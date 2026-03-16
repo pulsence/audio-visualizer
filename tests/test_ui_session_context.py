@@ -184,10 +184,12 @@ class TestSessionContextBulk:
         ctx.register_asset(_make_asset("a1"))
         ctx.register_asset(_make_asset("a2", path=Path("/tmp/other.wav")))
         ctx.store_analysis(("a1", "rms", "default"), "data")
+        ctx.set_project_folder(Path("/tmp/project"))
         ctx.clear()
         assert ctx.get_asset("a1") is None
         assert ctx.get_asset("a2") is None
         assert ctx.get_analysis(("a1", "rms", "default")) is None
+        assert ctx.project_folder is None
 
 
 class TestSessionContextSerialization:
@@ -313,3 +315,59 @@ class TestSessionContextProjectFolder:
         ctx.set_project_folder(Path("/tmp"))
         ctx.from_dict({"assets": [], "roles": {}})
         assert ctx.project_folder is None
+
+
+class TestSessionContextImports:
+    def test_import_asset_file_registers_metadata(self, tmp_path, monkeypatch):
+        ctx = SessionContext()
+        asset_path = tmp_path / "clip.mp4"
+        asset_path.touch()
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.sessionContext.probe_media",
+            lambda _path: {
+                "width": 1920,
+                "height": 1080,
+                "fps": 30.0,
+                "duration_ms": 5000,
+                "has_alpha": False,
+                "has_audio": True,
+                "codec_name": "h264",
+                "pix_fmt": "yuv420p",
+            },
+        )
+
+        asset = ctx.import_asset_file(asset_path)
+
+        assert asset is not None
+        assert asset.category == "video"
+        assert asset.width == 1920
+        assert asset.metadata["codec_name"] == "h264"
+        assert ctx.find_asset_by_path(asset_path) is asset
+
+    def test_import_asset_file_deduplicates(self, tmp_path):
+        ctx = SessionContext()
+        asset_path = tmp_path / "clip.mp3"
+        asset_path.touch()
+
+        first = ctx.import_asset_file(asset_path)
+        second = ctx.import_asset_file(asset_path)
+
+        assert first is second
+        assert len(ctx.list_assets()) == 1
+
+    def test_import_asset_folder_scans_supported_files(self, tmp_path, monkeypatch):
+        ctx = SessionContext()
+        (tmp_path / "a.mp3").touch()
+        (tmp_path / "b.srt").touch()
+        (tmp_path / "ignored.txt").touch()
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.sessionContext.probe_media",
+            lambda _path: None,
+        )
+
+        imported = ctx.import_asset_folder(tmp_path)
+
+        assert len(imported) == 2
+        assert {asset.category for asset in imported} == {"audio", "subtitle"}

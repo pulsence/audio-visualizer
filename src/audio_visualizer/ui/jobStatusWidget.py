@@ -133,6 +133,7 @@ class JobStatusWidget(QWidget):
         self._progress_bar.setValue(0)
         self._status_label.setText("")
         self._set_action_buttons_visible(False)
+        self._rewire_cancel_button(self._on_cancel_clicked)
         self._cancel_button.setEnabled(True)
         self._cancel_button.setText("Cancel")
         self.setVisible(True)
@@ -193,6 +194,7 @@ class JobStatusWidget(QWidget):
         self._cancel_button.setEnabled(True)
         self._rewire_cancel_button(self.reset)
         self._auto_reset_timer.start()
+        self.setVisible(True)
         logger.debug("Job completed: %s", message)
 
     def show_failed(self, error: str) -> None:
@@ -209,10 +211,11 @@ class JobStatusWidget(QWidget):
         self._progress_bar.setRange(0, 100)
         self._status_label.setText(f"Error: {error}")
         self._set_action_buttons_visible(False)
-        self._cancel_button.setText("Dismiss")
+        self._cancel_button.setText("Finished")
         self._cancel_button.setEnabled(True)
         self._rewire_cancel_button(self.reset)
         self._auto_reset_timer.start()
+        self.setVisible(True)
         logger.warning("Job failed: %s", error)
 
     def show_canceled(self, message: str) -> None:
@@ -229,10 +232,11 @@ class JobStatusWidget(QWidget):
         self._progress_bar.setRange(0, 100)
         self._status_label.setText(message)
         self._set_action_buttons_visible(False)
-        self._cancel_button.setText("Dismiss")
+        self._cancel_button.setText("Finished")
         self._cancel_button.setEnabled(True)
         self._rewire_cancel_button(self.reset)
         self._auto_reset_timer.start()
+        self.setVisible(True)
         logger.debug("Job canceled: %s", message)
 
     def reset(self) -> None:

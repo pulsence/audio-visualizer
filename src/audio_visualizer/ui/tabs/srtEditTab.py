@@ -718,7 +718,9 @@ class SrtEditTab(BaseTab):
         else:
             from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
             start_dir = resolve_browse_directory(
-                session_context=self.session_context
+                current_path=self._subtitle_path,
+                session_context=self.session_context,
+                selected_asset_path=self._subtitle_combo.currentData(),
             )
             path, _ = QFileDialog.getSaveFileName(
                 self, "Save SRT File", start_dir, "SRT Files (*.srt);;All Files (*)"
@@ -741,7 +743,9 @@ class SrtEditTab(BaseTab):
     def _on_export(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
-            session_context=self.session_context
+            current_path=self._subtitle_path,
+            session_context=self.session_context,
+            selected_asset_path=self._subtitle_combo.currentData(),
         )
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -860,9 +864,12 @@ class SrtEditTab(BaseTab):
         title: str,
         file_filter: str,
     ) -> Path | None:
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+
         ctx = self.session_context
         if ctx is None:
-            path, _ = QFileDialog.getOpenFileName(self, title, "", file_filter)
+            start_dir = resolve_browse_directory()
+            path, _ = QFileDialog.getOpenFileName(self, title, start_dir, file_filter)
             return Path(path) if path else None
 
         _source, path = pick_session_or_file(

@@ -81,6 +81,7 @@ class TestAudioVisualizerTabSessionContext:
         ctx = SessionContext()
         tab.set_session_context(ctx)
         assert tab.session_context is ctx
+        assert tab.generalSettingsView.session_context is ctx
 
 
 class TestAudioVisualizerTabGlobalBusy:

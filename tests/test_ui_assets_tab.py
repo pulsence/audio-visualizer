@@ -84,10 +84,14 @@ class TestAssetsTabImport:
 
 class TestAssetsTabSettings:
     def test_collect_settings(self, tab):
-        tab._imported_roots = ["/some/path"]
+        tab._imported_sources = ["/some/path"]
         s = tab.collect_settings()
-        assert s["imported_roots"] == ["/some/path"]
+        assert s["imported_sources"] == ["/some/path"]
 
     def test_apply_settings(self, tab):
+        tab.apply_settings({"imported_sources": ["/a", "/b"]})
+        assert tab._imported_sources == ["/a", "/b"]
+
+    def test_apply_settings_accepts_legacy_imported_roots_key(self, tab):
         tab.apply_settings({"imported_roots": ["/a", "/b"]})
-        assert tab._imported_roots == ["/a", "/b"]
+        assert tab._imported_sources == ["/a", "/b"]

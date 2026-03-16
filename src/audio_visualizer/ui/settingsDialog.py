@@ -104,8 +104,10 @@ class SettingsDialog(QDialog):
 
     def _browse_project_folder(self) -> None:
         from PySide6.QtWidgets import QFileDialog
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
 
-        path = QFileDialog.getExistingDirectory(self, "Select Project Folder")
+        start_dir = resolve_browse_directory(self._project_folder_edit.text().strip())
+        path = QFileDialog.getExistingDirectory(self, "Select Project Folder", start_dir)
         if path:
             self._project_folder_edit.setText(path)
 

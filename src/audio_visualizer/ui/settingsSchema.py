@@ -59,6 +59,7 @@ def create_default_schema() -> dict:
         "session": {
             "assets": [],
             "roles": {},
+            "project_folder": None,
         },
     }
 
@@ -119,6 +120,7 @@ def _ensure_complete(data: dict) -> dict:
     data.setdefault("app", defaults["app"])
     data.setdefault("ui", defaults["ui"])
     data.setdefault("session", defaults["session"])
+    data["session"].setdefault("project_folder", defaults["session"]["project_folder"])
 
     tabs = data.setdefault("tabs", {})
     for key in _TAB_KEYS:

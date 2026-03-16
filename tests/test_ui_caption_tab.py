@@ -6,6 +6,7 @@ app = QApplication.instance() or QApplication([])
 
 import pytest
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from audio_visualizer.ui.tabs.captionAnimateTab import CaptionAnimateTab
 from audio_visualizer.ui.tabs.baseTab import BaseTab
@@ -217,6 +218,40 @@ class TestCaptionAnimateTabValidation:
         assert "audio" in msg.lower()
 
 
+class _FakeSignal:
+    def connect(self, _slot):
+        return None
+
+
+class _FakeCaptionWorker:
+    def __init__(self, *, spec, emitter):
+        self.spec = spec
+        self.emitter = emitter
+        self.signals = MagicMock(
+            progress=_FakeSignal(),
+            stage=_FakeSignal(),
+            log=_FakeSignal(),
+            completed=_FakeSignal(),
+            failed=_FakeSignal(),
+            canceled=_FakeSignal(),
+        )
+
+    def cancel(self):
+        return None
+
+
+class _FakeCaptionMainWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.render_thread_pool = MagicMock()
+
+    def try_start_job(self, _owner_tab_id):
+        return True
+
+    def show_job_status(self, *_args):
+        return None
+
+
 class TestCaptionAnimateTabSessionContext:
     def test_set_session_context(self):
         tab = CaptionAnimateTab()
@@ -257,6 +292,34 @@ class TestCaptionAnimateTabSessionContext:
 
         assert tab._session_audio_combo.count() == 2
         assert tab._session_audio_combo.itemText(1) == "music.mp3"
+
+    def test_render_defaults_to_project_folder_when_output_dir_blank(self, tmp_path, monkeypatch):
+        main_window = _FakeCaptionMainWindow()
+        tab = CaptionAnimateTab(main_window)
+        ctx = SessionContext()
+        project_folder = tmp_path / "project"
+        project_folder.mkdir()
+        ctx.set_project_folder(project_folder)
+        tab.set_session_context(ctx)
+        tab._subtitle_edit.setText(str(tmp_path / "example.srt"))
+
+        captured = []
+
+        class _CapturingWorker(_FakeCaptionWorker):
+            def __init__(self, *, spec, emitter):
+                super().__init__(spec=spec, emitter=emitter)
+                captured.append(spec)
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.tabs.captionAnimateTab.CaptionRenderWorker",
+            _CapturingWorker,
+        )
+
+        tab._start_render()
+
+        assert len(captured) == 1
+        assert captured[0].output_path.parent == project_folder
+        assert captured[0].delivery_output_path.parent == project_folder
 
 
 class TestCaptionAnimateTabGlobalBusy:

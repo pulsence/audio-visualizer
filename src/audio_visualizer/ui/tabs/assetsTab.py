@@ -1,12 +1,7 @@
-"""Assets tab — session asset browser and external asset intake.
-
-Shows all registered session assets in a live table and allows
-importing external files/folders.
-"""
+"""Assets tab — session asset browser and external asset intake."""
 from __future__ import annotations
 
 import logging
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -24,29 +19,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
+from audio_visualizer.ui.sessionContext import SessionContext
 from audio_visualizer.ui.tabs.baseTab import BaseTab
 
 logger = logging.getLogger(__name__)
-
-_SUPPORTED_EXTENSIONS = {
-    ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma",
-    ".mp4", ".mkv", ".webm", ".avi", ".mov", ".mxf",
-    ".png", ".jpg", ".jpeg", ".bmp", ".tiff",
-    ".srt", ".ass", ".vtt",
-    ".json",
-}
-
-_EXTENSION_CATEGORIES = {
-    ".mp3": "audio", ".wav": "audio", ".flac": "audio",
-    ".ogg": "audio", ".m4a": "audio", ".aac": "audio", ".wma": "audio",
-    ".mp4": "video", ".mkv": "video", ".webm": "video",
-    ".avi": "video", ".mov": "video", ".mxf": "video",
-    ".png": "image", ".jpg": "image", ".jpeg": "image",
-    ".bmp": "image", ".tiff": "image",
-    ".srt": "subtitle", ".ass": "subtitle", ".vtt": "subtitle",
-    ".json": "json_bundle",
-}
 
 _ASSET_COLUMNS = [
     "Name", "Category", "Role", "Source", "Path",
@@ -67,7 +43,7 @@ class AssetsTab(BaseTab):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._imported_roots: list[str] = []
+        self._imported_sources: list[str] = []
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -108,7 +84,7 @@ class AssetsTab(BaseTab):
         btn_row.addStretch()
         import_layout.addLayout(btn_row)
 
-        self._imported_roots_label = QLabel("No external folders loaded.")
+        self._imported_roots_label = QLabel("No external files or folders loaded.")
         import_layout.addWidget(self._imported_roots_label)
 
         import_group.setLayout(import_layout)
@@ -151,55 +127,54 @@ class AssetsTab(BaseTab):
     # -- Import handlers --
 
     def _on_import_files(self) -> None:
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+
+        start_dir = resolve_browse_directory(session_context=self.session_context)
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Import Files", "",
+            self, "Import Files", start_dir,
             "Media Files (*.mp3 *.wav *.flac *.mp4 *.mkv *.png *.jpg *.srt *.ass);;All Files (*)"
         )
         if not files:
             return
         for file_path in files:
-            self._import_single_file(Path(file_path))
+            imported = self._import_single_file(Path(file_path))
+            if imported is not None and str(imported.path) not in self._imported_sources:
+                self._imported_sources.append(str(imported.path))
+        self._update_imported_label()
 
     def _on_import_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Import Folder")
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+
+        start_dir = resolve_browse_directory(session_context=self.session_context)
+        folder = QFileDialog.getExistingDirectory(self, "Import Folder", start_dir)
         if not folder:
             return
         folder_path = Path(folder)
-        if str(folder_path) not in self._imported_roots:
-            self._imported_roots.append(str(folder_path))
+        if str(folder_path) not in self._imported_sources:
+            self._imported_sources.append(str(folder_path))
         self._scan_and_import_folder(folder_path)
         self._update_imported_label()
 
-    def _import_single_file(self, path: Path) -> None:
+    def _import_single_file(self, path: Path):
+        ctx = self.session_context
+        if ctx is None:
+            return None
+        asset = ctx.import_asset_file(path, source_tab="assets")
+        if asset is None:
+            logger.debug("Skipped unsupported asset import: %s", path)
+        return asset
+
+    def _scan_and_import_folder(self, folder: Path) -> None:
         ctx = self.session_context
         if ctx is None:
             return
-        # Deduplicate by path
-        if ctx.find_asset_by_path(path) is not None:
-            return
-        category = _EXTENSION_CATEGORIES.get(path.suffix.lower(), "config")
-        asset = SessionAsset(
-            id=str(uuid.uuid4()),
-            display_name=path.name,
-            path=path,
-            category=category,
-            source_tab="assets",
-        )
-        try:
-            ctx.register_asset(asset)
-        except ValueError:
-            logger.debug("Asset already registered: %s", path)
-
-    def _scan_and_import_folder(self, folder: Path) -> None:
-        for item in sorted(folder.rglob("*")):
-            if item.is_file() and item.suffix.lower() in _SUPPORTED_EXTENSIONS:
-                self._import_single_file(item)
+        ctx.import_asset_folder(folder, source_tab="assets")
 
     def _update_imported_label(self) -> None:
-        if self._imported_roots:
-            text = "Imported from: " + ", ".join(self._imported_roots)
+        if self._imported_sources:
+            text = "Imported sources: " + ", ".join(self._imported_sources)
         else:
-            text = "No external folders loaded."
+            text = "No external files or folders loaded."
         self._imported_roots_label.setText(text)
 
     # -- BaseTab contract --
@@ -209,9 +184,12 @@ class AssetsTab(BaseTab):
 
     def collect_settings(self) -> dict[str, Any]:
         return {
-            "imported_roots": self._imported_roots,
+            "imported_sources": self._imported_sources,
         }
 
     def apply_settings(self, data: dict[str, Any]) -> None:
-        self._imported_roots = data.get("imported_roots", [])
+        self._imported_sources = data.get(
+            "imported_sources",
+            data.get("imported_roots", []),
+        )
         self._update_imported_label()

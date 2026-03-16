@@ -1199,9 +1199,12 @@ class RenderCompositionTab(BaseTab):
         title: str,
         file_filter: str,
     ) -> Path | None:
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+
         ctx = self.session_context
         if ctx is None:
-            path, _ = QFileDialog.getOpenFileName(self, title, "", file_filter)
+            start_dir = resolve_browse_directory()
+            path, _ = QFileDialog.getOpenFileName(self, title, start_dir, file_filter)
             return Path(path) if path else None
 
         _source, path = pick_session_or_file(
@@ -1355,7 +1358,12 @@ class RenderCompositionTab(BaseTab):
 
         output_path = self._output_path_edit.text().strip()
         if not output_path:
-            output_path = "composition_output.mp4"
+            from audio_visualizer.ui.sessionFilePicker import resolve_output_directory
+
+            default_parent = resolve_output_directory(
+                session_context=self.session_context,
+            )
+            output_path = str(default_parent / "composition_output.mp4")
         elif not Path(output_path).suffix:
             output_path = output_path + ".mp4"
 

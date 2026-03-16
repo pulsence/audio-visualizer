@@ -56,6 +56,8 @@ class TestCreateDefaultSchema:
         # Session has expected structure
         assert "assets" in schema["session"]
         assert "roles" in schema["session"]
+        assert "project_folder" in schema["session"]
+        assert schema["session"]["project_folder"] is None
 
 
 # ------------------------------------------------------------------

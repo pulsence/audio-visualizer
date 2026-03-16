@@ -955,15 +955,35 @@ class CaptionAnimateTab(BaseTab):
     # File browsing
     # ------------------------------------------------------------------
 
+    def _session_asset_path(self, combo: QComboBox) -> Path | None:
+        """Return the currently selected session asset path for *combo*."""
+        ctx = self.session_context
+        asset_id = combo.currentData()
+        if ctx is None or not asset_id:
+            return None
+        asset = ctx.get_asset(asset_id)
+        return asset.path if asset is not None else None
+
     def _browse_subtitle(self) -> None:
-        path = self._pick_session_or_file("subtitle", "Select Subtitle File", _SUBTITLE_FILTERS)
+        path = self._pick_session_or_file(
+            "subtitle",
+            "Select Subtitle File",
+            _SUBTITLE_FILTERS,
+            current_path=self._subtitle_edit.text(),
+            selected_asset_path=self._session_asset_path(self._session_subtitle_combo),
+        )
         if path is not None:
             self._subtitle_edit.setText(str(path))
 
     def _browse_output_dir(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
-            self._output_dir_edit.text(), self.session_context
+            self._output_dir_edit.text(),
+            self.session_context,
+            selected_asset_path=(
+                self._subtitle_edit.text().strip()
+                or self._session_asset_path(self._session_subtitle_combo)
+            ),
         )
         path = QFileDialog.getExistingDirectory(self, "Select Output Directory", start_dir)
         if path:
@@ -982,7 +1002,13 @@ class CaptionAnimateTab(BaseTab):
             self._font_file_edit.setText(path)
 
     def _browse_audio_file(self) -> None:
-        path = self._pick_session_or_file("audio", "Select Audio File", _AUDIO_FILTERS)
+        path = self._pick_session_or_file(
+            "audio",
+            "Select Audio File",
+            _AUDIO_FILTERS,
+            current_path=self._audio_file_edit.text(),
+            selected_asset_path=self._session_asset_path(self._session_audio_combo),
+        )
         if path is not None:
             self._audio_file_edit.setText(str(path))
 
@@ -991,10 +1017,18 @@ class CaptionAnimateTab(BaseTab):
         category: str | None,
         title: str,
         file_filter: str,
+        current_path: str | Path | None = None,
+        selected_asset_path: str | Path | None = None,
     ) -> Path | None:
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+
         ctx = self.session_context
         if ctx is None:
-            path, _ = QFileDialog.getOpenFileName(self, title, "", file_filter)
+            start_dir = resolve_browse_directory(
+                current_path=current_path,
+                selected_asset_path=selected_asset_path,
+            )
+            path, _ = QFileDialog.getOpenFileName(self, title, start_dir, file_filter)
             return Path(path) if path else None
 
         _source, path = pick_session_or_file(
@@ -1224,11 +1258,13 @@ class CaptionAnimateTab(BaseTab):
                 return
 
         subtitle_path = Path(self._subtitle_edit.text().strip())
-        output_dir = self._output_dir_edit.text().strip()
-        if output_dir:
-            out_parent = Path(output_dir)
-        else:
-            out_parent = subtitle_path.parent
+        from audio_visualizer.ui.sessionFilePicker import resolve_output_directory
+
+        out_parent = resolve_output_directory(
+            explicit_directory=self._output_dir_edit.text().strip(),
+            session_context=self.session_context,
+            source_path=subtitle_path,
+        )
 
         delivery_path = out_parent / f"{subtitle_path.stem}_caption.mp4"
         overlay_path = out_parent / f"{subtitle_path.stem}_caption_overlay.mov"

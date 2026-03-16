@@ -174,6 +174,10 @@ class AudioVisualizerTab(BaseTab):
 
         self._connect_live_preview_updates()
 
+    def set_session_context(self, context) -> None:
+        super().set_session_context(context)
+        self.generalSettingsView.set_session_context(context)
+
     # ------------------------------------------------------------------
     # Layout builders
     # ------------------------------------------------------------------

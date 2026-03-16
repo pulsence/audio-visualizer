@@ -1,120 +1,86 @@
 # audio_visualizer.ui
 
-UI layer built on PySide6 (Qt 6). Contains the main application window, render dialog, and view system.
+PySide6 application shell and shared UI infrastructure.
 
-## mainWindow.py
+## MainWindow
 
-### Class: MainWindow(QMainWindow)
+`MainWindow` is now a thin six-tab shell rather than the old single-screen visualizer window.
 
-The primary application window. Manages the full UI layout, visualizer selection, rendering, live preview, and settings persistence.
+- Owns the shared `SessionContext`, the render `QThreadPool`, a background pool for update checks, the navigation sidebar, and the global `JobStatusWidget`.
+- Instantiates `AudioVisualizerTab` eagerly, then registers lazy placeholders for `SRT Gen`, `SRT Edit`, `Caption Animate`, `Render Composition`, and `Assets`.
+- Loads the saved settings file once during startup so app theme can be applied before lazy tab creation.
+- Persists a versioned settings schema with top-level `app`, `ui`, `tabs`, and `session` sections.
 
-#### Class Variables
+### Shell responsibilities
 
-- `_VIEW_ATTRIBUTE_MAP: dict` — Maps view attribute names to `VisualizerOptions` enum values. Used for lazy-loading visualizer-specific settings panels via `__getattr__()`.
+- `_register_all_tabs()` adds the eager tab plus five lazy placeholders.
+- `_ensure_tab_instantiated()` swaps a placeholder for the real tab on first activation and replays pending tab settings.
+- `try_start_job()` / `finish_job()` enforce the single shared render/transcription slot.
+- `show_job_*()` forwards lifecycle state into `JobStatusWidget`.
+- `_open_settings()` shows `SettingsDialog`, applies theme changes, updates `SessionContext.project_folder`, and immediately saves the app state.
 
-#### Layout Structure
+### Theme and settings
 
-The window uses a `QGridLayout` with these regions:
+- Theme mode lives in `settings["app"]["theme_mode"]` with allowed values `off`, `on`, and `auto`.
+- `auto` resolves against Qt color-scheme hints when available, but the stored mode remains `auto`.
+- Session state is serialized through `SessionContext.to_dict()`, so project folder and imported assets travel with autosave/project files.
 
-| Position | Content |
-|----------|---------|
-| (0, 0) | Heading label |
-| (1, 0) | General settings panel (`GeneralSettingsView`) |
-| (1, 1) | General visualizer settings (`GeneralVisualizerView`) |
-| (2, 0) | Live preview video widget |
-| (2, 1) | Specific visualizer settings (dynamic, swapped on selection change) |
-| (3, 0) | Render controls (button, progress bar, checkboxes) |
+## JobStatusWidget
 
-#### Key Methods — UI Setup
+Persistent bottom-row status widget shared across tabs.
 
-- `_prepare_general_settings_elements()` — Creates the general settings panel
-- `_prepare_general_visualizer_elements()` — Creates the visualizer settings panel
-- `_prepare_specific_visualizer_elements()` — Creates the dynamic container for visualizer-specific views
-- `_prepare_preview_panel_elements()` — Creates video preview widget with volume slider
-- `_prepare_render_elements()` — Creates render button, progress bar, cancel button, checkboxes
-- `_setup_menu()` — Creates Help menu with "Check for Updates" action
-- `__getattr__()` — Lazy-loads visualizer view instances by attribute name
+- Active jobs show owner, label, progress, status text, and a wired `Cancel` button.
+- Terminal states (`completed`, `failed`, `canceled`) switch the button text to `Finished`.
+- Completion actions (`Preview`, `Open Output`, `Open Folder`) stay available during the 5-second completed state when an output path exists.
+- A widget-owned `QTimer` handles the timed auto-reset and is cancelled/restarted safely when the user clears the row or a new job begins.
 
-#### Key Methods — Visualizer Management
+## SessionContext
 
-- `_build_visualizer_view(visualizer: VisualizerOptions) -> View` — Factory that creates the correct View subclass for a given visualizer type
-- `_get_visualizer_view(visualizer: VisualizerOptions) -> View` — Returns cached view, creating it if needed
-- `_show_visualizer_view(visualizer: VisualizerOptions)` — Shows the selected view and hides others
-- `visualizer_selection_changed(visualizer)` — Signal handler for the visualizer dropdown
+Cross-tab session registry for assets, roles, analysis cache, and project-level defaults.
 
-#### Key Methods — Rendering
+- Stores `project_folder: Path | None` plus a `project_folder_changed` signal.
+- Tracks generated and imported `SessionAsset` records.
+- Provides `import_asset_file()` and `import_asset_folder()` helpers used by the Assets screen to deduplicate by resolved path and opportunistically probe media metadata through `mediaProbe.py`.
+- Excludes analysis cache from persisted project files, but persists assets, role bindings, and project folder.
 
-- `validate_render_settings() -> tuple[bool, str]` — Validates all settings panels and returns `(is_valid, error_message)`
-- `_create_visualizer() -> Visualizer` — Factory that instantiates the correct Visualizer subclass from current settings
-- `render_video()` — Starts a full render (with optional 30-second preview)
-- `render_preview()` — Starts a 5-second preview render
-- `_start_render(...)` — Core render initiation: creates AudioData, VideoData, Visualizer, and submits RenderWorker
-- `render_finished(video_data)` — Handles successful render completion
-- `render_failed(error_msg)` — Shows error dialog
-- `render_canceled()` — Handles render cancellation
-- `cancel_render()` — Requests cancellation on the active RenderWorker
-- `_reset_render_controls()` — Resets progress bar and buttons after render
+## SessionFilePicker
 
-#### Key Methods — Live Preview
+Shared browse-path resolver and session-aware chooser dialog.
 
-- `_connect_live_preview_updates()` — Connects UI change signals to preview scheduling
-- `_schedule_live_preview_update()` — Resets the 400ms debounce timer
-- `_trigger_live_preview_update()` — Fires when the timer expires; starts a preview render
-- `_show_preview_in_panel(video_data)` — Loads rendered preview into the QVideoWidget
-- `_toggle_preview_panel()` — Shows/hides the preview panel
+- `resolve_browse_directory()` centralizes default-directory precedence:
+  1. Current path (directory or parent of file path)
+  2. Selected session asset parent
+  3. `SessionContext.project_folder`
+  4. User home directory
+- `resolve_output_directory()` centralizes auto-derived output parents:
+  1. Explicit output directory
+  2. `SessionContext.project_folder`
+  3. Source file parent
+  4. User home directory
+- `SessionFilePickerDialog` lets tabs choose from session assets first, then fall back to the filesystem.
 
-#### Key Methods — Settings Persistence
+## SettingsDialog
 
-- `_collect_settings() -> dict` — Serializes all current settings to a dictionary
-- `_apply_settings(data: dict)` — Deserializes and applies settings from a dictionary
-- `_default_settings_path() -> Path` — Returns path to `last_settings.json` in the config dir
-- `_save_settings_to_path(path)` — Writes settings as JSON
-- `_load_settings_from_path(path)` — Loads settings from JSON
-- `_load_last_settings_if_present()` — Auto-loads previous settings on startup
-- `save_project()` / `load_project()` — File dialog flows for named project files
-- `closeEvent(event)` — Auto-saves settings on window close
+Modal settings dialog for app-level and session-level defaults.
 
-#### Key Methods — Updates
+- Theme section exposes `Off`, `On`, and `Auto`.
+- Project section exposes the session `Project Folder`.
+- Uses explicit accept semantics: widget edits do not persist until the user confirms the dialog.
 
-- `check_for_updates()` — Spawns an `UpdateCheckWorker` on the background thread pool
-- `_handle_update_check_result(current, latest, url)` — Shows dialog if update available
-- `_handle_update_check_error(msg)` — Shows error dialog
+## RenderDialog
 
-### Class: UpdateCheckWorker(QRunnable)
+Standalone media preview dialog used by global completion actions.
 
-Background worker for checking GitHub releases.
+- Wraps `QMediaPlayer`, `QVideoWidget`, and `QAudioOutput`.
+- Reuses a class-level remembered volume between dialog instances.
 
-- **Signals:** `finished(str, str, str)` (current, latest, url), `error(str)`
-- **`run()`** — Calls `fetch_latest_release()` and `get_current_version()`, emits results
+## UpdateCheckWorker
 
-### Class: RenderWorker(QRunnable)
+Background `QRunnable` that queries the updater module and reports current/latest version info back to `MainWindow`.
 
-Background worker for video rendering.
+## RenderWorker
 
-- **Constructor:** `(audio_data, video_data, visualizer, preview_seconds, include_audio)`
-- **Signals:** `finished(VideoData)`, `error(str)`, `status(str)`, `progress(int, int, float)`, `canceled()`
-- **`run()`** — Full render pipeline: load audio → chunk → analyze → prepare container → prepare shapes → generate frames → optional audio mux → finalize
-- **`cancel()`** — Sets cancellation flag, checked between frames
-- **`_prepare_audio_mux()`** — Sets up audio resampler and output stream
-- **`_mux_audio()`** — Encodes and muxes the audio track into the video container
+Legacy audio-visualizer render worker used by `AudioVisualizerTab`.
 
-## renderDialog.py
-
-### Class: RenderDialog(QDialog)
-
-Modal dialog for previewing a rendered video with volume controls and looping playback.
-
-#### Class Variables
-
-- `_last_volume = 100` — Persists volume setting across dialog instances
-
-#### Constructor
-
-- `(video_data: VideoData)` — Creates a `QMediaPlayer` + `QVideoWidget` + `QAudioOutput` + volume slider
-
-#### Key Methods
-
-- `_media_status()` — Starts playback when media is loaded
-- `_cleanup_player()` — Safely stops and releases the media player
-- `_volume_changed()` — Updates volume and persists to class variable
-- `reject()` / `closeEvent()` — Clean up player on close
+- Loads audio, performs chunking and analysis, prepares the output container, renders frames, and optionally muxes audio.
+- Exposes progress, status, error, and cancellation signals consumed by the tab and the global shell.

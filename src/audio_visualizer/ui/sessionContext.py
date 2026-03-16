@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import copy
 import logging
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
+
+from audio_visualizer.ui.mediaProbe import probe_media
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,31 @@ VALID_ROLES: tuple[str, ...] = (
     "background",
     "final_render",
 )
+
+_IMPORTABLE_EXTENSIONS: dict[str, str] = {
+    ".mp3": "audio",
+    ".wav": "audio",
+    ".flac": "audio",
+    ".ogg": "audio",
+    ".m4a": "audio",
+    ".aac": "audio",
+    ".wma": "audio",
+    ".mp4": "video",
+    ".mkv": "video",
+    ".webm": "video",
+    ".avi": "video",
+    ".mov": "video",
+    ".mxf": "video",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".bmp": "image",
+    ".tiff": "image",
+    ".srt": "subtitle",
+    ".ass": "subtitle",
+    ".vtt": "subtitle",
+    ".json": "json_bundle",
+}
 
 
 # ------------------------------------------------------------------
@@ -161,6 +189,78 @@ class SessionContext(QObject):
         self._project_folder = path
         self.project_folder_changed.emit(str(path) if path else "")
         logger.debug("Project folder set: %s", path)
+
+    def import_asset_file(
+        self,
+        path: Path | str,
+        *,
+        source_tab: str = "assets",
+    ) -> SessionAsset | None:
+        """Import a single external asset into the session.
+
+        Returns the existing asset when the resolved path is already
+        registered, the new asset on success, or ``None`` for an
+        unsupported/nonexistent path.
+        """
+        asset_path = Path(path)
+        if not asset_path.is_file():
+            return None
+
+        existing = self.find_asset_by_path(asset_path)
+        if existing is not None:
+            return existing
+
+        category = _IMPORTABLE_EXTENSIONS.get(asset_path.suffix.lower())
+        if category is None:
+            return None
+
+        probe = None
+        if category in {"audio", "video", "image"}:
+            probe = probe_media(asset_path)
+
+        metadata = {}
+        if probe is not None:
+            for key in ("codec_name", "pix_fmt"):
+                value = probe.get(key)
+                if value is not None:
+                    metadata[key] = value
+
+        asset = SessionAsset(
+            id=str(uuid.uuid4()),
+            display_name=asset_path.name,
+            path=asset_path,
+            category=category,
+            source_tab=source_tab,
+            width=probe.get("width") if probe else None,
+            height=probe.get("height") if probe else None,
+            fps=probe.get("fps") if probe else None,
+            duration_ms=probe.get("duration_ms") if probe else None,
+            has_alpha=probe.get("has_alpha") if probe else None,
+            has_audio=probe.get("has_audio") if probe else None,
+            metadata=metadata,
+        )
+        self.register_asset(asset)
+        return asset
+
+    def import_asset_folder(
+        self,
+        folder: Path | str,
+        *,
+        source_tab: str = "assets",
+    ) -> list[SessionAsset]:
+        """Import supported files from a folder tree into the session."""
+        root = Path(folder)
+        if not root.is_dir():
+            return []
+
+        imported: list[SessionAsset] = []
+        for item in sorted(root.rglob("*")):
+            if not item.is_file():
+                continue
+            asset = self.import_asset_file(item, source_tab=source_tab)
+            if asset is not None:
+                imported.append(asset)
+        return imported
 
     # -- asset CRUD ------------------------------------------------
 
@@ -431,6 +531,9 @@ class SessionContext(QObject):
         asset_ids = list(self._assets.keys())
         self._assets.clear()
         self._analysis_cache.clear()
+        if self._project_folder is not None:
+            self._project_folder = None
+            self.project_folder_changed.emit("")
         for asset_id in asset_ids:
             self.asset_removed.emit(asset_id)
         logger.debug("Session cleared (%d assets removed).", len(asset_ids))

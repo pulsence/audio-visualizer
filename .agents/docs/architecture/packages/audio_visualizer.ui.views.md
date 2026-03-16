@@ -34,6 +34,7 @@ Collects general application settings: audio file path, video output path, resol
 
 - **Settings class:** `GeneralSettings`
 - **Fields:** `video_width`, `video_height`, `fps`, `codec`, `bitrate`, `crf`, `hardware_accel`, `include_audio`, `audio_file_path`, `video_file_path`
+- Receives `SessionContext` from `AudioVisualizerTab` so file dialogs can honor the session project folder.
 
 ### GeneralVisualizerView
 
@@ -42,6 +43,7 @@ Collects general visualizer settings: position offset, alignment, background col
 - **Settings class:** `GeneralVisualizerSettings`
 - **Fields:** `visualizer_type`, `alignment`, `x`, `y`, `bg_color`, `border_color`, `border_width`, `spacing`, `super_sampling`
 - **Color parsing:** `_parse_color(text) -> tuple[int, int, int]` — parses `"R, G, B"` format
+- Uses `ClickableColorSwatch` widgets so swatches and buttons both open the color dialog.
 
 ### CombinedVisualizerView
 
@@ -106,11 +108,13 @@ Collects waveform visualizer settings.
 
 - **Settings:** `ForceRectangleChromaVisualizerSettings`
 - **Fields:** `box_height`, `corner_radius`, `color_mode`, `gradient_start`, `gradient_end`, `band_colors`, `gravity`, `force_strength`
+- Uses a `QTabWidget` with 2 x 6 band editors for per-band colors.
 
 ### ForceCircleChromaVisualizerView
 
 - **Settings:** `ForceCircleChromaVisualizerSettings`
 - **Fields:** `color_mode`, `gradient_start`, `gradient_end`, `band_colors`, `gravity`, `force_strength`
+- Uses a `QTabWidget` with 2 x 6 band editors for per-band colors.
 
 ### ForceLineChromaVisualizerView
 

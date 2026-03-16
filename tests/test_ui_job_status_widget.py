@@ -32,11 +32,11 @@ class TestJobStatusWidget:
         widget.show_failed("boom")
 
         assert widget._progress_bar.isHidden() is True
-        assert widget._cancel_button.text() == "Dismiss"
+        assert widget._cancel_button.text() == "Finished"
 
 
 class TestTerminalStateButtonText:
-    """Button text should be 'Finished' for completed, 'Dismiss' for failed/canceled."""
+    """Button text should be 'Finished' for all terminal states."""
 
     def test_completed_shows_finished(self):
         widget = JobStatusWidget()
@@ -44,17 +44,17 @@ class TestTerminalStateButtonText:
         widget.show_completed("Done")
         assert widget._cancel_button.text() == "Finished"
 
-    def test_failed_shows_dismiss(self):
+    def test_failed_shows_finished(self):
         widget = JobStatusWidget()
         widget.show_job("render", "tab", "label")
         widget.show_failed("error")
-        assert widget._cancel_button.text() == "Dismiss"
+        assert widget._cancel_button.text() == "Finished"
 
-    def test_canceled_shows_dismiss(self):
+    def test_canceled_shows_finished(self):
         widget = JobStatusWidget()
         widget.show_job("render", "tab", "label")
         widget.show_canceled("user canceled")
-        assert widget._cancel_button.text() == "Dismiss"
+        assert widget._cancel_button.text() == "Finished"
 
 
 class TestAutoResetTimer:
@@ -98,7 +98,7 @@ class TestAutoResetTimer:
         assert widget.isVisible() is False
 
     def test_manual_reset_stops_timer(self):
-        """Clicking Finished/Dismiss calls reset() which stops the timer."""
+        """Clicking Finished calls reset() which stops the timer."""
         widget = JobStatusWidget()
         widget.show_job("render", "tab", "label")
         widget.show_completed("Done")
@@ -117,3 +117,15 @@ class TestAutoResetTimer:
         widget.show_job("transcribe", "tab", "new label")
         assert widget._auto_reset_timer.isActive() is False
         assert widget._state != _STATE_IDLE  # still active, not reset
+
+    def test_new_job_rewires_cancel_button_back_to_cancel_handler(self):
+        widget = JobStatusWidget()
+        cancel_requests = []
+        widget.cancel_requested.connect(lambda: cancel_requests.append(True))
+
+        widget.show_job("render", "tab", "label")
+        widget.show_completed("Done")
+        widget.show_job("transcribe", "tab", "new label")
+        widget._cancel_button.click()
+
+        assert cancel_requests == [True]

@@ -219,6 +219,63 @@ class TestMainWindowSettings:
         # Restore
         main_window._apply_theme("off")
 
+    def test_apply_theme_auto_preserves_auto_mode(self, main_window, monkeypatch):
+        class _FakeStyleHints:
+            def colorScheme(self):
+                return "dark"
+
+        class _FakeStyle:
+            def standardPalette(self):
+                return object()
+
+        class _FakeApp:
+            def __init__(self):
+                self.palette = None
+
+            def styleHints(self):
+                return _FakeStyleHints()
+
+            def style(self):
+                return _FakeStyle()
+
+            def setPalette(self, palette):
+                self.palette = palette
+
+            def processEvents(self):
+                return None
+
+        fake_app = _FakeApp()
+        monkeypatch.setattr(
+            "PySide6.QtWidgets.QApplication.instance",
+            lambda: fake_app,
+        )
+
+        main_window._apply_theme("auto")
+
+        assert main_window._current_theme_mode == "auto"
+
+    def test_startup_applies_saved_theme_before_loading_tabs(self, monkeypatch):
+        original_register = MainWindow._register_all_tabs
+
+        def _assert_theme_then_register(window):
+            assert window._current_theme_mode == "on"
+            original_register(window)
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.mainWindow.load_settings",
+            lambda _path: {
+                "version": 1,
+                "app": {"theme_mode": "on"},
+                "ui": {"last_active_tab": "audio_visualizer", "window": {}},
+                "tabs": {},
+                "session": {},
+            },
+        )
+        monkeypatch.setattr(MainWindow, "_register_all_tabs", _assert_theme_then_register)
+
+        window = MainWindow()
+        assert window._current_theme_mode == "on"
+
     def test_apply_settings_stores_pending_for_lazy_tabs(self, main_window):
         """_apply_settings stores settings for not-yet-instantiated tabs."""
         # This test verifies the pending settings mechanism.

@@ -2,13 +2,14 @@
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 app = QApplication.instance() or QApplication([])
 
 import pytest
+from unittest.mock import MagicMock
 
-from audio_visualizer.ui.sessionContext import SessionAsset
+from audio_visualizer.ui.sessionContext import SessionAsset, SessionContext
 from audio_visualizer.ui.tabs.renderCompositionTab import RenderCompositionTab
 from audio_visualizer.ui.tabs.renderComposition.model import (
     CompositionAudioLayer,
@@ -643,6 +644,70 @@ class TestDirectFileSourceHandling:
         if not Path(output_path).suffix:
             output_path = output_path + ".mp4"
         assert output_path == "/tmp/my_output.mp4"
+
+    def test_blank_output_path_defaults_to_project_folder(self, tmp_path, monkeypatch):
+        class _FakeSignal:
+            def connect(self, _slot):
+                return None
+
+        class _FakeWorker:
+            def __init__(self, model, output_path):
+                self.model = model
+                self.output_path = output_path
+                self.signals = MagicMock(
+                    progress=_FakeSignal(),
+                    completed=_FakeSignal(),
+                    failed=_FakeSignal(),
+                    canceled=_FakeSignal(),
+                )
+
+            def cancel(self):
+                return None
+
+        class _FakeMainWindow(QWidget):
+            def __init__(self):
+                super().__init__()
+                self.render_thread_pool = MagicMock()
+
+            def try_start_job(self, _owner_tab_id):
+                return True
+
+            def show_job_status(self, *_args):
+                return None
+
+        main_window = _FakeMainWindow()
+        tab = RenderCompositionTab(main_window)
+        ctx = SessionContext()
+        project_folder = tmp_path / "project"
+        project_folder.mkdir()
+        ctx.set_project_folder(project_folder)
+        tab.set_session_context(ctx)
+        tab._model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=tmp_path / "bg.mp4",
+            end_ms=5000,
+        ))
+
+        captured = []
+
+        class _CapturingWorker(_FakeWorker):
+            def __init__(self, model, output_path):
+                super().__init__(model, output_path)
+                captured.append(output_path)
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.tabs.renderCompositionTab.CompositionWorker",
+            _CapturingWorker,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.CompositionWorker",
+            _CapturingWorker,
+        )
+
+        tab._on_start_render()
+
+        assert captured == [str(project_folder / "composition_output.mp4")]
 
 
 # ------------------------------------------------------------------

@@ -25,6 +25,10 @@ class TestSettingsDialogCreation:
         dialog = SettingsDialog({})
         assert dialog.minimumWidth() >= 400
 
+    def test_project_folder_prefills_from_session_settings(self):
+        dialog = SettingsDialog({"session": {"project_folder": "/tmp/project"}})
+        assert dialog._project_folder_edit.text() == "/tmp/project"
+
 
 # ------------------------------------------------------------------
 # Theme combo defaults
@@ -80,3 +84,9 @@ class TestSettingsDialogAccept:
                 break
         dialog._on_accept()
         assert dialog.result_settings["app"]["theme_mode"] == "auto"
+
+    def test_on_accept_includes_project_folder(self):
+        dialog = SettingsDialog({})
+        dialog._project_folder_edit.setText("/tmp/project")
+        dialog._on_accept()
+        assert dialog.result_settings["project_folder"] == "/tmp/project"

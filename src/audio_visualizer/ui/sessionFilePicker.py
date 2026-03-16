@@ -34,18 +34,24 @@ logger = logging.getLogger(__name__)
 def resolve_browse_directory(
     current_path: str | Path | None = None,
     session_context: "SessionContext | None" = None,
+    selected_asset_path: str | Path | None = None,
 ) -> str:
     """Resolve the best starting directory for a file dialog.
 
     Precedence:
     1. Parent of *current_path* if valid
-    2. ``SessionContext.project_folder`` if set
-    3. User home directory
+    2. Parent of *selected_asset_path* if valid
+    3. ``SessionContext.project_folder`` if set
+    4. User home directory
     """
-    if current_path:
-        p = Path(str(current_path))
-        if p.parent.is_dir():
-            return str(p.parent)
+    for candidate in (current_path, selected_asset_path):
+        if not candidate:
+            continue
+        path = Path(str(candidate)).expanduser()
+        if path.is_dir():
+            return str(path)
+        if path.parent.is_dir():
+            return str(path.parent)
 
     if session_context is not None and session_context.project_folder is not None:
         pf = session_context.project_folder
@@ -53,6 +59,37 @@ def resolve_browse_directory(
             return str(pf)
 
     return str(Path.home())
+
+
+def resolve_output_directory(
+    explicit_directory: str | Path | None = None,
+    session_context: "SessionContext | None" = None,
+    source_path: str | Path | None = None,
+) -> Path:
+    """Resolve the parent directory for auto-derived output paths.
+
+    Precedence:
+    1. *explicit_directory* when the user chose one
+    2. ``SessionContext.project_folder`` when configured
+    3. Parent of *source_path* when available
+    4. User home directory
+    """
+    if explicit_directory:
+        directory = Path(str(explicit_directory)).expanduser()
+        return directory
+
+    if session_context is not None and session_context.project_folder is not None:
+        project_folder = session_context.project_folder
+        if project_folder is not None:
+            return project_folder
+
+    if source_path:
+        source = Path(str(source_path)).expanduser()
+        if source.is_dir():
+            return source
+        return source.parent
+
+    return Path.home()
 
 
 class SessionFilePickerDialog(QDialog):
@@ -153,8 +190,13 @@ class SessionFilePickerDialog(QDialog):
 
     def _on_browse(self) -> None:
         """Handle Browse button: open a standard file dialog."""
+        selected_item = self._asset_list.currentItem()
+        selected_path = None
+        if selected_item is not None:
+            selected_path = selected_item.data(Qt.ItemDataRole.UserRole)
         start_dir = resolve_browse_directory(
             session_context=self._session_context,
+            selected_asset_path=selected_path,
         )
         path, _ = QFileDialog.getOpenFileName(
             self,
