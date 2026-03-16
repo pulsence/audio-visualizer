@@ -350,14 +350,15 @@ Important implementation rules:
 
 ## Phase Files
 
-- [PHASE_1.md](./plan_phases/PHASE_1.md) - Foundation, Dependency Lane, and MainWindow Decomposition
-- [PHASE_2.md](./plan_phases/PHASE_2.md) - Extract the Audio Visualizer Tab
-- [PHASE_3.md](./plan_phases/PHASE_3.md) - Build the SRT Gen Tab
-- [PHASE_4.md](./plan_phases/PHASE_4.md) - Build the SRT Edit Tab
-- [PHASE_5.md](./plan_phases/PHASE_5.md) - Build the Caption Animate Tab
-- [PHASE_6.md](./plan_phases/PHASE_6.md) - Build the Render Composition Tab
-- [PHASE_7.md](./plan_phases/PHASE_7.md) - Workflow Recipes and Cross-Tab Integration Polish
-- [PHASE_8.md](./plan_phases/PHASE_8.md) - Final Review
+- [x] [PHASE_1.md](./plan_phases/PHASE_1.md) - Foundation, Dependency Lane, and MainWindow Decomposition
+- [x] [PHASE_2.md](./plan_phases/PHASE_2.md) - Extract the Audio Visualizer Tab
+- [x] [PHASE_3.md](./plan_phases/PHASE_3.md) - Build the SRT Gen Tab
+- [x] [PHASE_4.md](./plan_phases/PHASE_4.md) - Build the SRT Edit Tab
+- [x] [PHASE_5.md](./plan_phases/PHASE_5.md) - Build the Caption Animate Tab
+- [x] [PHASE_6.md](./plan_phases/PHASE_6.md) - Build the Render Composition Tab
+- [x] [PHASE_7.md](./plan_phases/PHASE_7.md) - Workflow Recipes and Cross-Tab Integration Polish
+- [ ] [PHASE_8.md](./plan_phases/PHASE_8.md) - User Debug - 1
+- [ ] [PHASE_9.md](./plan_phases/PHASE_9.md) - Final Review
 
 ---
 Implementation details for each phase live exclusively in the phase files above.
