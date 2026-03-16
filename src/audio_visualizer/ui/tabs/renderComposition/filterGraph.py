@@ -107,6 +107,52 @@ def build_filter_graph(model: CompositionModel) -> str:
     return filter_str
 
 
+def build_preview_command(
+    model: CompositionModel,
+    timestamp_s: float,
+    output_path: str | Path,
+) -> list[str]:
+    """Build an FFmpeg command to extract a single preview frame.
+
+    Parameters
+    ----------
+    model : CompositionModel
+        The composition model.
+    timestamp_s : float
+        The timestamp (in seconds) at which to extract the frame.
+    output_path : str | Path
+        Destination path for the preview image (PNG recommended).
+
+    Returns
+    -------
+    list[str]
+        The FFmpeg command as a list of arguments.
+    """
+    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    cmd: list[str] = [ffmpeg, "-y"]
+
+    layers = _get_renderable_layers(model)
+
+    for _input_idx, layer in layers:
+        path = _resolve_layer_path(layer)
+        if path:
+            cmd.extend(["-i", str(path)])
+
+    filter_str = build_filter_graph(model)
+    if filter_str:
+        cmd.extend(["-filter_complex", filter_str])
+        if layers:
+            last_label = f"ovr{len(layers) - 1}"
+            cmd.extend(["-map", f"[{last_label}]"])
+
+    cmd.extend([
+        "-ss", f"{timestamp_s:.3f}",
+        "-vframes", "1",
+        str(output_path),
+    ])
+    return cmd
+
+
 def build_ffmpeg_command(
     model: CompositionModel,
     output_path: str | Path,

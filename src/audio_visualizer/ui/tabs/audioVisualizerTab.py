@@ -16,7 +16,7 @@ from typing import Any
 from PySide6.QtCore import Qt, QTimer, QSize, QUrl
 from PySide6.QtWidgets import (
     QGridLayout, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QLineEdit,
-    QPushButton, QCheckBox, QComboBox, QProgressBar, QSlider, QWidget,
+    QPushButton, QCheckBox, QComboBox, QSlider, QWidget,
     QSizePolicy, QMessageBox,
 )
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -147,25 +147,23 @@ class AudioVisualizerTab(BaseTab):
         self._active_preview = False
         self._active_render_worker = None
         self._pending_preview_refresh = False
+        self._render_includes_audio = False
 
         primary_layout = QGridLayout()
 
-        # Row 0: heading
-        self.heading_label = QLabel("Welcome to the Audio Visualizer!")
-        self.heading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.heading_label.setFont(Fonts.h1_font)
-        primary_layout.addWidget(self.heading_label, 0, 0, 1, 2)
+        # Row 0 col 0: general settings
+        self._prepare_general_settings_elements(primary_layout, r=0, c=0)
+        # Row 0 col 1: general visualizer settings
+        self._prepare_general_visualizer_elements(primary_layout, r=0, c=1)
+        # Row 1 col 1: specific visualizer settings
+        self._prepare_specific_visualizer_elements(primary_layout, r=1, c=1)
+        # Row 1 col 0: live preview panel
+        self._prepare_preview_panel_elements(primary_layout, r=1, c=0)
+        # Row 2 col 0: render controls
+        self._prepare_render_elements(primary_layout, r=2, c=0)
 
-        # Row 1 col 0: general settings
-        self._prepare_general_settings_elements(primary_layout)
-        # Row 1 col 1: general visualizer settings
-        self._prepare_general_visualizer_elements(primary_layout)
-        # Row 2 col 1: specific visualizer settings
-        self._prepare_specific_visualizer_elements(primary_layout)
-        # Row 2 col 0: live preview panel
-        self._prepare_preview_panel_elements(primary_layout)
-        # Row 3 col 0: render controls
-        self._prepare_render_elements(primary_layout)
+        # Push content to top
+        primary_layout.setRowStretch(3, 1)
 
         self.setLayout(primary_layout)
 
@@ -239,7 +237,7 @@ class AudioVisualizerTab(BaseTab):
         self.preview_volume_slider.valueChanged.connect(self._preview_volume_changed)
         self._preview_volume_changed(self.preview_volume_slider.value())
 
-    def _prepare_render_elements(self, layout: QGridLayout, r: int = 3, c: int = 0) -> None:
+    def _prepare_render_elements(self, layout: QGridLayout, r: int = 2, c: int = 0) -> None:
         render_section_layout = QGridLayout()
 
         self.preview_checkbox = QCheckBox("Preview Video (30 seconds)")
@@ -259,21 +257,12 @@ class AudioVisualizerTab(BaseTab):
         self.render_button.clicked.connect(self.render_video)
         render_section_layout.addWidget(self.render_button, 1, 1)
 
-        self.render_progress_bar = QProgressBar()
-        self.render_progress_bar.setRange(0, 0)
-        self.render_progress_bar.hide()
-        render_section_layout.addWidget(self.render_progress_bar, 3, 0, 1, 2)
-
         self.cancel_button = QPushButton("Cancel Render")
         self.cancel_button.clicked.connect(self.cancel_render)
         self.cancel_button.hide()
-        render_section_layout.addWidget(self.cancel_button, 4, 0, 1, 2)
+        render_section_layout.addWidget(self.cancel_button, 2, 0, 1, 2)
 
         layout.addLayout(render_section_layout, r, c)
-
-        self.render_status_label = QLabel()
-        self.render_status_label.hide()
-        layout.addWidget(self.render_status_label, r, c + 1)
 
     # ------------------------------------------------------------------
     # Visualizer view factory / registry
@@ -1016,8 +1005,6 @@ class AudioVisualizerTab(BaseTab):
         self.rendering = False
         self._set_controls_enabled(True)
         self.render_button.setText("Render Video")
-        self.render_status_label.hide()
-        self.render_progress_bar.hide()
         self.cancel_button.hide()
         self.cancel_button.setEnabled(True)
         self._active_preview = False
@@ -1046,11 +1033,6 @@ class AudioVisualizerTab(BaseTab):
         else:
             self.render_button.setText("Rendering...")
 
-        self.render_status_label.show()
-        self.render_status_label.setText("Setting up render...")
-        self.render_progress_bar.setRange(0, 0)
-        self.render_progress_bar.setValue(0)
-        self.render_progress_bar.show()
         self.cancel_button.show()
         self.cancel_button.setEnabled(True)
 
@@ -1070,6 +1052,9 @@ class AudioVisualizerTab(BaseTab):
 
         audio_data = AudioData(general_settings.audio_file_path)
         file_path = output_path or general_settings.video_file_path
+        # Ensure .mp4 extension on user-typed paths
+        if file_path and not Path(file_path).suffix:
+            file_path = file_path + ".mp4"
         video_data = VideoData(
             general_settings.video_width,
             general_settings.video_height,
@@ -1103,10 +1088,12 @@ class AudioVisualizerTab(BaseTab):
             include_audio=general_settings.include_audio,
         )
         self._active_render_worker = render_worker
+        self._render_includes_audio = general_settings.include_audio
         render_worker.signals.finished.connect(self.render_finished)
         render_worker.signals.error.connect(self.render_failed)
         render_worker.signals.status.connect(self.render_status_update)
         render_worker.signals.progress.connect(self.render_progress_update)
+        render_worker.signals.mux_progress.connect(self._render_mux_progress_update)
         render_worker.signals.canceled.connect(self.render_canceled)
         self._main_window.render_thread_pool.start(render_worker)
 
@@ -1152,32 +1139,35 @@ class AudioVisualizerTab(BaseTab):
             )
 
     def render_status_update(self, msg: str) -> None:
-        self.render_status_label.setText(msg)
         if not self._active_preview:
             self._main_window.update_job_status(msg)
 
     def render_progress_update(self, current_frame: int, total_frames: int, elapsed_seconds: float) -> None:
-        if total_frames > 0:
-            if self.render_progress_bar.maximum() != total_frames:
-                self.render_progress_bar.setRange(0, total_frames)
-            self.render_progress_bar.setValue(current_frame)
         if current_frame > 0 and total_frames > 0:
             eta_seconds = (elapsed_seconds / current_frame) * (total_frames - current_frame)
             eta = self._format_duration(eta_seconds)
-            self.render_status_label.setText(
-                f"Rendering video ({current_frame}/{total_frames} frames, ETA {eta})"
-            )
             if not self._active_preview:
-                percent = (current_frame / total_frames) * 100
+                # Stage-aware: encoding is 90% of total when audio mux
+                # will follow, otherwise 100%.
+                encode_weight = 0.9 if self._render_includes_audio else 1.0
+                encode_percent = (current_frame / total_frames) * encode_weight * 100
                 self._main_window.update_job_progress(
-                    percent,
-                    f"{current_frame}/{total_frames} frames, ETA {eta}",
+                    encode_percent,
+                    f"Encoding {current_frame}/{total_frames} frames, ETA {eta}",
                 )
+
+    def _render_mux_progress_update(self, fraction: float) -> None:
+        """Handle audio-mux progress (0.0-1.0) mapped to the final 10%."""
+        if not self._active_preview:
+            percent = 90.0 + fraction * 10.0
+            self._main_window.update_job_progress(
+                percent,
+                f"Muxing audio... {percent:.0f}%",
+            )
 
     def render_canceled(self) -> None:
         was_preview = self._active_preview
         self._active_render_worker = None
-        self.render_status_label.setText("Render canceled.")
         self._reset_render_controls()
         if not was_preview:
             self._main_window.show_job_canceled(
@@ -1188,8 +1178,9 @@ class AudioVisualizerTab(BaseTab):
     def cancel_render(self) -> None:
         if self._active_render_worker is None:
             return
-        self.render_status_label.setText("Canceling render...")
         self.cancel_button.setEnabled(False)
+        if not self._active_preview:
+            self._main_window.update_job_status("Canceling render...")
         self._active_render_worker.cancel()
 
     def cancel_job(self) -> None:

@@ -162,20 +162,23 @@ class JobStatusWidget(QWidget):
         self._status_label.setText(message)
 
     def show_completed(self, message: str, output_path: str | None = None) -> None:
-        """Transition to the completed state.
+        """Transition to a compact dismissible completed state.
 
-        The progress bar is filled, the cancel button becomes a dismiss
-        button, and the status shows *message*.
+        The progress bar is hidden, completion actions are shown inline,
+        and a dismiss button allows the user to clear the status area
+        without leaving the progress row pinned at 100%.
 
         Parameters
         ----------
         message : str
             Completion message to display.
+        output_path : str | None
+            Path to the output file, used for action buttons.
         """
         self._state = _STATE_COMPLETED
         self._output_path = output_path
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(100)
+        self._progress_bar.setVisible(False)
+        self._job_info_label.setText("")
         self._status_label.setText(message)
         self._set_action_buttons_visible(bool(output_path))
         self._cancel_button.setText("Dismiss")

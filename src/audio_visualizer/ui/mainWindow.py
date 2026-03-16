@@ -709,6 +709,7 @@ class RenderWorker(QRunnable):
             status = Signal(str)
             progress = Signal(int, int, float)
             canceled = Signal()
+            mux_progress = Signal(float)  # 0.0-1.0 fraction of mux done
         self.signals = RenderSignals()
 
     def _get_av(self):
@@ -871,8 +872,18 @@ class RenderWorker(QRunnable):
             self._last_error = "Missing audio output."
             return False
 
+        # Determine total audio duration for progress reporting.
+        total_duration = 0.0
+        if self.preview_seconds is not None:
+            total_duration = float(self.preview_seconds)
+        elif self.audio_input_stream.duration and self.audio_input_stream.time_base:
+            total_duration = float(
+                self.audio_input_stream.duration * self.audio_input_stream.time_base
+            )
+
         samples_written = 0
         stop_at_time = False
+        last_mux_emit = 0.0
         try:
             for packet in self.audio_input_container.demux(self.audio_input_stream):
                 if self._cancel_requested:
@@ -886,11 +897,13 @@ class RenderWorker(QRunnable):
                         self._cleanup_on_cancel()
                         self.signals.canceled.emit()
                         return None
-                    if self.preview_seconds is not None and frame.pts is not None:
-                        time_seconds = float(frame.pts * frame.time_base)
-                        if time_seconds >= self.preview_seconds:
-                            stop_at_time = True
-                            break
+                    current_time = 0.0
+                    if frame.pts is not None:
+                        current_time = float(frame.pts * frame.time_base)
+                        if self.preview_seconds is not None:
+                            if current_time >= self.preview_seconds:
+                                stop_at_time = True
+                                break
                     for resampled in self.audio_resampler.resample(frame):
                         if self._cancel_requested:
                             self._cleanup_on_cancel()
@@ -902,12 +915,20 @@ class RenderWorker(QRunnable):
                         samples_written += resampled.samples
                         for out_packet in self.audio_output_stream.encode(resampled):
                             self.video_data.container.mux(out_packet)
+                    # Emit mux progress periodically
+                    now = time.time()
+                    if total_duration > 0 and now - last_mux_emit >= 0.5:
+                        frac = min(current_time / total_duration, 1.0)
+                        self.signals.mux_progress.emit(frac)
+                        last_mux_emit = now
         except Exception as exc:
             self._last_error = str(exc)
             return False
 
         for out_packet in self.audio_output_stream.encode():
             self.video_data.container.mux(out_packet)
+
+        self.signals.mux_progress.emit(1.0)
 
         try:
             self.audio_input_container.close()

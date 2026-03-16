@@ -159,11 +159,32 @@ class SrtEditTab(BaseTab):
         self._table_view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._table_view.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self._table_view.setAlternatingRowColors(True)
-        self._table_view.horizontalHeader().setStretchLastSection(True)
-        self._table_view.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Interactive
-        )
         self._table_view.verticalHeader().setVisible(False)
+        self._table_view.setWordWrap(True)
+        self._table_view.setTextElideMode(Qt.TextElideMode.ElideNone)
+
+        header = self._table_view.horizontalHeader()
+        header.setStretchLastSection(False)
+        # COL_INDEX=0, COL_START=1, COL_END=2, COL_DURATION=3 => Fixed
+        # COL_TEXT=4 => Stretch, COL_SPEAKER=5 => Fixed narrow
+        from audio_visualizer.ui.tabs.srtEdit.tableModel import (
+            COL_INDEX, COL_START, COL_END, COL_DURATION, COL_TEXT, COL_SPEAKER,
+            MultilineTextDelegate,
+        )
+        self._table_view.setItemDelegateForColumn(COL_TEXT, MultilineTextDelegate(self._table_view))
+        header.setSectionResizeMode(COL_INDEX, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_START, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_END, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_DURATION, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_TEXT, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(COL_SPEAKER, QHeaderView.ResizeMode.Interactive)
+        self._table_view.setColumnWidth(COL_SPEAKER, 80)
+
+        # Allow row heights to grow with content
+        self._table_view.verticalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+
         bottom_layout.addWidget(self._table_view, stretch=3)
 
         # QA panel
@@ -280,6 +301,8 @@ class SrtEditTab(BaseTab):
         self._export_btn.clicked.connect(self._on_export)
 
         self._waveform_view.seek_requested.connect(self._on_seek_requested)
+        self._waveform_view.play_pause_requested.connect(self._on_play_pause_toggle)
+        self._waveform_view.boundary_moved.connect(self._on_boundary_moved)
 
         self._table_view.selectionModel().selectionChanged.connect(
             self._on_table_selection_changed
@@ -389,6 +412,27 @@ class SrtEditTab(BaseTab):
     def _on_seek_requested(self, ms: int) -> None:
         self._media_player.setPosition(ms)
         self._waveform_view.set_cursor(ms)
+
+    def _on_play_pause_toggle(self) -> None:
+        """Toggle playback start/pause."""
+        from PySide6.QtMultimedia import QMediaPlayer
+        if self._media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self._on_pause()
+        else:
+            self._on_play()
+
+    def _on_boundary_moved(self, index: int, which: str, ms: int) -> None:
+        """Handle a region boundary drag from the waveform."""
+        if index < 0 or index >= len(self._document.entries):
+            return
+        from audio_visualizer.ui.tabs.srtEdit.commands import EditTimestampCommand
+        if which == "start":
+            cmd = EditTimestampCommand(self._document, index, new_start_ms=ms)
+        else:
+            cmd = EditTimestampCommand(self._document, index, new_end_ms=ms)
+        self._push_command(cmd)
+        self._table_model.notify_rows_changed(index, index)
+        self._waveform_view.set_regions(self._document.entries)
 
     def _on_playback_tick(self) -> None:
         pos = self._media_player.position()

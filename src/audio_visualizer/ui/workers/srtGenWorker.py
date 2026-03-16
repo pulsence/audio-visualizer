@@ -10,7 +10,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from PySide6.QtCore import QRunnable
 
@@ -53,18 +53,23 @@ class SrtGenWorker(QRunnable):
         Ordered list of job specs to process.
     emitter:
         Shared event emitter that transcribe_file writes into.
+    model_manager:
+        Optional shared ModelManager. When provided, the worker uses it
+        for model loading so the tab can track loaded state.
     """
 
     def __init__(
         self,
         jobs: List[SrtGenJobSpec],
         emitter: AppEventEmitter,
+        model_manager: Any | None = None,
     ) -> None:
         super().__init__()
         self.setAutoDelete(True)
 
         self._jobs = jobs
         self._emitter = emitter
+        self._model_manager = model_manager
         self._cancel_flag = threading.Event()
         self.signals = WorkerSignals()
         self._bridge = WorkerBridge(emitter, self.signals)
@@ -98,6 +103,10 @@ class SrtGenWorker(QRunnable):
                 self.signals.completed.emit({"results": [], "total": 0})
                 return
 
+            if self._cancel_flag.is_set():
+                self.signals.canceled.emit("Cancelled before model load")
+                return
+
             first = self._jobs[0]
             self._emitter.emit(AppEvent(
                 event_type=EventType.STAGE,
@@ -105,12 +114,27 @@ class SrtGenWorker(QRunnable):
                 data={"stage_number": 0, "total_stages": total + 1},
             ))
 
-            model, device_used, compute_type_used = load_model(
-                model_name=first.model_name,
-                device=first.device,
-                strict_cuda=False,
-                emitter=self._emitter,
-            )
+            if self._model_manager is not None:
+                # Use the shared ModelManager for consistent state
+                model = self._model_manager.load(
+                    model_name=first.model_name,
+                    device=first.device,
+                    strict_cuda=False,
+                )
+                info = self._model_manager.model_info()
+                device_used = info.device if info else first.device
+                compute_type_used = info.compute_type if info else "default"
+            else:
+                model, device_used, compute_type_used = load_model(
+                    model_name=first.model_name,
+                    device=first.device,
+                    strict_cuda=False,
+                    emitter=self._emitter,
+                )
+
+            if self._cancel_flag.is_set():
+                self.signals.canceled.emit("Cancelled after model load")
+                return
 
             for idx, job in enumerate(self._jobs):
                 if self._cancel_flag.is_set():

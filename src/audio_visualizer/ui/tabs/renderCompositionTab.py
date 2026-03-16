@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import copy
 import logging
+import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -197,6 +200,9 @@ class RenderCompositionTab(BaseTab):
 
         # -- Audio source selector --
         self._build_audio_section(content_layout)
+
+        # -- Live preview --
+        self._build_preview_section(content_layout)
 
         # -- Output settings --
         self._build_output_section(content_layout)
@@ -401,6 +407,36 @@ class RenderCompositionTab(BaseTab):
         group.setLayout(layout)
         parent_layout.addWidget(group)
 
+    def _build_preview_section(self, parent_layout: QVBoxLayout) -> None:
+        group = QGroupBox("Live Preview")
+        layout = QVBoxLayout()
+
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("Timestamp (ms):"))
+        self._preview_time_spin = QSpinBox()
+        self._preview_time_spin.setRange(0, 999999999)
+        self._preview_time_spin.setValue(0)
+        controls.addWidget(self._preview_time_spin)
+
+        self._preview_refresh_btn = QPushButton("Refresh Preview")
+        self._preview_refresh_btn.clicked.connect(self._on_refresh_preview)
+        controls.addWidget(self._preview_refresh_btn)
+
+        self._preview_status_label = QLabel("")
+        controls.addWidget(self._preview_status_label)
+        controls.addStretch()
+        layout.addLayout(controls)
+
+        self._preview_label = QLabel()
+        self._preview_label.setMinimumHeight(200)
+        self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview_label.setStyleSheet("background: #1a1a1a; border: 1px solid #333;")
+        self._preview_label.setText("Click 'Refresh Preview' to generate a frame")
+        layout.addWidget(self._preview_label)
+
+        group.setLayout(layout)
+        parent_layout.addWidget(group)
+
     def _build_output_section(self, parent_layout: QVBoxLayout) -> None:
         group = QGroupBox("Output Settings")
         layout = QHBoxLayout()
@@ -494,6 +530,17 @@ class RenderCompositionTab(BaseTab):
                         f"{asset.display_name} [{asset.id[:8]}]",
                         asset.id,
                     )
+            # Add direct-file entries for layers that use asset_path without asset_id
+            seen_paths: set[str] = set()
+            for layer in self._model.layers:
+                if layer.asset_path and not layer.asset_id:
+                    path_str = str(layer.asset_path)
+                    if path_str not in seen_paths:
+                        seen_paths.add(path_str)
+                        self._source_combo.addItem(
+                            f"File: {layer.asset_path.name}",
+                            f"file:{path_str}",
+                        )
             # Restore selection if still available
             idx = self._source_combo.findText(current_source)
             if idx >= 0:
@@ -507,6 +554,13 @@ class RenderCompositionTab(BaseTab):
                 if asset.category in ("audio", "video"):
                     label = f"{asset.display_name} [{asset.id[:8]}]"
                     self._audio_combo.addItem(label, asset.id)
+            # Add direct-file entry for audio if set
+            if self._model.audio_source_path and not self._model.audio_source_asset_id:
+                file_data = f"file:{self._model.audio_source_path}"
+                self._audio_combo.addItem(
+                    f"File: {self._model.audio_source_path.name}",
+                    file_data,
+                )
             idx = self._audio_combo.findText(current_audio)
             if idx >= 0:
                 self._audio_combo.setCurrentIndex(idx)
@@ -563,7 +617,15 @@ class RenderCompositionTab(BaseTab):
                 else:
                     self._source_combo.setCurrentIndex(0)
             elif layer.asset_path:
-                self._source_combo.setCurrentIndex(0)
+                # Direct file-backed layer — find or add a combo entry
+                file_data = f"file:{layer.asset_path}"
+                idx = self._source_combo.findData(file_data)
+                if idx < 0:
+                    self._source_combo.addItem(
+                        f"File: {layer.asset_path.name}", file_data
+                    )
+                    idx = self._source_combo.count() - 1
+                self._source_combo.setCurrentIndex(idx)
             else:
                 self._source_combo.setCurrentIndex(0)
 
@@ -666,13 +728,18 @@ class RenderCompositionTab(BaseTab):
         if layer is None:
             return
 
-        asset_id = self._source_combo.currentData()
+        data = self._source_combo.currentData()
+        asset_id: str | None = None
         asset_path: Path | None = None
 
-        if asset_id and self._session_context:
-            asset = self._session_context.get_asset(asset_id)
-            if asset:
-                asset_path = asset.path
+        if data and isinstance(data, str):
+            if data.startswith("file:"):
+                asset_path = Path(data[5:])
+            elif self._session_context:
+                asset_id = data
+                asset = self._session_context.get_asset(asset_id)
+                if asset:
+                    asset_path = asset.path
 
         cmd = ChangeSourceCommand(self._model, layer.id, asset_id, asset_path)
         self._push_command(cmd)
@@ -686,6 +753,8 @@ class RenderCompositionTab(BaseTab):
         if path is not None:
             cmd = ChangeSourceCommand(self._model, layer.id, None, path)
             self._push_command(cmd)
+            # Refresh to show the direct file in the source combo
+            self._load_layer_properties(layer)
             self.settings_changed.emit()
 
     def _on_layer_type_changed(self, text: str) -> None:
@@ -813,12 +882,18 @@ class RenderCompositionTab(BaseTab):
     def _on_audio_source_changed(self, index: int) -> None:
         if self._updating_ui:
             return
-        asset_id = self._audio_combo.currentData()
+        data = self._audio_combo.currentData()
+        asset_id: str | None = None
         audio_path: Path | None = None
-        if asset_id and self._session_context:
-            asset = self._session_context.get_asset(asset_id)
-            if asset:
-                audio_path = asset.path
+
+        if data and isinstance(data, str):
+            if data.startswith("file:"):
+                audio_path = Path(data[5:])
+            elif self._session_context:
+                asset_id = data
+                asset = self._session_context.get_asset(asset_id)
+                if asset:
+                    audio_path = asset.path
 
         cmd = ChangeAudioSourceCommand(self._model, asset_id, audio_path)
         self._push_command(cmd)
@@ -829,6 +904,17 @@ class RenderCompositionTab(BaseTab):
         if path is not None:
             cmd = ChangeAudioSourceCommand(self._model, None, path)
             self._push_command(cmd)
+            # Show the direct file in the audio combo
+            self._updating_ui = True
+            try:
+                file_data = f"file:{path}"
+                idx = self._audio_combo.findData(file_data)
+                if idx < 0:
+                    self._audio_combo.addItem(f"File: {path.name}", file_data)
+                    idx = self._audio_combo.count() - 1
+                self._audio_combo.setCurrentIndex(idx)
+            finally:
+                self._updating_ui = False
             self.settings_changed.emit()
 
     def _pick_session_or_file(
@@ -869,6 +955,56 @@ class RenderCompositionTab(BaseTab):
             self._output_path_edit.setText(path)
 
     # ------------------------------------------------------------------
+    # Live preview
+    # ------------------------------------------------------------------
+
+    def _on_refresh_preview(self) -> None:
+        """Generate a single-frame preview at the selected timestamp."""
+        valid, msg = self.validate_settings()
+        if not valid:
+            self._preview_status_label.setText(f"Cannot preview: {msg}")
+            return
+
+        self._preview_refresh_btn.setEnabled(False)
+        self._preview_status_label.setText("Generating preview...")
+
+        timestamp_ms = self._preview_time_spin.value()
+        timestamp_s = timestamp_ms / 1000.0
+
+        worker = _PreviewWorker(copy.deepcopy(self._model), timestamp_s)
+        worker.signals.finished.connect(self._on_preview_finished)
+        worker.signals.failed.connect(self._on_preview_failed)
+
+        mw = self._main_window
+        if mw and hasattr(mw, "render_thread_pool"):
+            mw.render_thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
+    def _on_preview_finished(self, image_path: str) -> None:
+        """Display the generated preview frame."""
+        self._preview_refresh_btn.setEnabled(True)
+        self._preview_status_label.setText("")
+
+        pixmap = QPixmap(image_path)
+        if pixmap.isNull():
+            self._preview_status_label.setText("Failed to load preview image")
+            return
+
+        # Scale to fit the label while preserving aspect ratio
+        scaled = pixmap.scaled(
+            self._preview_label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._preview_label.setPixmap(scaled)
+
+    def _on_preview_failed(self, error: str) -> None:
+        """Handle preview generation failure."""
+        self._preview_refresh_btn.setEnabled(True)
+        self._preview_status_label.setText(f"Preview failed: {error}")
+
+    # ------------------------------------------------------------------
     # Presets
     # ------------------------------------------------------------------
 
@@ -904,6 +1040,8 @@ class RenderCompositionTab(BaseTab):
         output_path = self._output_path_edit.text().strip()
         if not output_path:
             output_path = "composition_output.mp4"
+        elif not Path(output_path).suffix:
+            output_path = output_path + ".mp4"
 
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
@@ -1061,3 +1199,71 @@ class RenderCompositionTab(BaseTab):
             self._out_fps_spin.setValue(self._model.output_fps)
         finally:
             self._updating_ui = False
+
+
+# ----------------------------------------------------------------------
+# Preview worker
+# ----------------------------------------------------------------------
+
+class _PreviewSignals(QObject):
+    """Signals for the preview worker."""
+
+    finished = Signal(str)   # image path
+    failed = Signal(str)     # error message
+
+
+class _PreviewWorker(QRunnable):
+    """QRunnable that extracts a single preview frame via FFmpeg."""
+
+    def __init__(self, model: CompositionModel, timestamp_s: float) -> None:
+        super().__init__()
+        self.setAutoDelete(True)
+        self._model = model
+        self._timestamp_s = timestamp_s
+        self.signals = _PreviewSignals()
+
+    def run(self) -> None:
+        try:
+            import shutil
+
+            if shutil.which("ffmpeg") is None:
+                self.signals.failed.emit("FFmpeg not found on PATH.")
+                return
+
+            from audio_visualizer.ui.tabs.renderComposition.filterGraph import (
+                build_preview_command,
+            )
+
+            # Use a temp file for the preview image
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".png", prefix="comp_preview_", delete=False
+            )
+            tmp.close()
+
+            cmd = build_preview_command(self._model, self._timestamp_s, tmp.name)
+            logger.debug("Preview command: %s", " ".join(cmd))
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                stderr = result.stderr[-500:] if result.stderr else ""
+                self.signals.failed.emit(
+                    f"FFmpeg exited with code {result.returncode}: {stderr}"
+                )
+                return
+
+            if not Path(tmp.name).exists() or Path(tmp.name).stat().st_size == 0:
+                self.signals.failed.emit("Preview frame was not generated.")
+                return
+
+            self.signals.finished.emit(tmp.name)
+
+        except subprocess.TimeoutExpired:
+            self.signals.failed.emit("Preview generation timed out.")
+        except Exception as exc:
+            self.signals.failed.emit(str(exc))

@@ -7,6 +7,7 @@ import pytest
 from audio_visualizer.ui.tabs.renderComposition.filterGraph import (
     build_ffmpeg_command,
     build_filter_graph,
+    build_preview_command,
     _build_enable_expr,
     _build_matte_filter,
     _duration_seconds,
@@ -315,6 +316,54 @@ class TestBuildFFmpegCommand:
         cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
         # Still produces a command, but no filter_complex
         assert "-filter_complex" not in cmd
+
+
+# ------------------------------------------------------------------
+# Preview command
+# ------------------------------------------------------------------
+
+
+class TestBuildPreviewCommand:
+    def test_preview_command_has_vframes(self):
+        model = CompositionModel()
+        model.output_width = 1920
+        model.output_height = 1080
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=5000,
+        ))
+        cmd = build_preview_command(model, 2.5, "/tmp/preview.png")
+        assert "-vframes" in cmd
+        assert "1" in cmd
+        assert "-ss" in cmd
+        assert "2.500" in cmd
+        assert str(Path("/tmp/preview.png")) in cmd
+
+    def test_preview_command_has_filter(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=5000,
+        ))
+        cmd = build_preview_command(model, 0.0, "/tmp/preview.png")
+        assert "-filter_complex" in cmd
+
+    def test_preview_command_no_audio(self):
+        """Preview commands should not include audio codec flags."""
+        model = CompositionModel()
+        model.audio_source_path = Path("/tmp/audio.mp3")
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=5000,
+        ))
+        cmd = build_preview_command(model, 1.0, "/tmp/preview.png")
+        assert "-c:a" not in cmd
 
 
 # ------------------------------------------------------------------

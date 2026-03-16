@@ -94,7 +94,8 @@ def main_window():
 class TestSettingsMigration:
     """Test loading old Audio Visualizer-only settings into multi-tab schema."""
 
-    def test_pre_stage_three_to_current(self):
+    def test_pre_stage_three_rejected(self):
+        """Pre-Stage-Three settings are rejected and a clean default is returned."""
         old = {
             "general": {"audio_file_path": "song.mp3", "fps": 24},
             "visualizer": {"visualizer_type": "Volume: Rectangle"},
@@ -107,17 +108,8 @@ class TestSettingsMigration:
         assert "tabs" in migrated
         assert len(migrated["tabs"]) == 5
 
-        av = migrated["tabs"]["audio_visualizer"]
-        assert av["general"]["audio_file_path"] == "song.mp3"
-        assert av["general"]["fps"] == 24
-        assert av["visualizer"]["visualizer_type"] == "Volume: Rectangle"
-        assert av["specific"]["box_height"] == 100
-        assert av["ui"]["preview"] is True
-        assert av["ui"]["show_output"] is True
-        assert av["ui"]["preview_panel_visible"] is False
-
-        # Other tabs should be empty dicts
-        for tab_id in ("srt_gen", "srt_edit", "caption_animate", "render_composition"):
+        # All tabs should be empty (old data discarded)
+        for tab_id in migrated["tabs"]:
             assert migrated["tabs"][tab_id] == {}
 
     def test_already_versioned_passes_through(self):
@@ -140,7 +132,7 @@ class TestSettingsMigration:
         assert len(migrated["tabs"]) == 5
 
     def test_save_load_migration_roundtrip(self, tmp_path):
-        """Save pre-Stage-Three format, load it, verify migration."""
+        """Save pre-Stage-Three format, load it, verify it falls back to defaults."""
         old = {
             "general": {"fps": 12},
             "visualizer": {"visualizer_type": "Waveform"},
@@ -151,7 +143,8 @@ class TestSettingsMigration:
         loaded = load_settings(path)
         assert loaded is not None
         assert loaded["version"] == CURRENT_SCHEMA_VERSION
-        assert loaded["tabs"]["audio_visualizer"]["general"]["fps"] == 12
+        # Pre-Stage-Three data is rejected — all tabs are empty defaults
+        assert loaded["tabs"]["audio_visualizer"] == {}
 
 
 # ------------------------------------------------------------------

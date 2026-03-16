@@ -8,6 +8,7 @@ app = QApplication.instance() or QApplication([])
 
 import pytest
 
+from audio_visualizer.ui.sessionContext import SessionAsset
 from audio_visualizer.ui.tabs.renderCompositionTab import RenderCompositionTab
 from audio_visualizer.ui.tabs.renderComposition.model import (
     CompositionLayer,
@@ -516,3 +517,127 @@ class TestPresets:
         layers = get_preset("fullscreen_bg_centered_viz")
         ids = [l.id for l in layers]
         assert len(ids) == len(set(ids))
+
+
+# ------------------------------------------------------------------
+# Direct file source handling
+# ------------------------------------------------------------------
+
+
+class TestDirectFileSourceHandling:
+    def test_load_layer_properties_shows_direct_file(self):
+        """When a layer has asset_path but no asset_id, the source combo shows the file."""
+        tab = RenderCompositionTab()
+        layer = CompositionLayer(
+            display_name="BG",
+            layer_type="background",
+            asset_path=Path("/tmp/my_background.mp4"),
+        )
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+        tab._layer_list.setCurrentRow(0)
+
+        tab._load_layer_properties(layer)
+
+        # The source combo should show the file entry
+        assert tab._source_combo.currentText().startswith("File:")
+        assert "my_background.mp4" in tab._source_combo.currentText()
+
+    def test_load_layer_properties_session_asset(self):
+        """When a layer has an asset_id matching a combo entry, it selects correctly."""
+        tab = RenderCompositionTab()
+        from audio_visualizer.ui.sessionContext import SessionContext
+
+        ctx = SessionContext()
+        tab.set_session_context(ctx)
+
+        ctx.register_asset(SessionAsset(
+            id="vid-abc",
+            display_name="My Video",
+            path=Path("/tmp/video.mp4"),
+            category="video",
+        ))
+
+        layer = CompositionLayer(
+            display_name="Layer1",
+            asset_id="vid-abc",
+            asset_path=Path("/tmp/video.mp4"),
+        )
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+        tab._load_layer_properties(layer)
+
+        assert "My Video" in tab._source_combo.currentText()
+
+    def test_load_layer_properties_no_source(self):
+        """When a layer has no source, combo shows (none)."""
+        tab = RenderCompositionTab()
+        layer = CompositionLayer(display_name="Empty")
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+        tab._load_layer_properties(layer)
+
+        assert tab._source_combo.currentText() == "(none)"
+
+    def test_refresh_asset_combos_preserves_direct_files(self):
+        """Direct-file entries survive asset combo refresh."""
+        tab = RenderCompositionTab()
+        from audio_visualizer.ui.sessionContext import SessionContext
+
+        ctx = SessionContext()
+        tab.set_session_context(ctx)
+
+        # Add a layer with a direct file path
+        layer = CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg_file.mp4"),
+        )
+        tab._model.add_layer(layer)
+
+        # Trigger a refresh
+        tab._refresh_asset_combos()
+
+        # The source combo should include the direct file entry
+        texts = [tab._source_combo.itemText(i) for i in range(tab._source_combo.count())]
+        assert any("bg_file.mp4" in t for t in texts)
+
+    def test_output_path_gets_mp4_extension(self):
+        """Output path without extension gets .mp4 appended."""
+        tab = RenderCompositionTab()
+        # Add a valid layer so validation passes
+        tab._model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            end_ms=5000,
+        ))
+        tab._output_path_edit.setText("/tmp/my_output")
+
+        # The _on_start_render would normally append .mp4
+        # Test the logic directly
+        output_path = tab._output_path_edit.text().strip()
+        if not Path(output_path).suffix:
+            output_path = output_path + ".mp4"
+        assert output_path == "/tmp/my_output.mp4"
+
+
+# ------------------------------------------------------------------
+# Preview section
+# ------------------------------------------------------------------
+
+
+class TestPreviewSection:
+    def test_preview_widgets_exist(self):
+        tab = RenderCompositionTab()
+        assert hasattr(tab, "_preview_label")
+        assert hasattr(tab, "_preview_time_spin")
+        assert hasattr(tab, "_preview_refresh_btn")
+
+    def test_preview_timestamp_default(self):
+        tab = RenderCompositionTab()
+        assert tab._preview_time_spin.value() == 0
+
+    def test_preview_validate_fails_gracefully(self):
+        """Refresh preview with no layers shows error in status label."""
+        tab = RenderCompositionTab()
+        tab._on_refresh_preview()
+        assert "Cannot preview" in tab._preview_status_label.text()

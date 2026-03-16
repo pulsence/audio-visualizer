@@ -1,8 +1,7 @@
 """Versioned settings schema, migration, and project-file persistence.
 
-Defines the canonical settings structure (version 1), provides migration
-from the pre-Stage-Three format, and offers helpers to load, save, and
-validate settings files.
+Defines the canonical settings structure (version 1) and offers helpers
+to load, save, and validate settings files.
 """
 from __future__ import annotations
 
@@ -29,15 +28,6 @@ _TAB_KEYS: tuple[str, ...] = (
     "srt_edit",
     "caption_animate",
     "render_composition",
-)
-
-# Keys from the old pre-Stage-Three "ui" section that belong inside the
-# per-tab ``tabs.audio_visualizer.ui`` bucket rather than the new
-# top-level ``ui`` section.
-_OLD_UI_PRESERVE_KEYS: tuple[str, ...] = (
-    "preview",
-    "show_output",
-    "preview_panel_visible",
 )
 
 
@@ -77,11 +67,11 @@ def migrate_settings(data: dict) -> dict:
     """Migrate *data* to :data:`CURRENT_SCHEMA_VERSION`.
 
     If *data* already carries the current version number it is returned
-    (deep-copied) as-is.  Pre-Stage-Three settings (no ``"version"``
-    key) are restructured so that their ``"general"``, ``"visualizer"``,
-    ``"specific"``, and ``"ui"`` sections land inside
-    ``tabs.audio_visualizer``, while the new top-level ``ui`` and
-    ``session`` sections receive defaults.
+    (deep-copied) as-is with missing sections filled in.
+
+    Pre-Stage-Three settings (no ``"version"`` key) are **rejected**:
+    a warning is logged and a clean default schema is returned.  Legacy
+    payloads are no longer migrated.
 
     Parameters
     ----------
@@ -105,37 +95,13 @@ def migrate_settings(data: dict) -> dict:
         return result
 
     # ----------------------------------------------------------
-    # Pre-Stage-Three format detected
+    # Pre-Stage-Three format detected — reject and use defaults
     # ----------------------------------------------------------
-    logger.info("Migrating pre-Stage-Three settings to version %d.", CURRENT_SCHEMA_VERSION)
-
-    old_general = data.get("general", {})
-    old_visualizer = data.get("visualizer", {})
-    old_specific = data.get("specific", {})
-    old_ui = data.get("ui", {})
-
-    # Build the audio_visualizer tab bucket from old top-level keys.
-    av_tab: dict = {}
-    if old_general:
-        av_tab["general"] = old_general
-    if old_visualizer:
-        av_tab["visualizer"] = old_visualizer
-    if old_specific:
-        av_tab["specific"] = old_specific
-
-    # Preserve selected old "ui" keys inside the tab.
-    tab_ui: dict = {}
-    for key in _OLD_UI_PRESERVE_KEYS:
-        if key in old_ui:
-            tab_ui[key] = old_ui[key]
-    if tab_ui:
-        av_tab["ui"] = tab_ui
-
-    # Assemble the new schema.
-    result = create_default_schema()
-    result["tabs"]["audio_visualizer"] = av_tab
-
-    return result
+    logger.warning(
+        "Ignoring pre-Stage-Three settings (no 'version' key). "
+        "Falling back to clean default schema."
+    )
+    return create_default_schema()
 
 
 def _ensure_complete(data: dict) -> dict:

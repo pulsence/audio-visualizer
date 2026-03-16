@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import Qt, QRunnable, QThreadPool, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from audio_visualizer.events import AppEventEmitter
 from audio_visualizer.srt.config import PRESETS, apply_overrides, load_config_file
+from audio_visualizer.srt.modelManager import ModelManager
 from audio_visualizer.srt.models import (
     FormattingConfig,
     PipelineMode,
@@ -56,7 +58,16 @@ _INPUT_FILTERS = (
     "All files (*)"
 )
 
-_MODEL_NAMES = ["tiny", "base", "small", "medium", "large-v3"]
+# Display name -> internal model identifier mapping
+_MODEL_MAP: dict[str, str] = {
+    "tiny": "tiny",
+    "base": "base",
+    "small": "small",
+    "medium": "medium",
+    "large": "large-v3",
+    "turbo": "turbo",
+}
+_MODEL_NAMES = list(_MODEL_MAP.keys())
 _DEVICES = ["auto", "cpu", "cuda"]
 _FORMATS = ["srt", "vtt", "ass", "txt", "json"]
 _MODES = ["general", "transcript", "shorts"]
@@ -86,6 +97,9 @@ class SrtGenTab(BaseTab):
         self._active_worker: Optional[SrtGenWorker] = None
         self._thread_pool = QThreadPool()
         self._thread_pool.setMaxThreadCount(1)
+        self._model_manager = ModelManager()
+        self._model_loaded = False
+        self._loaded_model_name: str | None = None
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(8, 8, 8, 8)
@@ -133,10 +147,10 @@ class SrtGenTab(BaseTab):
         preset_row.addStretch()
         layout.addLayout(preset_row)
 
-        # Queue list
+        # Queue list — compact by default, grows as files are added
         self._input_list = QListWidget()
         self._input_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self._input_list.setMinimumHeight(80)
+        self._input_list.setMaximumHeight(120)
         layout.addWidget(self._input_list)
 
         # Add / remove buttons
@@ -193,24 +207,30 @@ class SrtGenTab(BaseTab):
 
     def _build_model_section(self) -> None:
         group = QGroupBox("Model")
-        layout = QHBoxLayout()
+        layout = QVBoxLayout()
 
-        layout.addWidget(QLabel("Model:"))
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("Model:"))
         self._model_combo = QComboBox()
         self._model_combo.addItems(_MODEL_NAMES)
         self._model_combo.setCurrentText("base")
-        layout.addWidget(self._model_combo)
+        controls.addWidget(self._model_combo)
 
-        layout.addWidget(QLabel("Device:"))
+        controls.addWidget(QLabel("Device:"))
         self._device_combo = QComboBox()
         self._device_combo.addItems(_DEVICES)
-        layout.addWidget(self._device_combo)
+        controls.addWidget(self._device_combo)
 
         self._load_model_btn = QPushButton("Load Model")
         self._load_model_btn.clicked.connect(self._on_load_model)
-        layout.addWidget(self._load_model_btn)
+        controls.addWidget(self._load_model_btn)
 
-        layout.addStretch()
+        controls.addStretch()
+        layout.addLayout(controls)
+
+        self._model_status_label = QLabel("No model loaded")
+        layout.addWidget(self._model_status_label)
+
         group.setLayout(layout)
         self._content_layout.addWidget(group)
 
@@ -505,7 +525,7 @@ class SrtGenTab(BaseTab):
         layout = QVBoxLayout()
 
         btn_row = QHBoxLayout()
-        self._start_btn = QPushButton("Start Transcription")
+        self._start_btn = QPushButton("Generate SRTs")
         self._start_btn.clicked.connect(self._start_transcription)
         btn_row.addWidget(self._start_btn)
 
@@ -523,6 +543,13 @@ class SrtGenTab(BaseTab):
 
         self._status_label = QLabel("Ready")
         layout.addWidget(self._status_label)
+
+        # Scrolling event log
+        self._event_log = QPlainTextEdit()
+        self._event_log.setReadOnly(True)
+        self._event_log.setMaximumHeight(150)
+        self._event_log.setPlaceholderText("Event log will appear here during transcription...")
+        layout.addWidget(self._event_log)
 
         group.setLayout(layout)
         self._content_layout.addWidget(group)
@@ -591,37 +618,78 @@ class SrtGenTab(BaseTab):
             QMessageBox.warning(self, "Config Error", f"Failed to load config:\n{exc}")
 
     def _on_load_model(self) -> None:
-        """Pre-load the selected Whisper model in a background thread."""
-        model_name = self._model_combo.currentText()
+        """Load or unload the selected Whisper model in a background thread."""
+        if self._model_loaded:
+            # Unload the model
+            self._model_manager.unload()
+            self._set_model_state(False, None)
+            self._append_event("Model unloaded.")
+            return
+
+        display_name = self._model_combo.currentText()
+        model_id = _MODEL_MAP.get(display_name, display_name)
         device = self._device_combo.currentText()
-        self._status_label.setText(f"Loading model '{model_name}'...")
+        self._status_label.setText(f"Loading model '{display_name}'...")
         self._load_model_btn.setEnabled(False)
+        self._append_event(f"Loading model '{display_name}' ({model_id}) on {device}...")
 
-        # Use a lightweight QRunnable for model loading
-        from PySide6.QtCore import QRunnable
-
-        emitter = AppEventEmitter()
         tab = self
+        manager = self._model_manager
 
         class _ModelLoader(QRunnable):
             def run(self_loader) -> None:
                 try:
-                    from audio_visualizer.srt.srtApi import load_model
-                    load_model(
-                        model_name=model_name,
+                    manager.load(
+                        model_name=model_id,
                         device=device,
                         strict_cuda=False,
-                        emitter=emitter,
                     )
+                    tab._on_model_load_finished(True, display_name, None)
                 except Exception as exc:
                     logger.error("Model pre-load failed: %s", exc)
+                    tab._on_model_load_finished(False, display_name, str(exc))
 
         loader = _ModelLoader()
         loader.setAutoDelete(True)
         self._thread_pool.start(loader)
-        # Re-enable button after pool completes (approximate)
+
+    def _on_model_load_finished(self, success: bool, display_name: str, error: str | None) -> None:
+        """Called from background thread when model load completes."""
+        if success:
+            info = self._model_manager.model_info()
+            device_info = info.device if info else "unknown"
+            self._set_model_state(True, display_name)
+            self._status_label.setText(f"Model '{display_name}' loaded on {device_info}")
+            self._append_event(f"Model '{display_name}' loaded on {device_info}")
+        else:
+            self._set_model_state(False, None)
+            self._status_label.setText(f"Failed to load model: {error}")
+            self._append_event(f"Model load failed: {error}")
         self._load_model_btn.setEnabled(True)
-        self._status_label.setText(f"Model '{model_name}' load requested.")
+
+    def _set_model_state(self, loaded: bool, display_name: str | None) -> None:
+        """Update model-loaded UI state."""
+        self._model_loaded = loaded
+        self._loaded_model_name = display_name
+        if loaded and display_name:
+            info = self._model_manager.model_info()
+            device_info = info.device if info else ""
+            self._model_status_label.setText(
+                f"Loaded: {display_name}" + (f" ({device_info})" if device_info else "")
+            )
+            self._load_model_btn.setText("Unload Model")
+        else:
+            self._model_status_label.setText("No model loaded")
+            self._load_model_btn.setText("Load Model")
+            self._load_model_btn.setEnabled(True)
+
+    def _append_event(self, text: str) -> None:
+        """Append a line to the scrolling event log."""
+        self._event_log.appendPlainText(text)
+        # Auto-scroll to bottom
+        sb = self._event_log.verticalScrollBar()
+        if sb:
+            sb.setValue(sb.maximum())
 
     # ==================================================================
     # Helper methods
@@ -808,9 +876,11 @@ class SrtGenTab(BaseTab):
         if idx >= 0:
             self._format_combo.setCurrentIndex(idx)
 
-        # Model
+        # Model — handle both display names and internal identifiers
         model = data.get("model", "base")
-        idx = self._model_combo.findText(model)
+        # If stored value is an internal id, find its display name
+        display = next((k for k, v in _MODEL_MAP.items() if v == model), model)
+        idx = self._model_combo.findText(display)
         if idx >= 0:
             self._model_combo.setCurrentIndex(idx)
 
@@ -908,8 +978,13 @@ class SrtGenTab(BaseTab):
         mode = PipelineMode(mode_str)
         language = self._language_edit.text().strip() or None
         word_level = self._word_level_cb.isChecked()
-        model_name = self._model_combo.currentText()
+        display_name = self._model_combo.currentText()
+        model_name = _MODEL_MAP.get(display_name, display_name)
         device = self._device_combo.currentText()
+
+        self._event_log.clear()
+        self._append_event(f"Starting transcription with model '{display_name}' ({model_name})")
+        self._append_event(f"Processing {len(input_paths)} file(s)...")
         diarize = self._diarize_cb.isChecked()
         hf_token = self._hf_token_edit.text().strip() or None
         keep_wav = self._diag_keep_wav.isChecked()
@@ -944,7 +1019,7 @@ class SrtGenTab(BaseTab):
             ))
 
         emitter = AppEventEmitter()
-        worker = SrtGenWorker(jobs=jobs, emitter=emitter)
+        worker = SrtGenWorker(jobs=jobs, emitter=emitter, model_manager=self._model_manager)
         self._active_worker = worker
 
         # Connect signals
@@ -979,9 +1054,12 @@ class SrtGenTab(BaseTab):
             self._progress_bar.setValue(int(percent))
         if message:
             self._status_label.setText(message)
+            self._append_event(message)
 
     def _on_stage(self, name: str, index: int, total: int, data: dict) -> None:
         self._status_label.setText(name)
+        stage_text = f"[Stage {index}/{total}] {name}" if index >= 0 and total > 0 else name
+        self._append_event(stage_text)
 
     def _on_log(self, level: str, message: str, data: dict) -> None:
         logger.log(
@@ -989,6 +1067,7 @@ class SrtGenTab(BaseTab):
             "SRT Gen: %s",
             message,
         )
+        self._append_event(f"[{level}] {message}")
 
     def _on_transcription_completed(self, data: dict) -> None:
         self._active_worker = None
@@ -1001,10 +1080,23 @@ class SrtGenTab(BaseTab):
         succeeded = sum(1 for r in results if r.get("success"))
         failed = total - succeeded
 
-        self._status_label.setText(
+        summary = (
             f"Completed: {succeeded}/{total} succeeded"
             + (f", {failed} failed" if failed else "")
         )
+        self._status_label.setText(summary)
+        self._append_event(summary)
+
+        # The model was loaded by the worker — update UI state
+        if self._model_manager.is_loaded():
+            info = self._model_manager.model_info()
+            if info:
+                # Find the display name for the loaded model
+                display = next(
+                    (k for k, v in _MODEL_MAP.items() if v == info.model_name),
+                    info.model_name,
+                )
+                self._set_model_state(True, display)
 
         # Register outputs as session assets
         for r in results:
@@ -1025,6 +1117,7 @@ class SrtGenTab(BaseTab):
         self._cancel_btn.setEnabled(False)
         self._progress_bar.setValue(0)
         self._status_label.setText(f"Failed: {error_message}")
+        self._append_event(f"FAILED: {error_message}")
         logger.error("SRT Gen batch failed: %s", error_message)
 
     def _on_transcription_canceled(self, message: str) -> None:
@@ -1032,6 +1125,7 @@ class SrtGenTab(BaseTab):
         self._start_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
         self._status_label.setText(f"Cancelled: {message}")
+        self._append_event(f"Cancelled: {message}")
         logger.info("SRT Gen batch cancelled: %s", message)
 
     # ==================================================================

@@ -12,7 +12,8 @@ from typing import Optional
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtWidgets import QScrollBar, QVBoxLayout, QWidget
 
 from audio_visualizer.ui.tabs.srtEdit.document import SubtitleEntry
 
@@ -36,18 +37,28 @@ class WaveformView(QWidget):
     Signals:
         seek_requested(int): Emitted when the user clicks the waveform.
             Payload is the requested position in milliseconds.
+        play_pause_requested(): Emitted when Space is pressed while focused.
+        boundary_moved(int, str, int): Emitted when a region boundary is
+            dragged. (entry_index, 'start'|'end', new_ms)
     """
 
     seek_requested = Signal(int)
+    play_pause_requested = Signal()
+    boundary_moved = Signal(int, str, int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
         self._sample_rate: int = 0
         self._duration_ms: int = 0
+        self._duration_s: float = 0.0
         self._regions: list[pg.LinearRegionItem] = []
         self._highlight_region: Optional[pg.LinearRegionItem] = None
         self._cursor_line: Optional[pg.InfiniteLine] = None
+        self._updating_scrollbar = False
+
+        # Accept focus so Space key works
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -67,7 +78,17 @@ class WaveformView(QWidget):
         # Click-to-seek
         self._plot_widget.scene().sigMouseClicked.connect(self._on_mouse_clicked)
 
+        # Track range changes for scrollbar sync
+        self._plot_widget.sigXRangeChanged.connect(self._on_x_range_changed)
+
         layout.addWidget(self._plot_widget)
+
+        # Horizontal scrollbar for panned/zoomed waveform
+        self._h_scrollbar = QScrollBar(Qt.Orientation.Horizontal)
+        self._h_scrollbar.setVisible(False)
+        self._h_scrollbar.valueChanged.connect(self._on_scrollbar_moved)
+        layout.addWidget(self._h_scrollbar)
+
         self.setLayout(layout)
 
     # ------------------------------------------------------------------
@@ -84,6 +105,7 @@ class WaveformView(QWidget):
         self._sample_rate = sample_rate
         num_samples = len(samples)
         self._duration_ms = int((num_samples / sample_rate) * 1000) if sample_rate > 0 else 0
+        self._duration_s = num_samples / sample_rate if sample_rate > 0 else 0.0
 
         # Create time axis in seconds
         time_axis = np.linspace(0, num_samples / sample_rate, num_samples, dtype=np.float32)
@@ -140,10 +162,15 @@ class WaveformView(QWidget):
             color = _REGION_COLORS[i % len(_REGION_COLORS)]
             region = pg.LinearRegionItem(
                 values=(start_s, end_s),
-                movable=False,
+                movable=True,
                 brush=pg.mkBrush(*color),
             )
             region.setZValue(-10)
+            # Track boundary drags
+            region_idx = i
+            region.sigRegionChangeFinished.connect(
+                lambda r, idx=region_idx: self._on_region_boundary_moved(idx, r)
+            )
             self._plot_widget.addItem(region)
             self._regions.append(region)
 
@@ -189,7 +216,8 @@ class WaveformView(QWidget):
     # ------------------------------------------------------------------
 
     def _on_mouse_clicked(self, event) -> None:
-        """Handle click on the plot scene to emit seek_requested."""
+        """Handle click on the plot scene to emit seek_requested and take focus."""
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
         if event.button() != Qt.MouseButton.LeftButton:
             return
         pos = event.scenePos()
@@ -198,3 +226,66 @@ class WaveformView(QWidget):
         time_ms = max(0, int(time_s * 1000))
         if time_ms <= self._duration_ms:
             self.seek_requested.emit(time_ms)
+
+    def _on_region_boundary_moved(self, index: int, region: pg.LinearRegionItem) -> None:
+        """Emit boundary_moved when the user finishes dragging a region."""
+        lo, hi = region.getRegion()
+        start_ms = max(0, int(lo * 1000))
+        end_ms = max(start_ms + 1, int(hi * 1000))
+        self.boundary_moved.emit(index, "start", start_ms)
+        self.boundary_moved.emit(index, "end", end_ms)
+
+    def _on_x_range_changed(self, view_box, range_) -> None:
+        """Update the horizontal scrollbar when the visible range changes."""
+        if self._duration_s <= 0 or self._updating_scrollbar:
+            return
+        lo, hi = range_
+        visible = hi - lo
+        total = self._duration_s
+        if visible >= total * 0.99:
+            self._h_scrollbar.setVisible(False)
+            return
+        self._h_scrollbar.setVisible(True)
+        self._updating_scrollbar = True
+        # Scrollbar range in ms (integer)
+        page_ms = int(visible * 1000)
+        total_ms = int(total * 1000)
+        self._h_scrollbar.setMinimum(0)
+        self._h_scrollbar.setMaximum(max(0, total_ms - page_ms))
+        self._h_scrollbar.setPageStep(page_ms)
+        self._h_scrollbar.setValue(max(0, int(lo * 1000)))
+        self._updating_scrollbar = False
+
+    def _on_scrollbar_moved(self, value: int) -> None:
+        """Pan the waveform view to match the scrollbar position."""
+        if self._updating_scrollbar or self._duration_s <= 0:
+            return
+        self._updating_scrollbar = True
+        vb = self._plot_widget.plotItem.vb
+        lo, hi = vb.viewRange()[0]
+        visible = hi - lo
+        new_lo = value / 1000.0
+        vb.setXRange(new_lo, new_lo + visible, padding=0)
+        self._updating_scrollbar = False
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Handle Space to toggle playback."""
+        if event.key() == Qt.Key.Key_Space:
+            self.play_pause_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def wheelEvent(self, event) -> None:
+        """Ctrl+wheel: horizontal panning. Normal wheel: zoom (default)."""
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Horizontal pan
+            delta = event.angleDelta().y()
+            vb = self._plot_widget.plotItem.vb
+            lo, hi = vb.viewRange()[0]
+            visible = hi - lo
+            shift = visible * 0.1 * (-1 if delta > 0 else 1)
+            vb.setXRange(lo + shift, hi + shift, padding=0)
+            event.accept()
+        else:
+            super().wheelEvent(event)

@@ -119,6 +119,7 @@ class CaptionAnimateTab(BaseTab):
         self._thread_pool = QThreadPool()
         self._thread_pool.setMaxThreadCount(1)
         self._example_presets_seeded = False
+        self._mux_audio_requested = False
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -586,6 +587,13 @@ class CaptionAnimateTab(BaseTab):
         group = QGroupBox("Render")
         layout = QVBoxLayout()
 
+        options_row = QHBoxLayout()
+        self._mux_audio_cb = QCheckBox("Mux audio into output")
+        self._mux_audio_cb.setChecked(False)
+        options_row.addWidget(self._mux_audio_cb)
+        options_row.addStretch()
+        layout.addLayout(options_row)
+
         btn_row = QHBoxLayout()
         self._start_btn = QPushButton("Start Render")
         self._start_btn.clicked.connect(self._start_render)
@@ -1006,6 +1014,10 @@ class CaptionAnimateTab(BaseTab):
             QMessageBox.warning(self, "Validation Error", msg)
             return
 
+        # Acquire shared job slot
+        if not self._main_window.try_start_job(self.tab_id):
+            return
+
         subtitle_path = Path(self._subtitle_edit.text().strip())
         output_dir = self._output_dir_edit.text().strip()
         if output_dir:
@@ -1013,7 +1025,8 @@ class CaptionAnimateTab(BaseTab):
         else:
             out_parent = subtitle_path.parent
 
-        output_path = out_parent / f"{subtitle_path.stem}_caption.mov"
+        # User-facing delivery is .mp4
+        output_path = out_parent / f"{subtitle_path.stem}_caption.mp4"
 
         # Build render config — use the preset name from builtin if selected
         preset_name = "modern_box"
@@ -1030,16 +1043,21 @@ class CaptionAnimateTab(BaseTab):
             reskin=self._reskin_cb.isChecked(),
         )
 
+        # Collect the full preset from UI for style parity
+        preset_override = self._collect_preset_config()
+
+        # Determine audio path for muxing or audio-reactive features
+        audio_path = None
+        if self._audio_file_edit.text().strip():
+            audio_path = Path(self._audio_file_edit.text().strip())
+        self._mux_audio_requested = self._mux_audio_cb.isChecked() and audio_path is not None
+
         spec = CaptionRenderJobSpec(
             subtitle_path=subtitle_path,
             output_path=output_path,
             config=config,
-            audio_path=(
-                Path(self._audio_file_edit.text().strip())
-                if self._audio_reactive_group.isChecked()
-                and self._audio_file_edit.text().strip()
-                else None
-            ),
+            preset_override=preset_override,
+            audio_path=audio_path if self._audio_reactive_group.isChecked() else None,
         )
 
         emitter = AppEventEmitter()
@@ -1060,6 +1078,11 @@ class CaptionAnimateTab(BaseTab):
         self._progress_bar.setValue(0)
         self._status_label.setText("Starting caption render...")
 
+        # Show in global progress
+        self._main_window.show_job_status(
+            "caption_render", self.tab_id, f"Rendering captions for {subtitle_path.name}..."
+        )
+
         self._thread_pool.start(worker)
         logger.info("Started CaptionRenderWorker for %s", subtitle_path.name)
 
@@ -1076,11 +1099,13 @@ class CaptionAnimateTab(BaseTab):
     def _on_progress(self, percent: float, message: str, data: dict) -> None:
         if percent >= 0:
             self._progress_bar.setValue(int(percent))
+            self._main_window.update_job_progress(percent, message or "")
         if message:
             self._status_label.setText(message)
 
     def _on_stage(self, name: str, index: int, total: int, data: dict) -> None:
         self._status_label.setText(name)
+        self._main_window.update_job_status(name)
 
     def _on_log(self, level: str, message: str, data: dict) -> None:
         logger.log(
@@ -1102,8 +1127,19 @@ class CaptionAnimateTab(BaseTab):
         quality = data.get("quality", "small")
         has_alpha = data.get("has_alpha", True)
 
+        # Audio mux post-processing if requested
+        if self._mux_audio_requested and output_path:
+            audio_path = self._audio_file_edit.text().strip()
+            if audio_path:
+                self._mux_audio_into_output(output_path, audio_path)
+
         self._status_label.setText(
             f"Render complete: {Path(output_path).name} ({width}x{height})"
+        )
+        self._main_window.show_job_completed(
+            f"Caption render complete: {Path(output_path).name}",
+            output_path=output_path,
+            owner_tab_id=self.tab_id,
         )
 
         # Register as session asset
@@ -1137,6 +1173,10 @@ class CaptionAnimateTab(BaseTab):
         self._cancel_btn.setEnabled(False)
         self._progress_bar.setValue(0)
         self._status_label.setText(f"Failed: {error_message}")
+        self._main_window.show_job_failed(
+            f"Caption render error: {error_message}",
+            owner_tab_id=self.tab_id,
+        )
         logger.error("Caption render failed: %s", error_message)
 
     def _on_render_canceled(self, message: str) -> None:
@@ -1145,7 +1185,35 @@ class CaptionAnimateTab(BaseTab):
         self._cancel_btn.setEnabled(False)
         self._progress_bar.setValue(0)
         self._status_label.setText(f"Cancelled: {message}")
+        self._main_window.show_job_canceled(
+            f"Caption render cancelled: {message}",
+            owner_tab_id=self.tab_id,
+        )
         logger.info("Caption render cancelled: %s", message)
+
+    def _mux_audio_into_output(self, video_path: str, audio_path: str) -> None:
+        """Mux audio into the rendered caption video using FFmpeg."""
+        import shutil
+        import subprocess
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            logger.warning("FFmpeg not found; skipping audio mux")
+            return
+        out = Path(video_path)
+        temp = out.with_suffix(".tmp.mp4")
+        try:
+            subprocess.run(
+                [ffmpeg, "-y", "-i", video_path, "-i", audio_path,
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                 "-shortest", str(temp)],
+                check=True, capture_output=True,
+            )
+            temp.replace(out)
+            logger.info("Audio muxed into %s", out)
+        except subprocess.CalledProcessError as exc:
+            logger.error("Audio mux failed: %s", exc.stderr[-500:] if exc.stderr else str(exc))
+            if temp.exists():
+                temp.unlink(missing_ok=True)
 
     # ------------------------------------------------------------------
     # BaseTab contract

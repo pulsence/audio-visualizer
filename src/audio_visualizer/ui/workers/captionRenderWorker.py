@@ -120,6 +120,7 @@ class CaptionRenderWorker(QRunnable):
                     output_path=self._spec.output_path,
                     config=self._spec.config,
                     emitter=self._emitter,
+                    preset_override=self._spec.preset_override,
                 )
             finally:
                 subprocess.Popen = original_popen  # type: ignore[misc]

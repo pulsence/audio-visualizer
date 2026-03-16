@@ -66,6 +66,7 @@ def render_subtitle(
     on_progress: Optional[Callable[[str], None]] = None,
     on_event: Optional[Callable[[AppEvent], None]] = None,
     emitter: Optional[AppEventEmitter] = None,
+    preset_override: Optional["PresetConfig"] = None,
 ) -> RenderResult:
     """
     Render a subtitle file to transparent video overlay.
@@ -129,9 +130,12 @@ def render_subtitle(
         if not input_path.exists():
             return RenderResult(success=False, error=f"Input file not found: {input_path}")
 
-        # Load preset
-        loader = PresetLoader()
-        preset = loader.load(config.preset)
+        # Load preset (use override if provided)
+        if preset_override is not None:
+            preset = preset_override
+        else:
+            loader = PresetLoader()
+            preset = loader.load(config.preset)
 
         # Setup progress tracker
         progress = ProgressTracker(event_emitter)

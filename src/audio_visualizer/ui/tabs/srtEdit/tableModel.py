@@ -9,7 +9,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, QEvent, QModelIndex, Qt
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtWidgets import QPlainTextEdit, QStyledItemDelegate, QWidget
 
 from audio_visualizer.ui.tabs.srtEdit.document import SubtitleDocument
 
@@ -137,8 +139,17 @@ class SubtitleTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.BackgroundRole:
             if entry.dirty:
-                from PySide6.QtGui import QColor
-                return QColor(255, 255, 200)
+                from PySide6.QtGui import QColor, QPalette
+                from PySide6.QtWidgets import QApplication
+                palette = QApplication.palette()
+                base = palette.color(QPalette.ColorRole.Base)
+                # Palette-safe dirty indicator: subtle tint relative to base
+                if base.lightness() < 128:
+                    # Dark mode: slightly lighter warm tint
+                    return QColor(60, 55, 40)
+                else:
+                    # Light mode: soft warm tint
+                    return QColor(255, 255, 220)
 
         return None
 
@@ -208,3 +219,40 @@ class SubtitleTableModel(QAbstractTableModel):
         top_left = self.index(first, 0)
         bottom_right = self.index(last, COLUMN_COUNT - 1)
         self.dataChanged.emit(top_left, bottom_right)
+
+
+class MultilineTextDelegate(QStyledItemDelegate):
+    """Delegate that uses a QPlainTextEdit for multiline editing.
+
+    Shift+Enter inserts a newline. Enter commits the edit.
+    """
+
+    def createEditor(self, parent: QWidget, option, index: QModelIndex) -> QWidget:
+        editor = QPlainTextEdit(parent)
+        editor.setFrameShape(QPlainTextEdit.Shape.NoFrame)
+        editor.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        return editor
+
+    def setEditorData(self, editor: QPlainTextEdit, index: QModelIndex) -> None:
+        text = index.data(Qt.ItemDataRole.EditRole)
+        if text is not None:
+            editor.setPlainText(str(text))
+
+    def setModelData(self, editor: QPlainTextEdit, model, index: QModelIndex) -> None:
+        model.setData(index, editor.toPlainText(), Qt.ItemDataRole.EditRole)
+
+    def updateEditorGeometry(self, editor: QWidget, option, index: QModelIndex) -> None:
+        editor.setGeometry(option.rect)
+
+    def eventFilter(self, editor: QWidget, event: QEvent) -> bool:
+        if isinstance(event, QKeyEvent):
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    # Shift+Enter: insert newline
+                    return False  # Let the editor handle it
+                else:
+                    # Enter without Shift: commit the edit
+                    self.commitData.emit(editor)
+                    self.closeEditor.emit(editor)
+                    return True
+        return super().eventFilter(editor, event)

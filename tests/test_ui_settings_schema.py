@@ -91,7 +91,8 @@ class TestMigrateSettings:
         # Verify it is a copy, not the same object
         assert migrated is not original
 
-    def test_migrate_pre_stage_three(self):
+    def test_migrate_pre_stage_three_rejected(self):
+        """Pre-Stage-Three settings are rejected and a clean default is returned."""
         old_format = {
             "general": {"audio_file_path": "test.mp3", "fps": 12},
             "visualizer": {"visualizer_type": "Volume: Rectangle"},
@@ -100,25 +101,14 @@ class TestMigrateSettings:
         }
         migrated = migrate_settings(old_format)
 
-        # Should have current version
+        # Should return a clean default schema, not the old data
         assert migrated["version"] == CURRENT_SCHEMA_VERSION
         assert "tabs" in migrated
+        assert len(migrated["tabs"]) == 5
 
-        av_tab = migrated["tabs"]["audio_visualizer"]
-
-        # Old general keys preserved
-        assert av_tab["general"]["audio_file_path"] == "test.mp3"
-        assert av_tab["general"]["fps"] == 12
-
-        # Old visualizer keys preserved
-        assert av_tab["visualizer"]["visualizer_type"] == "Volume: Rectangle"
-
-        # Old specific keys preserved
-        assert av_tab["specific"]["box_height"] == 50
-
-        # Old ui keys that belong in tab are preserved
-        assert av_tab["ui"]["preview"] is True
-        assert av_tab["ui"]["show_output"] is False
+        # All tabs should be empty (old data discarded)
+        for tab_key in migrated["tabs"]:
+            assert migrated["tabs"][tab_key] == {}
 
     def test_migrate_fills_missing_tabs(self):
         data = {
