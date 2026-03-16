@@ -236,7 +236,7 @@ class FFmpegRenderer:
         if not self.show_progress:
             self._render_simple(cmd, output_path)
         else:
-            self._render_with_progress(cmd, output_path)
+            self._render_with_progress(cmd, output_path, duration_sec)
 
         # Emit render complete event
         self.emitter.emit(
@@ -254,7 +254,12 @@ class FFmpegRenderer:
 
         self._verify_output(output_path)
 
-    def _render_with_progress(self, cmd: list, output_path: Path) -> None:
+    def _render_with_progress(
+        self,
+        cmd: list,
+        output_path: Path,
+        duration_sec: float,
+    ) -> None:
         """Run FFmpeg with progress tracking."""
         proc = subprocess.Popen(
             cmd,
@@ -289,11 +294,16 @@ class FFmpegRenderer:
             # Emit progress at most twice per second
             now = time.time()
             if now - last_emit >= 0.5 and (frame or out_time):
+                percent = None
+                current_seconds = self._parse_out_time_seconds(out_time)
+                if current_seconds is not None and duration_sec > 0:
+                    percent = min(100.0, (current_seconds / duration_sec) * 100.0)
                 self.emitter.emit(
                     AppEvent(
                         event_type=EventType.RENDER_PROGRESS,
                         message="FFmpeg rendering",
                         data={
+                            "percent": percent,
                             "frame": int(frame) if frame else None,
                             "time": out_time,
                             "speed": speed,
@@ -307,6 +317,22 @@ class FFmpegRenderer:
             raise RuntimeError("FFmpeg render failed. Check output above for details.")
 
         self._verify_output(output_path)
+
+    @staticmethod
+    def _parse_out_time_seconds(value: str | None) -> float | None:
+        """Parse FFmpeg ``out_time`` strings into seconds."""
+        if not value:
+            return None
+
+        try:
+            hours, minutes, seconds = value.split(":")
+            return (
+                int(hours) * 3600
+                + int(minutes) * 60
+                + float(seconds)
+            )
+        except (TypeError, ValueError):
+            return None
 
     def _verify_output(self, output_path: Path) -> None:
         """Verify that output file was created successfully."""

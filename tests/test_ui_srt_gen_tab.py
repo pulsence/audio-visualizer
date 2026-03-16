@@ -1,10 +1,12 @@
 """Tests for SrtGenTab from audio_visualizer.ui.tabs.srtGenTab."""
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QWidget
 
 app = QApplication.instance() or QApplication([])
 
 import pytest
+from unittest.mock import MagicMock
 
 from audio_visualizer.ui.tabs.srtGenTab import SrtGenTab
 
@@ -184,3 +186,57 @@ class TestSrtGenTabGlobalBusy:
         # When we are the owner, set_global_busy should not disable our button
         tab.set_global_busy(True, owner_tab_id="srt_gen")
         assert tab._start_btn.isEnabled() is True
+
+
+class _FakeSignal:
+    def connect(self, _slot):
+        return None
+
+
+class _FakeWorker:
+    def __init__(self, *args, **kwargs):
+        self.signals = MagicMock(
+            progress=_FakeSignal(),
+            stage=_FakeSignal(),
+            log=_FakeSignal(),
+            completed=_FakeSignal(),
+            failed=_FakeSignal(),
+            canceled=_FakeSignal(),
+        )
+
+    def cancel(self):
+        return None
+
+
+class _FakeMainWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.try_start_calls = []
+        self.job_status_calls = []
+        self.render_thread_pool = MagicMock()
+
+    def try_start_job(self, owner_tab_id):
+        self.try_start_calls.append(owner_tab_id)
+        return True
+
+    def show_job_status(self, job_type, owner_tab, label):
+        self.job_status_calls.append((job_type, owner_tab, label))
+
+
+class TestSrtGenJobShellIntegration:
+    def test_start_transcription_claims_global_job_slot(self, monkeypatch):
+        main_window = _FakeMainWindow()
+        tab = SrtGenTab(main_window)
+        tab._add_input_path("/tmp/test.mp3")
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.tabs.srtGenTab.SrtGenWorker",
+            _FakeWorker,
+        )
+
+        tab._start_transcription()
+
+        assert main_window.try_start_calls == ["srt_gen"]
+        assert len(main_window.job_status_calls) == 1
+        assert main_window.job_status_calls[0][0] == "srt_gen"
+        main_window.render_thread_pool.start.assert_called_once()

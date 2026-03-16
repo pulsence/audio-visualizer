@@ -9,11 +9,12 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import threading
 import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from PySide6.QtCore import Qt, QRunnable, QThreadPool, Signal
+from PySide6.QtCore import Qt, QRunnable, QThreadPool
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -34,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from audio_visualizer.events import AppEventEmitter
+from audio_visualizer.events import AppEvent, AppEventEmitter, EventType
 from audio_visualizer.srt.config import PRESETS, apply_overrides, load_config_file
 from audio_visualizer.srt.modelManager import ModelManager
 from audio_visualizer.srt.models import (
@@ -46,6 +47,7 @@ from audio_visualizer.srt.models import (
 )
 from audio_visualizer.ui.sessionContext import SessionAsset
 from audio_visualizer.ui.tabs.baseTab import BaseTab
+from audio_visualizer.ui.workers.workerBridge import WorkerBridge, WorkerSignals
 from audio_visualizer.ui.workers.srtGenWorker import SrtGenJobSpec, SrtGenWorker
 
 logger = logging.getLogger(__name__)
@@ -73,6 +75,82 @@ _FORMATS = ["srt", "vtt", "ass", "txt", "json"]
 _MODES = ["general", "transcript", "shorts"]
 
 
+class _ModelLoadWorker(QRunnable):
+    """Background worker that loads a Whisper model via ModelManager."""
+
+    def __init__(
+        self,
+        model_manager: ModelManager,
+        display_name: str,
+        model_name: str,
+        device: str,
+    ) -> None:
+        super().__init__()
+        self.setAutoDelete(True)
+        self._model_manager = model_manager
+        self._display_name = display_name
+        self._model_name = model_name
+        self._device = device
+        self._cancel_flag = threading.Event()
+        self._emitter = AppEventEmitter()
+        self.signals = WorkerSignals()
+        self._bridge = WorkerBridge(self._emitter, self.signals)
+
+    def cancel(self) -> None:
+        self._cancel_flag.set()
+
+    def run(self) -> None:
+        self._bridge.attach()
+        try:
+            if self._cancel_flag.is_set():
+                self.signals.canceled.emit("Cancelled before model load")
+                return
+
+            self._emitter.emit(
+                AppEvent(
+                    event_type=EventType.JOB_START,
+                    message=f"Loading model '{self._display_name}'",
+                    data={
+                        "job_type": "model_load",
+                        "owner_tab_id": "srt_gen",
+                        "label": f"Loading model '{self._display_name}'",
+                    },
+                )
+            )
+            self._emitter.emit(
+                AppEvent(
+                    event_type=EventType.STAGE,
+                    message="Loading model",
+                    data={"stage_number": 0, "total_stages": 1},
+                )
+            )
+            self._model_manager.load(
+                model_name=self._model_name,
+                device=self._device,
+                strict_cuda=False,
+                emitter=self._emitter,
+            )
+
+            if self._cancel_flag.is_set():
+                self.signals.canceled.emit("Cancelled after model load")
+                return
+
+            info = self._model_manager.model_info()
+            self.signals.completed.emit(
+                {
+                    "display_name": self._display_name,
+                    "model_name": self._model_name,
+                    "device": info.device if info else self._device,
+                    "compute_type": info.compute_type if info else "",
+                }
+            )
+        except Exception as exc:
+            logger.exception("Model load failed: %s", exc)
+            self.signals.failed.emit(str(exc), {"model_name": self._model_name})
+        finally:
+            self._bridge.detach()
+
+
 class SrtGenTab(BaseTab):
     """Batch SRT transcription tab with full ResolvedConfig settings."""
 
@@ -94,7 +172,9 @@ class SrtGenTab(BaseTab):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._main_window = parent
         self._active_worker: Optional[SrtGenWorker] = None
+        self._active_model_worker: Optional[_ModelLoadWorker] = None
         self._thread_pool = QThreadPool()
         self._thread_pool.setMaxThreadCount(1)
         self._model_manager = ModelManager()
@@ -622,8 +702,13 @@ class SrtGenTab(BaseTab):
         if self._model_loaded:
             # Unload the model
             self._model_manager.unload()
-            self._set_model_state(False, None)
+            self._sync_model_state_from_manager()
             self._append_event("Model unloaded.")
+            return
+
+        if self._active_model_worker is not None:
+            self._append_event("Model load already in progress.")
+            self._status_label.setText("Model load already in progress.")
             return
 
         display_name = self._model_combo.currentText()
@@ -632,40 +717,42 @@ class SrtGenTab(BaseTab):
         self._status_label.setText(f"Loading model '{display_name}'...")
         self._load_model_btn.setEnabled(False)
         self._append_event(f"Loading model '{display_name}' ({model_id}) on {device}...")
+        worker = _ModelLoadWorker(
+            model_manager=self._model_manager,
+            display_name=display_name,
+            model_name=model_id,
+            device=device,
+        )
+        worker.signals.stage.connect(self._on_stage)
+        worker.signals.log.connect(self._on_log)
+        worker.signals.completed.connect(self._on_model_load_completed)
+        worker.signals.failed.connect(self._on_model_load_failed)
+        worker.signals.canceled.connect(self._on_model_load_canceled)
+        self._active_model_worker = worker
+        self._thread_pool.start(worker)
 
-        tab = self
-        manager = self._model_manager
-
-        class _ModelLoader(QRunnable):
-            def run(self_loader) -> None:
-                try:
-                    manager.load(
-                        model_name=model_id,
-                        device=device,
-                        strict_cuda=False,
-                    )
-                    tab._on_model_load_finished(True, display_name, None)
-                except Exception as exc:
-                    logger.error("Model pre-load failed: %s", exc)
-                    tab._on_model_load_finished(False, display_name, str(exc))
-
-        loader = _ModelLoader()
-        loader.setAutoDelete(True)
-        self._thread_pool.start(loader)
-
-    def _on_model_load_finished(self, success: bool, display_name: str, error: str | None) -> None:
-        """Called from background thread when model load completes."""
-        if success:
-            info = self._model_manager.model_info()
-            device_info = info.device if info else "unknown"
-            self._set_model_state(True, display_name)
-            self._status_label.setText(f"Model '{display_name}' loaded on {device_info}")
-            self._append_event(f"Model '{display_name}' loaded on {device_info}")
-        else:
-            self._set_model_state(False, None)
-            self._status_label.setText(f"Failed to load model: {error}")
-            self._append_event(f"Model load failed: {error}")
+    def _on_model_load_completed(self, data: dict[str, Any]) -> None:
+        self._active_model_worker = None
         self._load_model_btn.setEnabled(True)
+        self._sync_model_state_from_manager()
+        device_info = data.get("device", "unknown")
+        display_name = data.get("display_name", self._model_combo.currentText())
+        self._status_label.setText(f"Model '{display_name}' loaded on {device_info}")
+        self._append_event(f"Model '{display_name}' loaded on {device_info}")
+
+    def _on_model_load_failed(self, error_message: str, data: dict[str, Any]) -> None:
+        self._active_model_worker = None
+        self._load_model_btn.setEnabled(True)
+        self._sync_model_state_from_manager()
+        self._status_label.setText(f"Failed to load model: {error_message}")
+        self._append_event(f"Model load failed: {error_message}")
+
+    def _on_model_load_canceled(self, message: str) -> None:
+        self._active_model_worker = None
+        self._load_model_btn.setEnabled(True)
+        self._sync_model_state_from_manager()
+        self._status_label.setText(f"Cancelled: {message}")
+        self._append_event(f"Cancelled: {message}")
 
     def _set_model_state(self, loaded: bool, display_name: str | None) -> None:
         """Update model-loaded UI state."""
@@ -682,6 +769,18 @@ class SrtGenTab(BaseTab):
             self._model_status_label.setText("No model loaded")
             self._load_model_btn.setText("Load Model")
             self._load_model_btn.setEnabled(True)
+
+    def _sync_model_state_from_manager(self) -> None:
+        info = self._model_manager.model_info()
+        if info is None:
+            self._set_model_state(False, None)
+            return
+
+        display_name = next(
+            (name for name, model_id in _MODEL_MAP.items() if model_id == info.model_name),
+            info.model_name,
+        )
+        self._set_model_state(True, display_name)
 
     def _append_event(self, text: str) -> None:
         """Append a line to the scrolling event log."""
@@ -971,6 +1070,18 @@ class SrtGenTab(BaseTab):
             QMessageBox.warning(self, "Validation Error", msg)
             return
 
+        if self._active_model_worker is not None:
+            QMessageBox.information(
+                self,
+                "Model Loading",
+                "Wait for the current model load to finish before generating SRTs.",
+            )
+            return
+
+        if self._main_window and hasattr(self._main_window, "try_start_job"):
+            if not self._main_window.try_start_job(self.tab_id):
+                return
+
         input_paths = self._get_input_paths()
         fmt = self._format_combo.currentText()
         cfg = self._build_resolved_config()
@@ -1035,8 +1146,17 @@ class SrtGenTab(BaseTab):
         self._cancel_btn.setEnabled(True)
         self._progress_bar.setValue(0)
         self._status_label.setText("Starting transcription...")
+        if self._main_window and hasattr(self._main_window, "show_job_status"):
+            self._main_window.show_job_status(
+                "srt_gen",
+                self.tab_id,
+                f"Generating SRTs for {len(jobs)} file(s)...",
+            )
 
-        self._thread_pool.start(worker)
+        if self._main_window and hasattr(self._main_window, "render_thread_pool"):
+            self._main_window.render_thread_pool.start(worker)
+        else:
+            self._thread_pool.start(worker)
         logger.info("Started SRT Gen worker with %d files", len(jobs))
 
     def cancel_job(self) -> None:
@@ -1052,14 +1172,32 @@ class SrtGenTab(BaseTab):
     def _on_progress(self, percent: float, message: str, data: dict) -> None:
         if percent >= 0:
             self._progress_bar.setValue(int(percent))
+            if (
+                self._active_worker is not None
+                and self._main_window
+                and hasattr(self._main_window, "update_job_progress")
+            ):
+                self._main_window.update_job_progress(percent, message or "")
         if message:
             self._status_label.setText(message)
             self._append_event(message)
+            if (
+                self._active_worker is not None
+                and self._main_window
+                and hasattr(self._main_window, "update_job_status")
+            ):
+                self._main_window.update_job_status(message)
 
     def _on_stage(self, name: str, index: int, total: int, data: dict) -> None:
         self._status_label.setText(name)
         stage_text = f"[Stage {index}/{total}] {name}" if index >= 0 and total > 0 else name
         self._append_event(stage_text)
+        if (
+            self._active_worker is not None
+            and self._main_window
+            and hasattr(self._main_window, "update_job_status")
+        ):
+            self._main_window.update_job_status(name)
 
     def _on_log(self, level: str, message: str, data: dict) -> None:
         logger.log(
@@ -1088,15 +1226,7 @@ class SrtGenTab(BaseTab):
         self._append_event(summary)
 
         # The model was loaded by the worker — update UI state
-        if self._model_manager.is_loaded():
-            info = self._model_manager.model_info()
-            if info:
-                # Find the display name for the loaded model
-                display = next(
-                    (k for k, v in _MODEL_MAP.items() if v == info.model_name),
-                    info.model_name,
-                )
-                self._set_model_state(True, display)
+        self._sync_model_state_from_manager()
 
         # Register outputs as session assets
         for r in results:
@@ -1104,6 +1234,8 @@ class SrtGenTab(BaseTab):
                 continue
             self._register_result_assets(r)
 
+        if self._main_window and hasattr(self._main_window, "show_job_completed"):
+            self._main_window.show_job_completed(summary, owner_tab_id=self.tab_id)
         logger.info("SRT Gen batch completed: %d/%d succeeded", succeeded, total)
 
     def _on_file_completed(self, result: dict) -> None:
@@ -1118,6 +1250,9 @@ class SrtGenTab(BaseTab):
         self._progress_bar.setValue(0)
         self._status_label.setText(f"Failed: {error_message}")
         self._append_event(f"FAILED: {error_message}")
+        self._sync_model_state_from_manager()
+        if self._main_window and hasattr(self._main_window, "show_job_failed"):
+            self._main_window.show_job_failed(error_message, owner_tab_id=self.tab_id)
         logger.error("SRT Gen batch failed: %s", error_message)
 
     def _on_transcription_canceled(self, message: str) -> None:
@@ -1126,6 +1261,9 @@ class SrtGenTab(BaseTab):
         self._cancel_btn.setEnabled(False)
         self._status_label.setText(f"Cancelled: {message}")
         self._append_event(f"Cancelled: {message}")
+        self._sync_model_state_from_manager()
+        if self._main_window and hasattr(self._main_window, "show_job_canceled"):
+            self._main_window.show_job_canceled(message, owner_tab_id=self.tab_id)
         logger.info("SRT Gen batch cancelled: %s", message)
 
     # ==================================================================

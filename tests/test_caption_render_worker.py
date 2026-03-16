@@ -178,3 +178,40 @@ class TestCaptionRenderWorkerConfig:
         assert worker._spec.config.safety_scale == 1.5
         assert worker._spec.config.apply_animation is False
         assert worker._spec.config.reskin is True
+
+    def test_worker_can_emit_separate_delivery_and_overlay_outputs(self, monkeypatch, tmp_path):
+        overlay_path = tmp_path / "overlay.mov"
+        delivery_path = tmp_path / "delivery.mp4"
+        spec = CaptionRenderJobSpec(
+            subtitle_path=Path("/tmp/test.srt"),
+            output_path=overlay_path,
+            delivery_output_path=delivery_path,
+            config=RenderConfig(),
+        )
+        emitter = AppEventEmitter()
+        worker = CaptionRenderWorker(spec=spec, emitter=emitter)
+
+        completed = []
+        worker.signals.completed.connect(completed.append)
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.captionRenderWorker.render_subtitle",
+            lambda **kwargs: RenderResult(
+                success=True,
+                output_path=overlay_path,
+                width=1280,
+                height=180,
+                duration_ms=4000,
+            ),
+        )
+        monkeypatch.setattr(
+            worker,
+            "_create_delivery_output",
+            lambda overlay_path, delivery_path, audio_path: delivery_path.write_bytes(b"mp4"),
+        )
+
+        worker.run()
+
+        assert len(completed) == 1
+        assert completed[0]["delivery_path"] == str(delivery_path)
+        assert completed[0]["overlay_path"] == str(overlay_path)

@@ -115,11 +115,11 @@ class CaptionAnimateTab(BaseTab):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._main_window = parent
         self._active_worker: Optional[CaptionRenderWorker] = None
         self._thread_pool = QThreadPool()
         self._thread_pool.setMaxThreadCount(1)
         self._example_presets_seeded = False
-        self._mux_audio_requested = False
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -1025,14 +1025,11 @@ class CaptionAnimateTab(BaseTab):
         else:
             out_parent = subtitle_path.parent
 
-        # User-facing delivery is .mp4
-        output_path = out_parent / f"{subtitle_path.stem}_caption.mp4"
+        delivery_path = out_parent / f"{subtitle_path.stem}_caption.mp4"
+        overlay_path = out_parent / f"{subtitle_path.stem}_caption_overlay.mov"
 
         # Build render config — use the preset name from builtin if selected
-        preset_name = "modern_box"
-        source_idx = self._preset_source_combo.currentIndex()
-        if source_idx == 0:
-            preset_name = self._builtin_preset_combo.currentText() or "modern_box"
+        preset_name = self._current_preset_name()
 
         config = RenderConfig(
             preset=preset_name,
@@ -1050,14 +1047,16 @@ class CaptionAnimateTab(BaseTab):
         audio_path = None
         if self._audio_file_edit.text().strip():
             audio_path = Path(self._audio_file_edit.text().strip())
-        self._mux_audio_requested = self._mux_audio_cb.isChecked() and audio_path is not None
+        delivery_audio_path = audio_path if self._mux_audio_cb.isChecked() else None
 
         spec = CaptionRenderJobSpec(
             subtitle_path=subtitle_path,
-            output_path=output_path,
+            output_path=overlay_path,
             config=config,
             preset_override=preset_override,
             audio_path=audio_path if self._audio_reactive_group.isChecked() else None,
+            delivery_output_path=delivery_path,
+            delivery_audio_path=delivery_audio_path,
         )
 
         emitter = AppEventEmitter()
@@ -1121,34 +1120,58 @@ class CaptionAnimateTab(BaseTab):
         self._progress_bar.setValue(100)
 
         output_path = data.get("output_path", "")
+        delivery_path = data.get("delivery_path", output_path)
+        overlay_path = data.get("overlay_path", "")
         width = data.get("width", 0)
         height = data.get("height", 0)
         duration_ms = data.get("duration_ms", 0)
         quality = data.get("quality", "small")
-        has_alpha = data.get("has_alpha", True)
-
-        # Audio mux post-processing if requested
-        if self._mux_audio_requested and output_path:
-            audio_path = self._audio_file_edit.text().strip()
-            if audio_path:
-                self._mux_audio_into_output(output_path, audio_path)
+        has_alpha = data.get("overlay_has_alpha", data.get("has_alpha", True))
+        preset_name = self._current_preset_name()
+        alpha_expected = quality != "medium"
 
         self._status_label.setText(
-            f"Render complete: {Path(output_path).name} ({width}x{height})"
+            f"Render complete: {Path(delivery_path).name} ({width}x{height})"
         )
         self._main_window.show_job_completed(
-            f"Caption render complete: {Path(output_path).name}",
-            output_path=output_path,
+            f"Caption render complete: {Path(delivery_path).name}",
+            output_path=delivery_path,
             owner_tab_id=self.tab_id,
         )
 
-        # Register as session asset
-        if output_path and Path(output_path).exists():
+        # Register the user-facing delivery asset.
+        if delivery_path and Path(delivery_path).exists():
             self.register_output_asset(
                 SessionAsset(
                     id=str(uuid.uuid4()),
-                    display_name=Path(output_path).name,
-                    path=Path(output_path),
+                    display_name=Path(delivery_path).name,
+                    path=Path(delivery_path),
+                    category="video",
+                    source_tab=self.tab_id,
+                    has_audio=data.get("delivery_has_audio", False),
+                    width=width,
+                    height=height,
+                    duration_ms=duration_ms,
+                    has_alpha=False,
+                    metadata={
+                        "quality": quality,
+                        "quality_tier": quality,
+                        "preset_name": preset_name,
+                        "render_quality": quality,
+                        "alpha_expected": alpha_expected,
+                        "delivery": True,
+                        "fps": self._fps_combo.currentText(),
+                    },
+                )
+            )
+
+        # Register the composition-facing overlay intermediate separately.
+        if overlay_path and Path(overlay_path).exists():
+            self.register_output_asset(
+                SessionAsset(
+                    id=str(uuid.uuid4()),
+                    display_name=Path(overlay_path).name,
+                    path=Path(overlay_path),
                     category="video",
                     source_tab=self.tab_id,
                     role="caption_overlay",
@@ -1156,16 +1179,21 @@ class CaptionAnimateTab(BaseTab):
                     height=height,
                     duration_ms=duration_ms,
                     has_alpha=has_alpha,
-                    is_overlay_ready=True,
-                    preferred_for_overlay=True,
+                    is_overlay_ready=quality == "large",
+                    preferred_for_overlay=quality == "large",
                     metadata={
                         "quality": quality,
+                        "quality_tier": quality,
+                        "preset_name": preset_name,
+                        "render_quality": quality,
+                        "alpha_expected": alpha_expected,
+                        "delivery_path": delivery_path,
                         "fps": self._fps_combo.currentText(),
                     },
                 )
             )
 
-        logger.info("Caption render completed: %s", output_path)
+        logger.info("Caption render completed: %s", delivery_path)
 
     def _on_render_failed(self, error_message: str, data: dict) -> None:
         self._active_worker = None
@@ -1191,30 +1219,6 @@ class CaptionAnimateTab(BaseTab):
         )
         logger.info("Caption render cancelled: %s", message)
 
-    def _mux_audio_into_output(self, video_path: str, audio_path: str) -> None:
-        """Mux audio into the rendered caption video using FFmpeg."""
-        import shutil
-        import subprocess
-        ffmpeg = shutil.which("ffmpeg")
-        if not ffmpeg:
-            logger.warning("FFmpeg not found; skipping audio mux")
-            return
-        out = Path(video_path)
-        temp = out.with_suffix(".tmp.mp4")
-        try:
-            subprocess.run(
-                [ffmpeg, "-y", "-i", video_path, "-i", audio_path,
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                 "-shortest", str(temp)],
-                check=True, capture_output=True,
-            )
-            temp.replace(out)
-            logger.info("Audio muxed into %s", out)
-        except subprocess.CalledProcessError as exc:
-            logger.error("Audio mux failed: %s", exc.stderr[-500:] if exc.stderr else str(exc))
-            if temp.exists():
-                temp.unlink(missing_ok=True)
-
     # ------------------------------------------------------------------
     # BaseTab contract
     # ------------------------------------------------------------------
@@ -1226,6 +1230,8 @@ class CaptionAnimateTab(BaseTab):
         p = Path(sub_path)
         if p.suffix.lower() not in (".srt", ".ass"):
             return False, "Subtitle file must be .srt or .ass."
+        if self._mux_audio_cb.isChecked() and not self._audio_file_edit.text().strip():
+            return False, "Select an audio file before enabling delivery audio mux."
         return True, ""
 
     def collect_settings(self) -> dict[str, Any]:
@@ -1280,6 +1286,7 @@ class CaptionAnimateTab(BaseTab):
                     k: spin.value() for k, spin in self._anim_param_spins.items()
                 },
             },
+            "mux_audio": self._mux_audio_cb.isChecked(),
             "audio_reactive": {
                 "enabled": self._audio_reactive_group.isChecked(),
                 "audio_path": self._audio_file_edit.text(),
@@ -1394,6 +1401,7 @@ class CaptionAnimateTab(BaseTab):
         ar = data.get("audio_reactive", {})
         self._audio_reactive_group.setChecked(ar.get("enabled", False))
         self._audio_file_edit.setText(ar.get("audio_path", ""))
+        self._mux_audio_cb.setChecked(data.get("mux_audio", False))
         session_audio = ar.get("session_audio", "(none)")
         idx = self._session_audio_combo.findText(session_audio)
         if idx >= 0:
@@ -1407,3 +1415,13 @@ class CaptionAnimateTab(BaseTab):
         if owner_tab_id == self.tab_id:
             return
         self._start_btn.setEnabled(not is_busy)
+
+    def _current_preset_name(self) -> str:
+        source_idx = self._preset_source_combo.currentIndex()
+        if source_idx == 0:
+            return self._builtin_preset_combo.currentText() or "modern_box"
+        if source_idx == 1:
+            preset_path = self._preset_file_edit.text().strip()
+            return Path(preset_path).stem if preset_path else "custom"
+        preset_name = self._library_combo.currentText().strip()
+        return Path(preset_name).stem if preset_name else "library"

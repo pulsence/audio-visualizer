@@ -143,7 +143,6 @@ class AudioVisualizerTab(BaseTab):
             setattr(self, attribute_name, None)
 
         self.rendering = False
-        self._show_output_for_last_render = True
         self._active_preview = False
         self._active_render_worker = None
         self._pending_preview_refresh = False
@@ -1011,7 +1010,6 @@ class AudioVisualizerTab(BaseTab):
 
     def _start_render(self, preview_seconds: int | None = None,
                       output_path: str | None = None,
-                      force_show_output: bool | None = None,
                       show_validation_errors: bool = True) -> None:
         if self.rendering:
             return
@@ -1068,11 +1066,6 @@ class AudioVisualizerTab(BaseTab):
 
         visualizer = self._create_visualizer(audio_data, video_data, visualizer_settings)
 
-        if force_show_output is None:
-            self._show_output_for_last_render = self.show_output_checkbox.isChecked()
-        else:
-            self._show_output_for_last_render = force_show_output
-
         if not is_live_preview:
             self._main_window.show_job_status(
                 "render", self.tab_id,
@@ -1102,22 +1095,18 @@ class AudioVisualizerTab(BaseTab):
         self._start_render(preview_seconds=preview_seconds)
 
     def render_preview(self) -> None:
-        self._start_render(preview_seconds=5, output_path=self._preview_output_path(), force_show_output=True)
+        self._start_render(preview_seconds=5, output_path=self._preview_output_path())
 
     def render_finished(self, video_data: VideoData) -> None:
         if self._active_preview:
             self._show_preview_in_panel(video_data)
-        elif self._show_output_for_last_render:
-            # Register the output as a session asset
+        else:
             self._register_render_asset(video_data)
             self._main_window.show_job_completed(
                 "Render complete.",
                 output_path=video_data.file_path,
                 owner_tab_id=self.tab_id,
             )
-        else:
-            self._register_render_asset(video_data)
-            self._main_window.finish_job(self.tab_id)
 
         self._active_render_worker = None
         self._reset_render_controls()
@@ -1270,7 +1259,6 @@ class AudioVisualizerTab(BaseTab):
         self._start_render(
             preview_seconds=5,
             output_path=self._preview_output_path(),
-            force_show_output=True,
             show_validation_errors=False,
         )
 

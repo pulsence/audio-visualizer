@@ -11,7 +11,7 @@ import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from PySide6.QtCore import QRunnable
 
@@ -32,6 +32,8 @@ class CaptionRenderJobSpec:
     config: RenderConfig
     preset_override: Optional[PresetConfig] = None
     audio_path: Optional[Path] = None
+    delivery_output_path: Optional[Path] = None
+    delivery_audio_path: Optional[Path] = None
 
 
 class CaptionRenderWorker(QRunnable):
@@ -138,13 +140,31 @@ class CaptionRenderWorker(QRunnable):
                 return
 
             if result.success:
+                delivery_path = self._spec.delivery_output_path or result.output_path
+                if delivery_path is None:
+                    raise RuntimeError("Caption render did not produce an output path.")
+
+                if (
+                    self._spec.delivery_output_path is not None
+                    or self._spec.delivery_audio_path is not None
+                ):
+                    self._create_delivery_output(
+                        overlay_path=result.output_path,
+                        delivery_path=delivery_path,
+                        audio_path=self._spec.delivery_audio_path,
+                    )
+
                 self.signals.completed.emit({
-                    "output_path": str(result.output_path),
+                    "output_path": str(delivery_path),
+                    "delivery_path": str(delivery_path),
+                    "overlay_path": str(result.output_path),
                     "width": result.width,
                     "height": result.height,
                     "duration_ms": result.duration_ms,
                     "quality": self._spec.config.quality,
                     "has_alpha": self._spec.config.quality != "medium",
+                    "overlay_has_alpha": self._spec.config.quality != "medium",
+                    "delivery_has_audio": self._spec.delivery_audio_path is not None,
                 })
             else:
                 self.signals.failed.emit(
@@ -154,6 +174,9 @@ class CaptionRenderWorker(QRunnable):
 
         except Exception as exc:
             if self._cancel_flag.is_set():
+                for path in (self._spec.output_path, self._spec.delivery_output_path):
+                    if path and path.exists():
+                        path.unlink(missing_ok=True)
                 self.signals.canceled.emit("Cancelled during render")
             else:
                 logger.exception("CaptionRenderWorker failed: %s", exc)
@@ -161,3 +184,86 @@ class CaptionRenderWorker(QRunnable):
 
         finally:
             self._bridge.detach()
+
+    def _create_delivery_output(
+        self,
+        overlay_path: Path,
+        delivery_path: Path,
+        audio_path: Optional[Path],
+    ) -> None:
+        """Create the user-facing MP4 delivery artifact from the overlay render."""
+        if self._cancel_flag.is_set():
+            raise RuntimeError("Cancelled during render")
+
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(overlay_path),
+        ]
+        if audio_path is not None:
+            ffmpeg_cmd.extend(["-i", str(audio_path)])
+
+        ffmpeg_cmd.extend(
+            [
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+            ]
+        )
+        if audio_path is not None:
+            ffmpeg_cmd.extend(
+                [
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-shortest",
+                ]
+            )
+        else:
+            ffmpeg_cmd.append("-an")
+
+        ffmpeg_cmd.extend(
+            [
+                "-movflags",
+                "+faststart",
+                str(delivery_path),
+            ]
+        )
+
+        self._emitter.emit(
+            AppEvent(
+                event_type=EventType.STAGE,
+                message="Preparing delivery MP4",
+                data={"stage_number": 1, "total_stages": 2},
+            )
+        )
+
+        proc = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self._captured_process = proc
+        _stdout, stderr = proc.communicate()
+        self._captured_process = None
+
+        if self._cancel_flag.is_set():
+            if delivery_path.exists():
+                delivery_path.unlink(missing_ok=True)
+            raise RuntimeError("Cancelled during render")
+
+        if proc.returncode != 0:
+            if delivery_path.exists():
+                delivery_path.unlink(missing_ok=True)
+            detail = (stderr or "").strip()[-500:]
+            raise RuntimeError(
+                f"Failed to create MP4 delivery output: {detail or 'ffmpeg exited with an error.'}"
+            )

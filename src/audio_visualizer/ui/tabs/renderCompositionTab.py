@@ -515,21 +515,19 @@ class RenderCompositionTab(BaseTab):
 
     def _refresh_asset_combos(self, _asset_id: str | None = None) -> None:
         """Rebuild source and audio combo boxes from session context."""
-        if self._session_context is None:
-            return
-
         self._updating_ui = True
         try:
             # Source combo (video/image assets)
             current_source = self._source_combo.currentText()
             self._source_combo.clear()
             self._source_combo.addItem("(none)")
-            for asset in self._session_context.list_assets():
-                if asset.category in ("video", "image"):
-                    self._source_combo.addItem(
-                        f"{asset.display_name} [{asset.id[:8]}]",
-                        asset.id,
-                    )
+            if self._session_context is not None:
+                for asset in self._session_context.list_assets():
+                    if asset.category in ("video", "image"):
+                        self._source_combo.addItem(
+                            f"{asset.display_name} [{asset.id[:8]}]",
+                            asset.id,
+                        )
             # Add direct-file entries for layers that use asset_path without asset_id
             seen_paths: set[str] = set()
             for layer in self._model.layers:
@@ -550,10 +548,11 @@ class RenderCompositionTab(BaseTab):
             current_audio = self._audio_combo.currentText()
             self._audio_combo.clear()
             self._audio_combo.addItem("(none)")
-            for asset in self._session_context.list_assets():
-                if asset.category in ("audio", "video"):
-                    label = f"{asset.display_name} [{asset.id[:8]}]"
-                    self._audio_combo.addItem(label, asset.id)
+            if self._session_context is not None:
+                for asset in self._session_context.list_assets():
+                    if asset.category in ("audio", "video"):
+                        label = f"{asset.display_name} [{asset.id[:8]}]"
+                        self._audio_combo.addItem(label, asset.id)
             # Add direct-file entry for audio if set
             if self._model.audio_source_path and not self._model.audio_source_asset_id:
                 file_data = f"file:{self._model.audio_source_path}"
@@ -1105,6 +1104,11 @@ class RenderCompositionTab(BaseTab):
                 fps=self._model.output_fps,
                 duration_ms=self._model.get_duration_ms(),
                 has_audio=self._model.audio_source_path is not None,
+                metadata={
+                    "audio_source_asset_id": self._model.audio_source_asset_id,
+                    "layer_count": len(self._model.layers),
+                    "export_profile": "ffmpeg_filter_complex",
+                },
             )
             self.register_output_asset(asset)
 
@@ -1179,7 +1183,11 @@ class RenderCompositionTab(BaseTab):
         if model_data:
             self._model = CompositionModel.from_dict(model_data)
             self._refresh_layer_list()
+            self._refresh_asset_combos()
             self._sync_output_ui()
+            current_layer = self._selected_layer()
+            if current_layer is not None:
+                self._load_layer_properties(current_layer)
 
         output_path = data.get("output_path", "")
         if output_path:

@@ -121,6 +121,7 @@ class JobStatusWidget(QWidget):
         self._state = _STATE_ACTIVE
         self._output_path = None
         self._job_info_label.setText(f"[{owner_tab}] {job_type}: {label}")
+        self._progress_bar.setVisible(True)
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._status_label.setText("")
@@ -196,6 +197,7 @@ class JobStatusWidget(QWidget):
         """
         self._state = _STATE_FAILED
         self._output_path = None
+        self._progress_bar.setVisible(False)
         self._progress_bar.setRange(0, 100)
         self._status_label.setText(f"Error: {error}")
         self._set_action_buttons_visible(False)
@@ -214,6 +216,7 @@ class JobStatusWidget(QWidget):
         """
         self._state = _STATE_CANCELED
         self._output_path = None
+        self._progress_bar.setVisible(False)
         self._progress_bar.setRange(0, 100)
         self._status_label.setText(message)
         self._set_action_buttons_visible(False)
@@ -235,6 +238,7 @@ class JobStatusWidget(QWidget):
         self._state = _STATE_IDLE
         self._output_path = None
         self._job_info_label.setText("")
+        self._progress_bar.setVisible(True)
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
         self._status_label.setText("")

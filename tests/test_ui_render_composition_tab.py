@@ -601,6 +601,25 @@ class TestDirectFileSourceHandling:
         texts = [tab._source_combo.itemText(i) for i in range(tab._source_combo.count())]
         assert any("bg_file.mp4" in t for t in texts)
 
+    def test_apply_settings_restores_direct_file_entries(self):
+        tab = RenderCompositionTab()
+        model = CompositionModel()
+        model.add_layer(
+            CompositionLayer(
+                display_name="BG",
+                asset_path=Path("/tmp/bg_from_settings.mp4"),
+            )
+        )
+        model.audio_source_path = Path("/tmp/audio_from_settings.wav")
+
+        tab.apply_settings({"model": model.to_dict()})
+
+        source_texts = [tab._source_combo.itemText(i) for i in range(tab._source_combo.count())]
+        audio_texts = [tab._audio_combo.itemText(i) for i in range(tab._audio_combo.count())]
+
+        assert any("bg_from_settings.mp4" in text for text in source_texts)
+        assert any("audio_from_settings.wav" in text for text in audio_texts)
+
     def test_output_path_gets_mp4_extension(self):
         """Output path without extension gets .mp4 appended."""
         tab = RenderCompositionTab()

@@ -1,5 +1,6 @@
 """Tests for the Audio Visualizer tab."""
 from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QWidget
 
 app = QApplication.instance() or QApplication([])
 
@@ -94,3 +95,33 @@ class TestAudioVisualizerTabGlobalBusy:
         tab.set_global_busy(True, "srt_gen")
         tab.set_global_busy(False, None)
         assert tab.render_button.isEnabled()
+
+
+class _FakeMainWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.completed_calls = []
+
+    def show_job_completed(self, message, output_path=None, owner_tab_id=None):
+        self.completed_calls.append((message, output_path, owner_tab_id))
+
+
+class TestAudioVisualizerRenderCompletion:
+    def test_render_finished_always_uses_global_completion_state(self, monkeypatch):
+        main_window = _FakeMainWindow()
+        tab = AudioVisualizerTab(main_window)
+        tab._active_preview = False
+        tab._show_output_for_last_render = False
+
+        registered = []
+        monkeypatch.setattr(tab, "_register_render_asset", lambda video_data: registered.append(video_data))
+
+        class _VideoData:
+            file_path = "/tmp/output.mp4"
+
+        tab.render_finished(_VideoData())
+
+        assert registered
+        assert main_window.completed_calls == [
+            ("Render complete.", "/tmp/output.mp4", "audio_visualizer")
+        ]

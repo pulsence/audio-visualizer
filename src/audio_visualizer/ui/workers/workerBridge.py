@@ -125,17 +125,6 @@ class WorkerBridge:
             # RENDER_START or unknown future types -- emit as log
             self._handle_log(event, data)
 
-        # If any event arrives at ERROR level without being a completion
-        # event, also emit a ``failed`` signal so the UI can react.
-        if (
-            event.level is EventLevel.ERROR
-            and event.event_type not in (
-                EventType.JOB_COMPLETE,
-                EventType.RENDER_COMPLETE,
-            )
-        ):
-            self._signals.failed.emit(event.message, data)
-
     # ------------------------------------------------------------------
     # Per-type handlers
     # ------------------------------------------------------------------

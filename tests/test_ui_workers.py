@@ -122,7 +122,7 @@ class TestWorkerBridgeEventForwarding:
         assert len(received) == 1
         assert received[0]["output_path"] == "/tmp/out.mp4"
 
-    def test_failed_on_error_level(self):
+    def test_error_logs_do_not_auto_emit_failed(self):
         emitter = AppEventEmitter()
         signals = WorkerSignals()
         bridge = WorkerBridge(emitter, signals)
@@ -138,10 +138,7 @@ class TestWorkerBridgeEventForwarding:
             data={"detail": "disk full"},
         ))
 
-        assert len(received) == 1
-        msg, data = received[0]
-        assert msg == "something broke"
-        assert data["detail"] == "disk full"
+        assert received == []
 
     def test_started_event_forwarded(self):
         emitter = AppEventEmitter()

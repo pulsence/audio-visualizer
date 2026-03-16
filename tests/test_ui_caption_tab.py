@@ -1,6 +1,6 @@
 """Tests for CaptionAnimateTab from audio_visualizer.ui.tabs.captionAnimateTab."""
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 app = QApplication.instance() or QApplication([])
 
@@ -53,6 +53,7 @@ class TestCaptionAnimateTabSettings:
             "styling",
             "layout",
             "animation",
+            "mux_audio",
             "audio_reactive",
         }
         assert set(settings.keys()) == expected_keys
@@ -128,6 +129,7 @@ class TestCaptionAnimateTabSettings:
                 "type": "fade",
                 "params": {"in_ms": 200.0, "out_ms": 300.0},
             },
+            "mux_audio": True,
             "audio_reactive": {
                 "enabled": True,
                 "audio_path": "/tmp/audio.mp3",
@@ -171,6 +173,7 @@ class TestCaptionAnimateTabSettings:
         assert restored["animation"]["params"]["in_ms"] == custom["animation"]["params"]["in_ms"]
         assert restored["animation"]["params"]["out_ms"] == custom["animation"]["params"]["out_ms"]
 
+        assert restored["mux_audio"] == custom["mux_audio"]
         assert restored["audio_reactive"]["enabled"] == custom["audio_reactive"]["enabled"]
         assert restored["audio_reactive"]["audio_path"] == custom["audio_reactive"]["audio_path"]
 
@@ -202,6 +205,16 @@ class TestCaptionAnimateTabValidation:
         valid, msg = tab.validate_settings()
         assert valid is False
         assert ".srt" in msg or ".ass" in msg
+
+    def test_validate_mux_audio_requires_audio_path(self):
+        tab = CaptionAnimateTab()
+        tab._subtitle_edit.setText("/tmp/test.srt")
+        tab._mux_audio_cb.setChecked(True)
+
+        valid, msg = tab.validate_settings()
+
+        assert valid is False
+        assert "audio" in msg.lower()
 
 
 class TestCaptionAnimateTabSessionContext:
@@ -261,6 +274,67 @@ class TestCaptionAnimateTabGlobalBusy:
         tab = CaptionAnimateTab()
         tab.set_global_busy(True, owner_tab_id="caption_animate")
         assert tab._start_btn.isEnabled() is True
+
+
+class _FakeMainWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.completed_calls = []
+
+    def show_job_completed(self, message, output_path=None, owner_tab_id=None):
+        self.completed_calls.append((message, output_path, owner_tab_id))
+
+    def update_job_progress(self, percent, message):
+        return None
+
+    def update_job_status(self, message):
+        return None
+
+    def try_start_job(self, owner_tab_id):
+        return True
+
+
+class TestCaptionAnimateOutputs:
+    def test_render_completion_registers_delivery_and_overlay_assets(self, tmp_path):
+        main_window = _FakeMainWindow()
+        tab = CaptionAnimateTab(main_window)
+        ctx = SessionContext()
+        tab.set_session_context(ctx)
+        tab._subtitle_edit.setText(str(tmp_path / "sample.srt"))
+
+        delivery = tmp_path / "sample_caption.mp4"
+        overlay = tmp_path / "sample_caption_overlay.mov"
+        delivery.write_bytes(b"delivery")
+        overlay.write_bytes(b"overlay")
+
+        tab._on_render_completed(
+            {
+                "output_path": str(delivery),
+                "delivery_path": str(delivery),
+                "overlay_path": str(overlay),
+                "width": 1920,
+                "height": 200,
+                "duration_ms": 5000,
+                "quality": "large",
+                "overlay_has_alpha": True,
+                "delivery_has_audio": True,
+            }
+        )
+
+        video_assets = ctx.list_assets(category="video")
+        assert len(video_assets) == 2
+
+        delivery_asset = next(asset for asset in video_assets if asset.path == delivery)
+        overlay_asset = next(asset for asset in video_assets if asset.path == overlay)
+
+        assert delivery_asset.role is None
+        assert delivery_asset.has_audio is True
+        assert delivery_asset.metadata["delivery"] is True
+
+        assert overlay_asset.role == "caption_overlay"
+        assert overlay_asset.has_alpha is True
+        assert overlay_asset.is_overlay_ready is True
+        assert overlay_asset.preferred_for_overlay is True
 
 
 class TestCaptionAnimateTabPresetLoading:

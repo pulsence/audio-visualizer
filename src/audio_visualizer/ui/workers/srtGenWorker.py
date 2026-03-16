@@ -103,6 +103,16 @@ class SrtGenWorker(QRunnable):
                 self.signals.completed.emit({"results": [], "total": 0})
                 return
 
+            self._emitter.emit(AppEvent(
+                event_type=EventType.JOB_START,
+                message=f"Generating SRTs for {total} file(s)",
+                data={
+                    "job_type": "srt_gen",
+                    "owner_tab_id": "srt_gen",
+                    "label": f"Generating SRTs for {total} file(s)",
+                },
+            ))
+
             if self._cancel_flag.is_set():
                 self.signals.canceled.emit("Cancelled before model load")
                 return
@@ -120,6 +130,7 @@ class SrtGenWorker(QRunnable):
                     model_name=first.model_name,
                     device=first.device,
                     strict_cuda=False,
+                    emitter=self._emitter,
                 )
                 info = self._model_manager.model_info()
                 device_used = info.device if info else first.device
