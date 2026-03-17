@@ -103,6 +103,36 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - A timeline widget reflects the same timing model used by preview and final render.
 - Audio is layered, delayable, trimmable, and mixed during final FFmpeg export.
 
+## Caption Animate
+
+`CaptionAnimateTab` owns subtitle overlay rendering with two preview modes.
+
+- **Style Preview** shows a styled `QLabel` reflecting current typography/color settings for quick visual feedback.
+- **Render Preview** runs a short (~5 second) actual render to a temporary directory using the shared job pool, then plays the result back via an embedded `QMediaPlayer`/`QVideoWidget`. Preview renders are clamped to 5 seconds via `RenderConfig.max_duration_sec` and do not register session assets.
+- Full renders use the shared `MainWindow.render_thread_pool` with guarded `_safe_main_window()` calls so the tab is safe to use without a host window.
+- Mixed-type animation parameters (numeric, string, `None`) are handled by a control registry that creates `QDoubleSpinBox` or `QLineEdit` widgets depending on the parameter type.
+
+## SRT Gen
+
+`SrtGenTab` provides batch whisper transcription with explicit model lifecycle.
+
+- The model can be preloaded via a `Load Model` button or auto-loaded at transcription time.
+- `SrtGenWorker` owns the model thread: the same thread that calls `load()` also calls `transcribe()`, avoiding cross-thread GPU handle issues.
+- Cancel is responsive during model loading via a polling loop around the blocking load call.
+- Compute type fallback uses a valid value (`int8`) instead of `"default"`.
+
+## SRT Edit
+
+`SrtEditTab` provides waveform-synced subtitle editing with tab-scoped undo.
+
+- Ctrl+wheel pans horizontally via an event filter on the `PlotWidget` viewport; the horizontal scrollbar stays synchronized.
+- Inline table edits (text, timestamps, speaker) emit a structured signal from `SubtitleTableModel` instead of mutating the document directly. `SrtEditTab` converts these into undoable commands (`EditTextCommand`, `EditTimestampCommand`, `EditSpeakerCommand`).
+- Multiline text edits auto-resize their table rows via a `dataChanged` handler.
+
+## Tab-Scoped Undo/Redo
+
+`SrtEditTab` and `RenderCompositionTab` each own a `QUndoStack`. Local `Ctrl+Z`/`Ctrl+Y` shortcuts are bound per-tab. `MainWindow._update_undo_actions()` rebinds the Edit menu Undo/Redo actions on every tab switch so keyboard shortcuts never leak across tabs.
+
 ## Assets Screen
 
 `AssetsTab` is a support screen rather than a workflow stage.

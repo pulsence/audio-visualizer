@@ -1154,6 +1154,7 @@ class CaptionAnimateTab(BaseTab):
             safety_scale=self._safety_scale_spin.value(),
             apply_animation=self._apply_animation_cb.isChecked(),
             reskin=self._reskin_cb.isChecked(),
+            max_duration_sec=5.0,
         )
 
         preset_override = self._collect_preset_config()

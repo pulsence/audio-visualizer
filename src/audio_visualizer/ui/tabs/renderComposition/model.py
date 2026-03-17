@@ -210,6 +210,13 @@ class CompositionModel:
                 return layer
         return None
 
+    def get_audio_layer(self, layer_id: str) -> CompositionAudioLayer | None:
+        """Return the audio layer with *layer_id*, or ``None``."""
+        for al in self.audio_layers:
+            if al.id == layer_id:
+                return al
+        return None
+
     def move_layer(self, layer_id: str, x: int, y: int) -> None:
         """Update position of the layer with *layer_id*."""
         layer = self.get_layer(layer_id)

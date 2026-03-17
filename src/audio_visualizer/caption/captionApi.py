@@ -45,6 +45,7 @@ class RenderConfig:
     safety_scale: float = 1.12
     apply_animation: bool = True
     reskin: bool = False  # For ASS files: apply preset style
+    max_duration_sec: float = 0.0  # 0 = no limit; >0 clamps render duration
 
 
 @dataclass
@@ -197,6 +198,8 @@ def render_subtitle(
             # Calculate duration
             end_ms = subtitle.get_duration_ms()
             duration_sec = (end_ms / 1000.0) + 0.25
+            if config.max_duration_sec > 0:
+                duration_sec = min(duration_sec, config.max_duration_sec)
 
             progress.step(f"Subtitle duration: {end_ms}ms (~{duration_sec:.2f}s)")
 

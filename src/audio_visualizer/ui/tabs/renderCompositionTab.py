@@ -612,6 +612,10 @@ class RenderCompositionTab(BaseTab):
             if layer.id == item_id:
                 self._layer_list.setCurrentRow(i)
                 return
+        for i, al in enumerate(self._model.audio_layers):
+            if al.id == item_id:
+                self._audio_layer_list.setCurrentRow(i)
+                return
 
     def _on_timeline_item_moved(self, item_id: str, new_start: int, new_end: int) -> None:
         """Handle timeline item drag."""
@@ -621,6 +625,16 @@ class RenderCompositionTab(BaseTab):
             layer.end_ms = new_end
             self._refresh_layer_list()
             self._load_layer_properties(layer)
+            self.settings_changed.emit()
+            return
+        al = self._model.get_audio_layer(item_id)
+        if al:
+            duration = new_end - new_start
+            al.start_ms = new_start
+            if not al.use_full_length:
+                al.duration_ms = duration
+            self._refresh_audio_layer_list()
+            self._on_audio_layer_selected(self._audio_layer_list.currentRow())
             self.settings_changed.emit()
 
     def _on_timeline_item_trimmed(self, item_id: str, which: str, ms: int) -> None:
@@ -633,6 +647,18 @@ class RenderCompositionTab(BaseTab):
                 layer.end_ms = ms
             self._refresh_layer_list()
             self._load_layer_properties(layer)
+            self.settings_changed.emit()
+            return
+        al = self._model.get_audio_layer(item_id)
+        if al:
+            if which == "start":
+                al.start_ms = ms
+            else:
+                new_duration = max(0, ms - al.start_ms)
+                al.duration_ms = new_duration
+                al.use_full_length = False
+            self._refresh_audio_layer_list()
+            self._on_audio_layer_selected(self._audio_layer_list.currentRow())
             self.settings_changed.emit()
 
     # ------------------------------------------------------------------

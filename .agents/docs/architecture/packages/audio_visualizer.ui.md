@@ -67,6 +67,56 @@ Modal settings dialog for app-level and session-level defaults.
 - Project section exposes the session `Project Folder`.
 - Uses explicit accept semantics: widget edits do not persist until the user confirms the dialog.
 
+## NavigationSidebar
+
+Left-side tab switcher that drives `QStackedWidget` tab display.
+
+- Shows all six tabs with labels and optional busy-state indicators.
+- Sidebar clicks trigger `_ensure_tab_instantiated()` for lazy tabs before switching.
+
+## CaptionAnimateTab
+
+Subtitle overlay rendering with dual preview modes.
+
+- Style Preview: live `QLabel` reflecting current typography/color settings.
+- Render Preview: ~5 second render to a temporary directory via `RenderConfig.max_duration_sec`, played back in an embedded `QMediaPlayer`/`QVideoWidget`. Does not register session assets.
+- Mixed-type animation parameters use a control registry: `QDoubleSpinBox` for numeric, `QLineEdit` for string/`None`.
+- All `MainWindow` integration points use `_safe_main_window()` guards.
+
+## SrtGenTab
+
+Batch Whisper transcription with explicit model lifecycle.
+
+- `SrtGenWorker` owns the model thread: load and transcribe happen on the same thread.
+- Cancel-responsive during model loading via a polling loop.
+- Compute type fallback resolves to a valid value instead of `"default"`.
+
+## SrtEditTab
+
+Waveform-synced subtitle editing with tab-scoped undo.
+
+- Ctrl+wheel pans horizontally; scrollbar stays synchronized.
+- Inline table edits emit structured signals from `SubtitleTableModel` and are converted to undoable commands in the tab.
+- Multiline text edits auto-resize rows.
+
+## RenderCompositionTab
+
+Layer-based video composition with timeline.
+
+- Visual and audio layers both live in `CompositionModel`.
+- `TimelineWidget` shows all layers on separate tracks with drag-to-move and handle-based trimming for both visual and audio layers.
+- Standard resolution presets (`HD`, `HD Vertical`, `2K`, `4K`, `Custom`) drive width/height; manual edits fall back to `Custom`.
+- Audio layers use `adelay`, `atrim`, and `amix` FFmpeg filters for multi-source mixing.
+- Tab-local `QUndoStack` with `Ctrl+Z`/`Ctrl+Y` shortcuts.
+
+## AssetsTab
+
+Support screen (not a workflow stage) for browsing and importing assets.
+
+- Shows a live table of `SessionAsset` entries with metadata columns.
+- Imports individual files or folders through `WorkspaceContext` helpers.
+- Not included in `workflowRecipes.VALID_STAGES`.
+
 ## RenderDialog
 
 Standalone media preview dialog used by global completion actions.
