@@ -29,6 +29,9 @@ dependencies = [
 diarize = [
   "pyannote.audio>=3.0",
 ]
+cuda = [
+  "nvidia-cublas-cu12>=12.4",
+]
 dev = [
   "pytest==8.3.2",
   "pytest-mock",

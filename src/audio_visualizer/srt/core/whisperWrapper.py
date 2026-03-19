@@ -6,9 +6,34 @@ appropriate device and compute type selection.
 """
 from __future__ import annotations
 
+import ctypes
+import sys
 from typing import Tuple, Any, Optional
 
 from audio_visualizer.events import AppEvent, AppEventEmitter, EventType
+
+
+# ============================================================
+# CUDA Runtime Pre-check
+# ============================================================
+
+def _check_cuda_runtime() -> Tuple[bool, str]:
+    """Check whether the cuBLAS shared library is loadable.
+
+    Returns:
+        (True, "") if the library is found, or
+        (False, diagnostic_message) with install instructions if not.
+    """
+    lib_name = "cublas64_12.dll" if sys.platform == "win32" else "libcublas.so.12"
+    try:
+        ctypes.cdll.LoadLibrary(lib_name)
+        return True, ""
+    except OSError:
+        msg = (
+            f"CUDA runtime library '{lib_name}' not found. "
+            "Install the missing package with: pip install nvidia-cublas-cu12"
+        )
+        return False, msg
 
 
 # ============================================================
@@ -47,6 +72,13 @@ def init_whisper_model_internal(
         return WhisperModel(model_name, device="cpu", compute_type=compute_type), "cpu", compute_type
 
     if device == "cuda":
+        cuda_ok, cuda_diag = _check_cuda_runtime()
+        if not cuda_ok:
+            if strict_cuda:
+                raise RuntimeError(cuda_diag)
+            _emit(emitter, AppEvent(event_type=EventType.LOG, message=cuda_diag))
+            compute_type = "int8"
+            return WhisperModel(model_name, device="cpu", compute_type=compute_type), "cpu", compute_type
         try:
             compute_type = "float16"
             m = WhisperModel(model_name, device="cuda", compute_type=compute_type)
@@ -60,6 +92,11 @@ def init_whisper_model_internal(
             return WhisperModel(model_name, device="cpu", compute_type=compute_type), "cpu", compute_type
 
     # auto
+    cuda_ok, cuda_diag = _check_cuda_runtime()
+    if not cuda_ok:
+        _emit(emitter, AppEvent(event_type=EventType.LOG, message=cuda_diag))
+        compute_type = "int8"
+        return WhisperModel(model_name, device="cpu", compute_type=compute_type), "cpu", compute_type
     try:
         compute_type = "float16"
         m = WhisperModel(model_name, device="cuda", compute_type=compute_type)

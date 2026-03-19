@@ -209,6 +209,8 @@ class SrtGenWorker(QRunnable):
                     for r in self._results
                 ],
                 "total": total,
+                "device_used": device_used,
+                "compute_type_used": compute_type_used,
             })
 
         except Exception as exc:

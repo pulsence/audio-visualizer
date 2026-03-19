@@ -290,3 +290,57 @@ class TestSrtGenJobShellIntegration:
 
         assert len(captured_workers) == 1
         assert "model_manager" not in captured_workers[0].captured_kwargs
+
+
+class TestSrtGenTabDeviceInfo:
+    def test_completion_shows_device_info(self):
+        """After batch completion, event log should include device info."""
+        tab = SrtGenTab()
+
+        data = {
+            "results": [{"success": True}],
+            "total": 1,
+            "device_used": "cuda",
+            "compute_type_used": "float16",
+        }
+        tab._on_transcription_completed(data)
+
+        log_text = tab._event_log.toPlainText()
+        assert "Last run used cuda" in log_text
+
+    def test_completion_shows_cpu_fallback_when_cuda_requested(self):
+        """When CUDA was requested but CPU was used, show fallback message."""
+        tab = SrtGenTab()
+        # Set the device combo to cuda
+        idx = tab._device_combo.findText("cuda")
+        if idx >= 0:
+            tab._device_combo.setCurrentIndex(idx)
+
+        data = {
+            "results": [{"success": True}],
+            "total": 1,
+            "device_used": "cpu",
+            "compute_type_used": "int8",
+        }
+        tab._on_transcription_completed(data)
+
+        log_text = tab._event_log.toPlainText()
+        assert "Last run used CPU (CUDA unavailable)" in log_text
+
+    def test_model_load_shows_cpu_fallback(self):
+        """Model load status shows fallback when CUDA was requested but CPU used."""
+        tab = SrtGenTab()
+        # Set the device combo to cuda
+        idx = tab._device_combo.findText("cuda")
+        if idx >= 0:
+            tab._device_combo.setCurrentIndex(idx)
+
+        data = {
+            "display_name": "Small",
+            "model_name": "small",
+            "device": "cpu",
+            "compute_type": "int8",
+        }
+        tab._on_model_load_completed(data)
+
+        assert "CPU (CUDA unavailable)" in tab._status_label.text()

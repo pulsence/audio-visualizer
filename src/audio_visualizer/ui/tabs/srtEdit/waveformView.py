@@ -13,7 +13,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QScrollBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QScrollBar, QStackedLayout, QVBoxLayout, QWidget
 
 from audio_visualizer.ui.tabs.srtEdit.document import SubtitleEntry
 
@@ -60,6 +60,12 @@ class WaveformView(QWidget):
         # Accept focus so Space key works
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
+        # Overlay label for loading/error messages
+        self._overlay_label = QLabel()
+        self._overlay_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._overlay_label.setStyleSheet("color: #aaa; font-size: 14px;")
+        self._overlay_label.hide()
+
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -81,6 +87,7 @@ class WaveformView(QWidget):
         # Track range changes for scrollbar sync
         self._plot_widget.sigXRangeChanged.connect(self._on_x_range_changed)
 
+        layout.addWidget(self._overlay_label)
         layout.addWidget(self._plot_widget)
 
         # Horizontal scrollbar for panned/zoomed waveform
@@ -99,6 +106,25 @@ class WaveformView(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def set_loading_message(self, message: str) -> None:
+        """Show a loading message overlay, hiding the plot widget."""
+        self._overlay_label.setText(message)
+        self._overlay_label.show()
+        self._plot_widget.hide()
+
+    def set_error_message(self, message: str) -> None:
+        """Show an error message overlay, hiding the plot widget."""
+        self._overlay_label.setText(message)
+        self._overlay_label.setStyleSheet("color: #e55; font-size: 14px;")
+        self._overlay_label.show()
+        self._plot_widget.hide()
+
+    def clear_message(self) -> None:
+        """Hide the overlay message and show the plot widget."""
+        self._overlay_label.hide()
+        self._overlay_label.setStyleSheet("color: #aaa; font-size: 14px;")
+        self._plot_widget.show()
 
     def load_waveform(self, samples: np.ndarray, sample_rate: int) -> None:
         """Load and display an audio waveform.
@@ -141,6 +167,7 @@ class WaveformView(QWidget):
 
         self._regions.clear()
         self._highlight_region = None
+        self.clear_message()
         logger.debug(
             "Waveform loaded: %d samples, %d Hz, %.1f s",
             num_samples, sample_rate, num_samples / sample_rate,

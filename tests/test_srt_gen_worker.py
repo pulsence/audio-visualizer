@@ -182,3 +182,35 @@ class TestSrtGenWorkerUsesLoadModelDirectly:
         )
         assert len(completed) == 1
         assert completed[0]["total"] == 1
+
+
+class TestSrtGenWorkerDeviceMetadata:
+    """Completed payload must include device_used and compute_type_used."""
+
+    @patch("audio_visualizer.ui.workers.srtGenWorker.load_model")
+    @patch("audio_visualizer.ui.workers.srtGenWorker.transcribe_file")
+    def test_completed_payload_includes_device_metadata(self, mock_transcribe, mock_load):
+        mock_load.return_value = (MagicMock(), "cuda", "float16")
+        mock_transcribe.return_value = MagicMock(
+            success=True,
+            input_path=Path("/tmp/test.mp3"),
+            output_path=Path("/tmp/test.srt"),
+            error=None,
+            transcript_path=None,
+            segments_path=None,
+            json_bundle_path=None,
+            elapsed=1.0,
+        )
+
+        emitter = AppEventEmitter()
+        job = _make_job()
+        worker = SrtGenWorker(jobs=[job], emitter=emitter)
+
+        completed = []
+        worker.signals.completed.connect(lambda data: completed.append(data))
+
+        worker.run()
+
+        assert len(completed) == 1
+        assert completed[0]["device_used"] == "cuda"
+        assert completed[0]["compute_type_used"] == "float16"

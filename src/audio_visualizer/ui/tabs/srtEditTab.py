@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -72,6 +72,30 @@ _AUDIO_FILTERS = "Audio Files (*.wav *.mp3 *.flac *.ogg *.aac *.m4a);;All Files 
 _SUBTITLE_FILTERS = "Subtitle Files (*.srt *.ass *.vtt);;All Files (*)"
 
 
+class _WaveformLoadSignals(QObject):
+    finished = Signal(object, int, int)  # (samples, sample_rate, request_id)
+    failed = Signal(str, int)            # (error_message, request_id)
+
+
+class _WaveformLoadWorker(QRunnable):
+    """Background worker for loading waveform data."""
+
+    def __init__(self, load_fn, path: str, request_id: int) -> None:
+        super().__init__()
+        self.setAutoDelete(True)
+        self._load_fn = load_fn
+        self._path = path
+        self._request_id = request_id
+        self.signals = _WaveformLoadSignals()
+
+    def run(self) -> None:
+        try:
+            samples, sr = self._load_fn(self._path)
+            self.signals.finished.emit(samples, sr, self._request_id)
+        except Exception as exc:
+            self.signals.failed.emit(str(exc), self._request_id)
+
+
 class SrtEditTab(BaseTab):
     """Waveform-backed subtitle editor tab."""
 
@@ -102,6 +126,7 @@ class SrtEditTab(BaseTab):
         self._lint_profile_key: str = "pipeline_default"
         self._lint_issues: list[LintIssue] = []
         self._refreshing_asset_combos = False
+        self._waveform_request_id: int = 0
 
         self._build_ui()
         self._connect_signals()
@@ -342,17 +367,33 @@ class SrtEditTab(BaseTab):
         self._audio_combo.addItem(os.path.basename(path), path)
         self._audio_combo.blockSignals(False)
 
-        # Load waveform data, reusing the session analysis cache when possible.
-        try:
-            samples, sr = self._load_waveform_data(path)
-            self._waveform_view.load_waveform(samples, sr)
-        except Exception:
-            logger.exception("Failed to load waveform from %s", path)
+        # Show loading indicator and launch background waveform load
+        self._waveform_request_id += 1
+        request_id = self._waveform_request_id
+        self._waveform_view.set_loading_message("Loading waveform...")
 
-        # Set up media player
+        worker = _WaveformLoadWorker(self._load_waveform_data, path, request_id)
+        worker.signals.finished.connect(self._on_waveform_loaded)
+        worker.signals.failed.connect(self._on_waveform_load_failed)
+        QThreadPool.globalInstance().start(worker)
+
+        # Set up media player (lightweight, stays synchronous)
         self._media_player.setSource(QUrl.fromLocalFile(path))
-        logger.info("Audio loaded: %s", path)
+        logger.info("Audio loading started: %s", path)
         self.settings_changed.emit()
+
+    def _on_waveform_loaded(self, samples, sr: int, request_id: int) -> None:
+        """Handle completed waveform load on the UI thread."""
+        if request_id != self._waveform_request_id:
+            return  # Stale result — user selected a newer file
+        self._waveform_view.load_waveform(samples, sr)
+
+    def _on_waveform_load_failed(self, error_message: str, request_id: int) -> None:
+        """Handle failed waveform load on the UI thread."""
+        if request_id != self._waveform_request_id:
+            return  # Stale result
+        logger.error("Failed to load waveform: %s", error_message)
+        self._waveform_view.set_error_message("Failed to load waveform")
 
     # ------------------------------------------------------------------
     # Subtitle loading

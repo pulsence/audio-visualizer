@@ -749,8 +749,13 @@ class SrtGenTab(BaseTab):
         self._sync_model_state_from_manager()
         device_info = data.get("device", "unknown")
         display_name = data.get("display_name", self._model_combo.currentText())
-        self._status_label.setText(f"Model '{display_name}' loaded on {device_info}")
-        self._append_event(f"Model '{display_name}' loaded on {device_info}")
+        requested_device = self._device_combo.currentText()
+        if device_info == "cpu" and requested_device == "cuda":
+            status_text = f"Model '{display_name}' loaded on CPU (CUDA unavailable)"
+        else:
+            status_text = f"Model '{display_name}' loaded on {device_info}"
+        self._status_label.setText(status_text)
+        self._append_event(status_text)
 
     def _on_model_load_failed(self, error_message: str, data: dict[str, Any]) -> None:
         self._active_model_worker = None
@@ -1234,12 +1239,24 @@ class SrtGenTab(BaseTab):
         succeeded = sum(1 for r in results if r.get("success"))
         failed = total - succeeded
 
+        device_used = data.get("device_used", "")
+        compute_type_used = data.get("compute_type_used", "")
+
         summary = (
             f"Completed: {succeeded}/{total} succeeded"
             + (f", {failed} failed" if failed else "")
         )
         self._status_label.setText(summary)
         self._append_event(summary)
+
+        # Show resolved device info
+        if device_used:
+            requested_device = self._device_combo.currentText()
+            if device_used == "cpu" and requested_device == "cuda":
+                device_msg = "Last run used CPU (CUDA unavailable)"
+            else:
+                device_msg = f"Last run used {device_used}"
+            self._append_event(device_msg)
 
         # The model was loaded by the worker — update UI state
         self._sync_model_state_from_manager()

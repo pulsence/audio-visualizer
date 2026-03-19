@@ -250,3 +250,53 @@ class TestEditSpeakerCommand:
         cmd.undo()
 
         assert doc.entries[0].speaker is None
+
+
+class TestWaveformBackgroundLoading:
+    def test_load_audio_launches_worker(self, monkeypatch):
+        """_load_audio should increment request id and show loading message."""
+        tab = SrtEditTab()
+        monkeypatch.setattr(
+            tab,
+            "_load_waveform_data",
+            lambda path: (np.array([0.0, 0.5, 0.0]), 44100),
+        )
+        assert tab._waveform_request_id == 0
+        tab._load_audio("/tmp/test.wav")
+        assert tab._waveform_request_id == 1
+
+    def test_stale_waveform_completion_ignored(self):
+        """Stale waveform completions (old request_id) should be ignored."""
+        tab = SrtEditTab()
+        # Manually set request_id to 2 (simulating two rapid loads)
+        tab._waveform_request_id = 2
+        tab._waveform_view.set_loading_message("Loading waveform...")
+
+        load_calls = []
+        original_load = tab._waveform_view.load_waveform
+        tab._waveform_view.load_waveform = lambda s, sr: load_calls.append((s, sr))
+
+        # Simulate stale completion from request 1 — should be ignored
+        tab._on_waveform_loaded(np.array([0.0]), 44100, 1)
+        assert len(load_calls) == 0
+
+        # Now complete with the current request — should load
+        tab._on_waveform_loaded(np.array([0.0, 0.5]), 44100, 2)
+        assert len(load_calls) == 1
+
+    def test_waveform_mutation_on_ui_thread(self, monkeypatch):
+        """load_waveform must be called from _on_waveform_loaded, not the worker."""
+        tab = SrtEditTab()
+        monkeypatch.setattr(
+            tab,
+            "_load_waveform_data",
+            lambda path: (np.array([0.0, 0.5, 0.0]), 44100),
+        )
+        tab._load_audio("/tmp/test.wav")
+
+        load_calls = []
+        original_load = tab._waveform_view.load_waveform
+        tab._waveform_view.load_waveform = lambda s, sr: load_calls.append((s, sr))
+
+        tab._on_waveform_loaded(np.array([0.0, 0.5]), 44100, tab._waveform_request_id)
+        assert len(load_calls) == 1
