@@ -739,6 +739,7 @@ class MainWindow(QMainWindow):
             app.setPalette(build_dark_palette())
             return
 
+        app.setStyleSheet("")
         app.setPalette(app.style().standardPalette())
 
     # ------------------------------------------------------------------

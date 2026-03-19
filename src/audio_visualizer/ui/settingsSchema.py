@@ -45,7 +45,7 @@ def create_default_schema() -> dict:
     return {
         "version": CURRENT_SCHEMA_VERSION,
         "app": {
-            "theme_mode": "off",  # "off", "on", "auto"
+            "theme_mode": "auto",  # "off", "on", "auto"
         },
         "ui": {
             "last_active_tab": "audio_visualizer",

@@ -276,6 +276,17 @@ class TestMainWindowSettings:
         window = MainWindow()
         assert window._current_theme_mode == "on"
 
+    def test_apply_theme_light_clears_stylesheet(self, main_window):
+        """Toggling from dark to light mode clears application-level stylesheet."""
+        app = QApplication.instance()
+        # Apply dark mode first
+        main_window._apply_theme("on")
+        # Now switch to light
+        main_window._apply_theme("off")
+        assert main_window._current_theme_mode == "off"
+        # The application stylesheet should be empty after switching to light
+        assert app.styleSheet() == ""
+
     def test_apply_settings_stores_pending_for_lazy_tabs(self, main_window):
         """_apply_settings stores settings for not-yet-instantiated tabs."""
         # This test verifies the pending settings mechanism.

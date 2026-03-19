@@ -185,10 +185,15 @@ class NavigationSidebar(QWidget):
             }
             #navigationList::item {
                 padding: 4px 6px;
+                border-bottom: 1px solid palette(mid);
+            }
+            #navigationList::item:pressed {
+                border-left: 3px solid palette(highlight);
             }
             #navigationList::item:selected {
                 background-color: palette(highlight);
                 color: palette(highlighted-text);
+                border-left: 3px solid palette(highlight);
             }
             """
         )

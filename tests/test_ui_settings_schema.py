@@ -35,7 +35,7 @@ class TestCreateDefaultSchema:
         assert schema["version"] == CURRENT_SCHEMA_VERSION
 
         # App section defaults
-        assert schema["app"]["theme_mode"] == "off"
+        assert schema["app"]["theme_mode"] == "auto"
 
         # Tabs has exactly 6 keys
         assert len(schema["tabs"]) == 6
@@ -157,7 +157,7 @@ class TestMigrateSettings:
         }
         migrated = migrate_settings(data)
         assert "app" in migrated
-        assert migrated["app"]["theme_mode"] == "off"
+        assert migrated["app"]["theme_mode"] == "auto"
 
     def test_migrate_preserves_existing_app_section(self):
         """Existing app settings are not overwritten during migration."""
