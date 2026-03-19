@@ -123,6 +123,8 @@ Returns `CoreTranscriptionResult` dataclass.
 
 `init_whisper_model_internal(model_name, device, strict_cuda, emitter=None) -> (model, device_used, compute_type)` -- Initializes a `faster_whisper.WhisperModel` with automatic device and compute type selection. Tries CUDA with float16 first, falls back to CPU with int8.
 
+`_check_cuda_runtime() -> bool` -- Pre-flight check that probes for the cuBLAS DLL before attempting CUDA initialization. When the check fails, the wrapper falls back to CPU and emits diagnostic log messages via the emitter. An optional `cuda` pip dependency group is available for installing CUDA runtime libraries.
+
 ### Subtitle Generation (`core/subtitleGeneration.py`)
 
 Functions for converting transcription segments and words into subtitle blocks:
@@ -219,3 +221,4 @@ All public API functions accept an optional `emitter: AppEventEmitter` parameter
 - **python-docx** -- .docx file reading for script alignment
 - **ffmpeg** (external) -- Audio conversion and silence detection
 - **pyannote.audio** (optional) -- Speaker diarization
+- **cuda pip group** (optional) -- CUDA runtime libraries for GPU-accelerated transcription; whisperWrapper falls back to CPU when unavailable

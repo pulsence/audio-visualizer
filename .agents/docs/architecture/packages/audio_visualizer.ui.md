@@ -22,7 +22,9 @@ PySide6 application shell and shared UI infrastructure.
 ### Theme and settings
 
 - Theme mode lives in `settings["app"]["theme_mode"]` with allowed values `off`, `on`, and `auto`.
+- Fresh installs default to `auto` (system theme preference) instead of `off` (light mode).
 - `auto` resolves against Qt color-scheme hints when available, but the stored mode remains `auto`.
+- `_apply_theme()` clears the application stylesheet when switching to light mode (`off`), ensuring no dark-mode rules linger.
 - Session state is serialized through `WorkspaceContext.to_dict()`, so project folder and imported assets travel with autosave/project files.
 
 ## JobStatusWidget
@@ -72,6 +74,7 @@ Modal settings dialog for app-level and session-level defaults.
 Left-side tab switcher that drives `QStackedWidget` tab display.
 
 - Shows all six tabs with labels and optional busy-state indicators.
+- Items are separated by horizontal rule dividers and use a left-border indicator for the selected tab.
 - Sidebar clicks trigger `_ensure_tab_instantiated()` for lazy tabs before switching.
 
 ## CaptionAnimateTab
@@ -81,6 +84,7 @@ Subtitle overlay rendering with dual preview modes.
 - Style Preview: live `QLabel` reflecting current typography/color settings.
 - Render Preview: ~5 second render to a temporary directory via `RenderConfig.max_duration_sec`, played back in an embedded `QMediaPlayer`/`QVideoWidget`. Does not register session assets.
 - Mixed-type animation parameters use a control registry: `QDoubleSpinBox` for numeric, `QLineEdit` for string/`None`.
+- `_create_delivery_output()` writes to a temp file then renames to avoid FFmpeg in-place conflicts. A process lock guards `_captured_process`. Preview temp files are cleaned up on rerender, failure, cancel, and close.
 - All `MainWindow` integration points use `_safe_main_window()` guards.
 
 ## SrtGenTab
@@ -90,6 +94,8 @@ Batch Whisper transcription with explicit model lifecycle.
 - `SrtGenWorker` owns the model thread: load and transcribe happen on the same thread.
 - Cancel-responsive during model loading via a polling loop.
 - Compute type fallback resolves to a valid value instead of `"default"`.
+- Event log panel uses an expanding size policy (no fixed 150px max height cap).
+- Worker completed payload includes `device_used` and `compute_type_used`; the tab displays the resolved device info after transcription.
 
 ## SrtEditTab
 
@@ -98,13 +104,16 @@ Waveform-synced subtitle editing with tab-scoped undo.
 - Ctrl+wheel pans horizontally; scrollbar stays synchronized.
 - Inline table edits emit structured signals from `SubtitleTableModel` and are converted to undoable commands in the tab.
 - Multiline text edits auto-resize rows.
+- Audio loading runs on a background `_WaveformLoadWorker(QRunnable)` with a monotonic request ID to discard stale completions. `WaveformView` provides `set_loading_message()`, `set_error_message()`, and `clear_message()` overlay helpers.
 
 ## RenderCompositionTab
 
 Layer-based video composition with timeline.
 
-- Visual and audio layers both live in `CompositionModel`.
-- `TimelineWidget` shows all layers on separate tracks with drag-to-move and handle-based trimming for both visual and audio layers.
+- Unified layer list with `[V]`/`[A]` prefixes; selecting a layer switches a `QStackedWidget` to context-sensitive settings. Preview panel on the right.
+- Render and output sections are merged; the separate cancel button has been removed.
+- `TimelineWidget` shows all layers on separate tracks with drag-to-move, handle-based trimming, and snap-to-align (200ms threshold) for both visual and audio layers.
+- Key color can be picked from the preview image.
 - Standard resolution presets (`HD`, `HD Vertical`, `2K`, `4K`, `Custom`) drive width/height; manual edits fall back to `Custom`.
 - Audio layers use `adelay`, `atrim`, and `amix` FFmpeg filters for multi-source mixing.
 - Tab-local `QUndoStack` with `Ctrl+Z`/`Ctrl+Y` shortcuts.

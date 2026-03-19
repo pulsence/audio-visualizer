@@ -10,7 +10,7 @@ This document describes the threading model, video encoding pipeline, and audio 
 
 ### Background Thread Pool
 
-`MainWindow._background_thread_pool` is a separate `QThreadPool` used for non-render background tasks like `UpdateCheckWorker`. This prevents update checks from blocking renders.
+`MainWindow._background_thread_pool` is a separate `QThreadPool` used for non-render background tasks like `UpdateCheckWorker` and `_WaveformLoadWorker`. This prevents update checks and waveform audio loading from blocking renders.
 
 ### Signal Communication
 
@@ -111,6 +111,10 @@ Preview renders use the same pipeline with two differences:
 
 - `preview_seconds` parameter limits `AudioData.load_audio_data()` to load only the specified duration (5 seconds for live preview, 30 seconds for render preview)
 - Output is written to `{data_dir}/preview_output.mp4` instead of the user-specified path
+
+## Caption Delivery Output
+
+`CaptionAnimateTab._create_delivery_output()` writes the final file to a temporary path then renames it to the target, avoiding FFmpeg in-place read/write conflicts. A process lock guards `_captured_process`. Preview temp files are cleaned up on rerender, failure, cancel, and close.
 
 ## Post-Render Playback
 

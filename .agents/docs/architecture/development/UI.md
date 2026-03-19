@@ -1,6 +1,6 @@
 # UI Architecture
 
-This document describes the Phase 9 UI shell: lazy tab startup, shared session state, browse-path defaults, and the main cross-tab workflows.
+This document describes the Phase 10 UI shell: lazy tab startup, shared session state, browse-path defaults, and the main cross-tab workflows.
 
 ## Shell Layout
 
@@ -26,7 +26,7 @@ Only `AudioVisualizerTab` is instantiated during startup. The remaining tabs are
 Startup work is split so theme and shell state are ready before heavy tabs import their large dependencies.
 
 1. `MainWindow` loads the last saved settings file once.
-2. The saved app theme is applied immediately.
+2. The saved app theme is applied immediately (fresh installs default to `auto` — system theme preference — rather than light mode).
 3. The shell widgets are created.
 4. The eager Audio Visualizer tab is instantiated.
 5. Heavy tabs remain placeholders until first use.
@@ -89,7 +89,7 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 
 `AudioVisualizerTab` still owns the legacy visualizer-specific view registry.
 
-- `GeneralSettingsView` handles input/output file paths and now receives workspace context so project-folder defaults apply there too.
+- `GeneralSettingsView` handles input/output file paths and now receives workspace context so project-folder defaults apply there too. The video output path field auto-appends `.mp4` on focus-out when no extension is present.
 - `GeneralVisualizerView` and the chroma force views use clickable swatches for color selection.
 - Per-band chroma force controls use tabbed 12-band editors instead of a single pipe-delimited text field.
 - Live preview remains a debounced 5-second render driven from the shared render pool.
@@ -98,9 +98,12 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 
 `RenderCompositionTab` is now a layer editor backed by a persistent `CompositionModel`.
 
-- Visual layers and audio layers both live in the model.
+- A unified layer list shows both visual (`[V]` prefix) and audio (`[A]` prefix) layers. Selecting a layer switches a `QStackedWidget` to display context-sensitive settings for that layer type.
+- The preview panel sits on the right side of the layout.
+- Render and output sections are merged; the separate cancel button has been removed.
 - Standard resolution presets (`HD`, `HD Vertical`, `2K`, `4K`) update width/height but manual edits still fall back to `Custom`.
-- A timeline widget reflects the same timing model used by preview and final render.
+- A timeline widget reflects the same timing model used by preview and final render, with snap-to-align behavior at a 200ms threshold.
+- Key color can be picked directly from the preview image.
 - Audio is layered, delayable, trimmable, and mixed during final FFmpeg export.
 
 ## Caption Animate
@@ -110,6 +113,7 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - **Style Preview** shows a styled `QLabel` reflecting current typography/color settings for quick visual feedback.
 - **Render Preview** runs a short (~5 second) actual render to a temporary directory using the shared job pool, then plays the result back via an embedded `QMediaPlayer`/`QVideoWidget`. Preview renders are clamped to 5 seconds via `RenderConfig.max_duration_sec` and do not register session assets.
 - Full renders use the shared `MainWindow.render_thread_pool` with guarded `_safe_main_window()` calls so the tab is safe to use without a host window.
+- `_create_delivery_output()` writes to a temp file then renames to avoid FFmpeg in-place conflicts. A process lock guards `_captured_process`. Preview temp files are cleaned up on rerender, failure, cancel, and close.
 - Mixed-type animation parameters (numeric, string, `None`) are handled by a control registry that creates `QDoubleSpinBox` or `QLineEdit` widgets depending on the parameter type.
 
 ## SRT Gen
@@ -120,6 +124,8 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - `SrtGenWorker` owns the model thread: the same thread that calls `load()` also calls `transcribe()`, avoiding cross-thread GPU handle issues.
 - Cancel is responsive during model loading via a polling loop around the blocking load call.
 - Compute type fallback uses a valid value (`int8`) instead of `"default"`.
+- The event log panel uses an expanding size policy (no fixed 150px max height cap).
+- Worker completed payload includes `device_used` and `compute_type_used`; the tab displays the resolved device info after transcription.
 
 ## SRT Edit
 
@@ -128,6 +134,7 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - Ctrl+wheel pans horizontally via an event filter on the `PlotWidget` viewport; the horizontal scrollbar stays synchronized.
 - Inline table edits (text, timestamps, speaker) emit a structured signal from `SubtitleTableModel` instead of mutating the document directly. `SrtEditTab` converts these into undoable commands (`EditTextCommand`, `EditTimestampCommand`, `EditSpeakerCommand`).
 - Multiline text edits auto-resize their table rows via a `dataChanged` handler.
+- Audio loading is performed on a background `_WaveformLoadWorker(QRunnable)` with a monotonic request ID so stale completions are ignored. `WaveformView` exposes `set_loading_message()`, `set_error_message()`, and `clear_message()` for an overlay status API.
 
 ## Tab-Scoped Undo/Redo
 
