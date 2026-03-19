@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -627,9 +628,9 @@ class SrtGenTab(BaseTab):
         # Scrolling event log
         self._event_log = QPlainTextEdit()
         self._event_log.setReadOnly(True)
-        self._event_log.setMaximumHeight(150)
+        self._event_log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._event_log.setPlaceholderText("Event log will appear here during transcription...")
-        layout.addWidget(self._event_log)
+        layout.addWidget(self._event_log, 1)
 
         group.setLayout(layout)
         self._content_layout.addWidget(group)

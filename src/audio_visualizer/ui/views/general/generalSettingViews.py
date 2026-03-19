@@ -98,6 +98,7 @@ class GeneralSettingsView(View):
         self.video_file_dialog.setNameFilter("Video Files (*.mp4)")
         self.video_file_dialog.fileSelected.connect(self.video_file_path.setText)
         self.video_file_button.clicked.connect(self._on_video_file_button_clicked)
+        self.video_file_path.editingFinished.connect(self._on_video_path_editing_finished)
         video_file_row.addWidget(self.video_file_button)
         form_layout.addRow("Output Video File Path:", video_file_row)
 
@@ -155,6 +156,11 @@ class GeneralSettingsView(View):
         )
         self.video_file_dialog.setDirectory(initial_dir)
         self.video_file_dialog.open()
+
+    def _on_video_path_editing_finished(self):
+        text = self.video_file_path.text().strip()
+        if text and not os.path.splitext(text)[1]:
+            self.video_file_path.setText(text + ".mp4")
 
     '''
     Verifies that the input values in the view are valide.

@@ -201,6 +201,18 @@ class TestSrtGenTabGlobalBusy:
         assert tab._start_btn.isEnabled() is True
 
 
+class TestSrtGenTabEventLog:
+    def test_event_log_no_max_height(self):
+        tab = SrtGenTab()
+        assert tab._event_log.maximumHeight() == 16777215  # QWIDGETSIZE_MAX
+
+    def test_event_log_has_expanding_policy(self):
+        from PySide6.QtWidgets import QSizePolicy
+        tab = SrtGenTab()
+        policy = tab._event_log.sizePolicy()
+        assert policy.verticalPolicy() == QSizePolicy.Policy.Expanding
+
+
 class _FakeSignal:
     def connect(self, _slot):
         return None
