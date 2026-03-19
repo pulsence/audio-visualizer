@@ -357,9 +357,10 @@ Important implementation rules:
 - [x] [PHASE_5.md](./plan_phases/PHASE_5.md) - Build the Caption Animate Tab
 - [x] [PHASE_6.md](./plan_phases/PHASE_6.md) - Build the Render Composition Tab
 - [x] [PHASE_7.md](./plan_phases/PHASE_7.md) - Workflow Recipes and Cross-Tab Integration Polish
-- [ ] [PHASE_8.md](./plan_phases/PHASE_8.md) - User Debug - 1
-- [ ] [PHASE_9.md](./plan_phases/PHASE_9.md) - User Debug - 2
-- [ ] [PHASE_10.md](./plan_phases/PHASE_10.md) - Final Review
+- [x] [PHASE_8.md](./plan_phases/PHASE_8.md) - User Debug - 1
+- [x] [PHASE_9.md](./plan_phases/PHASE_9.md) - User Debug - 2
+- [ ] [PHASE_10.md](./plan_phases/PHASE_10.md) - User Debug - 3
+- [ ] [PHASE_11.md](./plan_phases/PHASE_11.md) - Final Review
 
 ---
 Implementation details for each phase live exclusively in the phase files above.
