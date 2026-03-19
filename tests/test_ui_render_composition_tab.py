@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QStackedWidget, QWidget
 
 app = QApplication.instance() or QApplication([])
 
@@ -622,10 +622,11 @@ class TestDirectFileSourceHandling:
         tab.apply_settings({"model": model.to_dict()})
 
         source_texts = [tab._source_combo.itemText(i) for i in range(tab._source_combo.count())]
-        audio_texts = [tab._audio_combo.itemText(i) for i in range(tab._audio_combo.count())]
 
         assert any("bg_from_settings.mp4" in text for text in source_texts)
-        assert any("audio_from_settings.wav" in text for text in audio_texts)
+        # Audio layers are now shown in the unified layer list, not a separate combo
+        # Legacy audio_source_path migrates to an audio layer in model.from_dict
+        assert len(tab._model.audio_layers) >= 1
 
     def test_output_path_gets_mp4_extension(self):
         """Output path without extension gets .mp4 appended."""
@@ -1458,30 +1459,33 @@ class TestAudioLayerUndoCommands:
 
 
 class TestAudioLayerListUI:
-    def test_tab_has_audio_layer_list(self):
+    def test_tab_has_audio_controls(self):
+        """Audio controls exist as part of the unified layer list and settings stack."""
         tab = RenderCompositionTab()
-        assert hasattr(tab, "_audio_layer_list")
+        assert hasattr(tab, "_layer_list")  # unified list
         assert hasattr(tab, "_add_audio_btn")
-        assert hasattr(tab, "_remove_audio_btn")
         assert hasattr(tab, "_audio_start_spin")
         assert hasattr(tab, "_audio_duration_spin")
         assert hasattr(tab, "_audio_full_length_cb")
+        assert hasattr(tab, "_settings_stack")
 
-    def test_add_audio_layer_updates_list(self):
+    def test_add_audio_layer_updates_unified_list(self):
         tab = RenderCompositionTab()
         tab._on_add_audio_layer()
         assert len(tab._model.audio_layers) == 1
-        assert tab._audio_layer_list.count() == 1
+        # Audio layer appears in the unified list after visual layers
+        assert tab._layer_list.count() == 1  # no visual layers, 1 audio
 
-    def test_remove_audio_layer_updates_list(self):
+    def test_remove_audio_layer_from_unified_list(self):
         tab = RenderCompositionTab()
         tab._on_add_audio_layer()
-        assert tab._audio_layer_list.count() == 1
+        assert tab._layer_list.count() == 1
 
-        tab._audio_layer_list.setCurrentRow(0)
-        tab._on_remove_audio_layer()
+        # Select the audio layer row (first and only item)
+        tab._layer_list.setCurrentRow(0)
+        tab._on_remove_layer()  # unified remove handles both types
         assert len(tab._model.audio_layers) == 0
-        assert tab._audio_layer_list.count() == 0
+        assert tab._layer_list.count() == 0
 
     def test_audio_layer_editor_controls(self):
         tab = RenderCompositionTab()
@@ -1492,8 +1496,9 @@ class TestAudioLayerListUI:
             use_full_length=False,
         )
         tab._model.audio_layers.append(al)
-        tab._refresh_audio_layer_list()
-        tab._audio_layer_list.setCurrentRow(0)
+        tab._refresh_layer_list()
+        # Select the audio layer in the unified list (no visual layers, so row 0)
+        tab._layer_list.setCurrentRow(0)
         tab._load_audio_layer_properties(al)
 
         assert tab._audio_start_spin.value() == 2000
@@ -1511,4 +1516,258 @@ class TestAudioLayerListUI:
 
         assert len(tab._model.audio_layers) == 1
         assert tab._model.audio_layers[0].display_name == "Restored Audio"
-        assert tab._audio_layer_list.count() == 1
+        # Audio layer appears in the unified list
+        assert tab._layer_list.count() == 1
+
+
+# ------------------------------------------------------------------
+# Unified layer list
+# ------------------------------------------------------------------
+
+
+class TestUnifiedLayerList:
+    def test_unified_list_has_both_visual_and_audio(self):
+        """Unified list shows both visual and audio layers."""
+        tab = RenderCompositionTab()
+        tab._model.add_layer(CompositionLayer(display_name="Visual 1"))
+        tab._model.add_layer(CompositionLayer(display_name="Visual 2"))
+        tab._model.audio_layers.append(
+            CompositionAudioLayer(display_name="Audio 1")
+        )
+        tab._refresh_layer_list()
+
+        assert tab._layer_list.count() == 3
+
+        # Visual layers come first with [V] prefix
+        assert "[V]" in tab._layer_list.item(0).text()
+        assert "Visual 1" in tab._layer_list.item(0).text()
+        assert "[V]" in tab._layer_list.item(1).text()
+        assert "Visual 2" in tab._layer_list.item(1).text()
+
+        # Audio layer last with [A] prefix
+        assert "[A]" in tab._layer_list.item(2).text()
+        assert "Audio 1" in tab._layer_list.item(2).text()
+
+    def test_unified_row_type_visual(self):
+        """_unified_row_type correctly identifies visual layers."""
+        tab = RenderCompositionTab()
+        layer = CompositionLayer(display_name="V1")
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+
+        row_type, row_id = tab._unified_row_type(0)
+        assert row_type == "visual"
+        assert row_id == layer.id
+
+    def test_unified_row_type_audio(self):
+        """_unified_row_type correctly identifies audio layers."""
+        tab = RenderCompositionTab()
+        al = CompositionAudioLayer(display_name="A1")
+        tab._model.audio_layers.append(al)
+        tab._refresh_layer_list()
+
+        row_type, row_id = tab._unified_row_type(0)
+        assert row_type == "audio"
+        assert row_id == al.id
+
+    def test_unified_row_type_invalid(self):
+        """_unified_row_type returns (None, None) for invalid rows."""
+        tab = RenderCompositionTab()
+        row_type, row_id = tab._unified_row_type(-1)
+        assert row_type is None
+        assert row_id is None
+
+        row_type, row_id = tab._unified_row_type(999)
+        assert row_type is None
+        assert row_id is None
+
+    def test_row_to_backing_model_mapping(self):
+        """Row indices correctly map to visual and audio model objects."""
+        tab = RenderCompositionTab()
+        v1 = CompositionLayer(display_name="V1")
+        v2 = CompositionLayer(display_name="V2")
+        a1 = CompositionAudioLayer(display_name="A1")
+        a2 = CompositionAudioLayer(display_name="A2")
+
+        tab._model.add_layer(v1)
+        tab._model.add_layer(v2)
+        tab._model.audio_layers.append(a1)
+        tab._model.audio_layers.append(a2)
+        tab._refresh_layer_list()
+
+        assert tab._layer_list.count() == 4
+
+        rt, rid = tab._unified_row_type(0)
+        assert rt == "visual" and rid == v1.id
+        rt, rid = tab._unified_row_type(1)
+        assert rt == "visual" and rid == v2.id
+        rt, rid = tab._unified_row_type(2)
+        assert rt == "audio" and rid == a1.id
+        rt, rid = tab._unified_row_type(3)
+        assert rt == "audio" and rid == a2.id
+
+    def test_remove_from_unified_list_visual(self):
+        """Removing a visual layer from the unified list works correctly."""
+        tab = RenderCompositionTab()
+        v1 = CompositionLayer(display_name="V1")
+        tab._model.add_layer(v1)
+        a1 = CompositionAudioLayer(display_name="A1")
+        tab._model.audio_layers.append(a1)
+        tab._refresh_layer_list()
+
+        assert tab._layer_list.count() == 2
+
+        # Select visual layer and remove
+        tab._layer_list.setCurrentRow(0)
+        tab._on_remove_layer()
+
+        assert len(tab._model.layers) == 0
+        assert len(tab._model.audio_layers) == 1
+        assert tab._layer_list.count() == 1
+
+    def test_remove_from_unified_list_audio(self):
+        """Removing an audio layer from the unified list works correctly."""
+        tab = RenderCompositionTab()
+        v1 = CompositionLayer(display_name="V1")
+        tab._model.add_layer(v1)
+        a1 = CompositionAudioLayer(display_name="A1")
+        tab._model.audio_layers.append(a1)
+        tab._refresh_layer_list()
+
+        assert tab._layer_list.count() == 2
+
+        # Select audio layer (row 1) and remove
+        tab._layer_list.setCurrentRow(1)
+        tab._on_remove_layer()
+
+        assert len(tab._model.layers) == 1
+        assert len(tab._model.audio_layers) == 0
+        assert tab._layer_list.count() == 1
+
+
+# ------------------------------------------------------------------
+# Stacked widget page switching
+# ------------------------------------------------------------------
+
+
+class TestSettingsStack:
+    def test_settings_stack_exists(self):
+        tab = RenderCompositionTab()
+        assert hasattr(tab, "_settings_stack")
+        assert isinstance(tab._settings_stack, QStackedWidget)
+        assert tab._settings_stack.count() == 2  # page 0: visual, page 1: audio
+
+    def test_selecting_visual_layer_shows_page_0(self):
+        tab = RenderCompositionTab()
+        v1 = CompositionLayer(display_name="V1")
+        tab._model.add_layer(v1)
+        a1 = CompositionAudioLayer(display_name="A1")
+        tab._model.audio_layers.append(a1)
+        tab._refresh_layer_list()
+
+        tab._layer_list.setCurrentRow(0)  # visual
+        assert tab._settings_stack.currentIndex() == 0
+
+    def test_selecting_audio_layer_shows_page_1(self):
+        tab = RenderCompositionTab()
+        v1 = CompositionLayer(display_name="V1")
+        tab._model.add_layer(v1)
+        a1 = CompositionAudioLayer(display_name="A1")
+        tab._model.audio_layers.append(a1)
+        tab._refresh_layer_list()
+
+        tab._layer_list.setCurrentRow(1)  # audio
+        assert tab._settings_stack.currentIndex() == 1
+
+    def test_switching_between_layers_toggles_pages(self):
+        tab = RenderCompositionTab()
+        v1 = CompositionLayer(display_name="V1")
+        tab._model.add_layer(v1)
+        a1 = CompositionAudioLayer(display_name="A1")
+        tab._model.audio_layers.append(a1)
+        tab._refresh_layer_list()
+
+        tab._layer_list.setCurrentRow(0)
+        assert tab._settings_stack.currentIndex() == 0
+        tab._layer_list.setCurrentRow(1)
+        assert tab._settings_stack.currentIndex() == 1
+        tab._layer_list.setCurrentRow(0)
+        assert tab._settings_stack.currentIndex() == 0
+
+
+# ------------------------------------------------------------------
+# Pick from preview
+# ------------------------------------------------------------------
+
+
+from PySide6.QtCore import QEvent, QPoint
+from PySide6.QtGui import QColor, QImage, QPixmap
+
+
+class TestPickFromPreview:
+    def test_pick_from_preview_btn_exists(self):
+        tab = RenderCompositionTab()
+        assert hasattr(tab, "_pick_from_preview_btn")
+        assert hasattr(tab, "_picking_key_color")
+        assert tab._picking_key_color is False
+
+    def test_pick_from_preview_no_pixmap_shows_info(self, monkeypatch):
+        """Clicking 'Pick from Preview' without a preview shows info message."""
+        tab = RenderCompositionTab()
+        shown = []
+        monkeypatch.setattr(
+            QMessageBox, "information",
+            lambda *args, **kwargs: shown.append(True),
+        )
+        tab._on_pick_key_from_preview()
+        assert len(shown) == 1
+        assert tab._picking_key_color is False
+
+    def test_pick_from_preview_with_pixmap_enters_pick_mode(self):
+        """With a valid pixmap, pick mode is activated."""
+        tab = RenderCompositionTab()
+        # Create a small test pixmap and set it
+        img = QImage(100, 100, QImage.Format.Format_RGB32)
+        img.fill(QColor("#FF0000"))
+        pixmap = QPixmap.fromImage(img)
+        tab._preview_label.setPixmap(pixmap)
+
+        tab._on_pick_key_from_preview()
+        assert tab._picking_key_color is True
+
+        # Clean up pick mode
+        tab._cancel_pick_mode()
+        assert tab._picking_key_color is False
+
+    def test_sample_preview_color(self):
+        """Sampling a color from the preview updates the key color edit."""
+        tab = RenderCompositionTab()
+        # Create a green test pixmap
+        img = QImage(100, 100, QImage.Format.Format_RGB32)
+        img.fill(QColor("#00ff00"))
+        pixmap = QPixmap.fromImage(img)
+        tab._preview_label.setPixmap(pixmap)
+        tab._preview_label.resize(100, 100)
+
+        # Add a layer so matte_changed has something to work with
+        layer = CompositionLayer(display_name="Test")
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+        tab._layer_list.setCurrentRow(0)
+
+        tab._picking_key_color = True
+        tab._sample_preview_color(QPoint(50, 50))
+
+        # The key color should have been sampled (green)
+        assert tab._picking_key_color is False
+        sampled = tab._key_color_edit.text().lower()
+        assert sampled == "#00ff00"
+
+    def test_cancel_pick_mode(self):
+        """Cancel pick mode resets state."""
+        tab = RenderCompositionTab()
+        tab._picking_key_color = True
+        tab._preview_label.installEventFilter(tab)
+
+        tab._cancel_pick_mode()
+        assert tab._picking_key_color is False

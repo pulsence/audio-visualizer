@@ -22,6 +22,7 @@ _HANDLE_WIDTH = 6
 _TRACK_HEIGHT = 30
 _TRACK_SPACING = 4
 _HEADER_WIDTH = 100
+_SNAP_THRESHOLD_MS = 200
 
 
 class TimelineItem:
@@ -64,6 +65,9 @@ class TimelineWidget(QWidget):
         self._pixels_per_ms: float = 0.1
         self._scroll_offset: int = 0
 
+        # Snap guide state
+        self._snap_line_x: float | None = None
+
         # Drag state
         self._dragging: bool = False
         self._drag_item_id: str | None = None
@@ -92,6 +96,26 @@ class TimelineWidget(QWidget):
             )
         else:
             self._duration_ms = 10000
+
+    def _snap_value(self, ms: int, exclude_id: str) -> int:
+        """Return *ms* snapped to the nearest start/end edge of another item.
+
+        If no edge is within ``_SNAP_THRESHOLD_MS``, return *ms* unchanged.
+        """
+        edges: list[int] = []
+        for item in self._items:
+            if item.item_id == exclude_id:
+                continue
+            edges.append(item.start_ms)
+            edges.append(item.end_ms)
+
+        if not edges:
+            return ms
+
+        closest = min(edges, key=lambda e: abs(e - ms))
+        if abs(closest - ms) <= _SNAP_THRESHOLD_MS:
+            return closest
+        return ms
 
     def _ms_to_x(self, ms: int) -> float:
         """Convert milliseconds to pixel X coordinate."""
@@ -143,6 +167,15 @@ class TimelineWidget(QWidget):
         for i, item in enumerate(audio_items):
             rect = self._get_item_rect(item, y_offset + i * (_TRACK_HEIGHT + _TRACK_SPACING))
             self._draw_item(painter, item, rect)
+
+        # Draw snap guide line
+        if self._snap_line_x is not None:
+            snap_pen = QPen(QColor(255, 255, 0, 160))
+            snap_pen.setStyle(Qt.PenStyle.DashLine)
+            snap_pen.setWidth(1)
+            painter.setPen(snap_pen)
+            painter.drawLine(int(self._snap_line_x), 0,
+                             int(self._snap_line_x), self.height())
 
         painter.end()
 
@@ -264,17 +297,52 @@ class TimelineWidget(QWidget):
         if item is None:
             return
 
+        self._snap_line_x = None
+
         if self._drag_mode == "move":
             new_start = max(0, self._drag_original_start + delta_ms)
             duration = self._drag_original_end - self._drag_original_start
-            item.start_ms = new_start
-            item.end_ms = new_start + duration
+            new_end = new_start + duration
+
+            snapped_start = self._snap_value(new_start, item.item_id)
+            snapped_end = self._snap_value(new_end, item.item_id)
+
+            start_changed = snapped_start != new_start
+            end_changed = snapped_end != new_end
+            dist_start = abs(snapped_start - new_start) if start_changed else _SNAP_THRESHOLD_MS + 1
+            dist_end = abs(snapped_end - new_end) if end_changed else _SNAP_THRESHOLD_MS + 1
+
+            if dist_start <= dist_end and dist_start <= _SNAP_THRESHOLD_MS:
+                item.start_ms = snapped_start
+                item.end_ms = snapped_start + duration
+                self._snap_line_x = self._ms_to_x(snapped_start)
+            elif dist_end <= _SNAP_THRESHOLD_MS:
+                item.end_ms = snapped_end
+                item.start_ms = snapped_end - duration
+                self._snap_line_x = self._ms_to_x(snapped_end)
+            else:
+                item.start_ms = new_start
+                item.end_ms = new_start + duration
+
         elif self._drag_mode == "trim_start":
             new_start = max(0, min(self._drag_original_start + delta_ms, item.end_ms - 100))
-            item.start_ms = new_start
+            snapped = self._snap_value(new_start, item.item_id)
+            snapped = min(snapped, item.end_ms - 100)
+            if snapped != new_start and abs(snapped - new_start) <= _SNAP_THRESHOLD_MS:
+                item.start_ms = snapped
+                self._snap_line_x = self._ms_to_x(snapped)
+            else:
+                item.start_ms = new_start
+
         elif self._drag_mode == "trim_end":
             new_end = max(item.start_ms + 100, self._drag_original_end + delta_ms)
-            item.end_ms = new_end
+            snapped = self._snap_value(new_end, item.item_id)
+            snapped = max(snapped, item.start_ms + 100)
+            if snapped != new_end and abs(snapped - new_end) <= _SNAP_THRESHOLD_MS:
+                item.end_ms = snapped
+                self._snap_line_x = self._ms_to_x(snapped)
+            else:
+                item.end_ms = new_end
 
         self.update()
 
@@ -292,4 +360,5 @@ class TimelineWidget(QWidget):
         self._dragging = False
         self._drag_item_id = None
         self._drag_mode = ""
+        self._snap_line_x = None
         self.update()
