@@ -36,9 +36,9 @@ class TestSettingsDialogCreation:
 
 
 class TestSettingsDialogThemeCombo:
-    def test_default_theme_is_off(self):
+    def test_default_theme_is_auto(self):
         dialog = SettingsDialog({})
-        assert dialog._theme_combo.currentData() == "off"
+        assert dialog._theme_combo.currentData() == "auto"
 
     def test_respects_current_setting_on(self):
         dialog = SettingsDialog({"app": {"theme_mode": "on"}})

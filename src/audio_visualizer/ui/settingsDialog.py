@@ -52,7 +52,7 @@ class SettingsDialog(QDialog):
             self._theme_combo.addItem(label, value)
 
         # Set current
-        current_theme = settings.get("app", {}).get("theme_mode", "off")
+        current_theme = settings.get("app", {}).get("theme_mode", "auto")
         for i in range(self._theme_combo.count()):
             if self._theme_combo.itemData(i) == current_theme:
                 self._theme_combo.setCurrentIndex(i)
@@ -96,7 +96,7 @@ class SettingsDialog(QDialog):
     def _on_accept(self) -> None:
         self._result_settings = {
             "app": {
-                "theme_mode": self._theme_combo.currentData() or "off",
+                "theme_mode": self._theme_combo.currentData() or "auto",
             },
             "project_folder": self._project_folder_edit.text().strip(),
         }

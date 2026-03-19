@@ -1,5 +1,6 @@
 """Tests for the shared Whisper ModelManager."""
 
+import sys
 from unittest.mock import patch
 
 from audio_visualizer.events import AppEventEmitter, EventType
@@ -71,6 +72,38 @@ class TestCudaPreCheck:
             available, msg = _check_cuda_runtime()
             assert available is True
             assert msg == ""
+
+    def test_cuda_precheck_uses_package_library_path(self, monkeypatch, tmp_path):
+        """The probe searches installed nvidia-cublas-cu12 package directories."""
+        lib_name = "cublas64_12.dll" if sys.platform == "win32" else "libcublas.so.12"
+        subdir = "bin" if sys.platform == "win32" else "lib"
+        package_dir = tmp_path / "nvidia" / "cublas" / subdir
+        package_dir.mkdir(parents=True)
+        lib_path = package_dir / lib_name
+        lib_path.write_text("", encoding="utf-8")
+
+        seen = []
+
+        def fake_load_library(path):
+            seen.append(path)
+            if path == lib_name:
+                raise OSError("missing on loader path")
+            if path == str(lib_path):
+                return True
+            raise OSError("unexpected path")
+
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.setattr(
+            "audio_visualizer.srt.core.whisperWrapper.ctypes.cdll.LoadLibrary",
+            fake_load_library,
+        )
+
+        available, msg = _check_cuda_runtime()
+
+        assert available is True
+        assert msg == ""
+        assert lib_name in seen
+        assert str(lib_path) in seen
 
     def test_cuda_precheck_fallback_in_init_whisper(self, monkeypatch):
         """init_whisper_model_internal falls back to CPU when pre-check fails."""

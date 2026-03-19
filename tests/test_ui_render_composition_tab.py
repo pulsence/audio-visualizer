@@ -1700,8 +1700,8 @@ class TestSettingsStack:
 # ------------------------------------------------------------------
 
 
-from PySide6.QtCore import QEvent, QPoint
-from PySide6.QtGui import QColor, QImage, QPixmap
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QImage, QKeyEvent, QMouseEvent, QPixmap
 
 
 class TestPickFromPreview:
@@ -1762,6 +1762,58 @@ class TestPickFromPreview:
         assert tab._picking_key_color is False
         sampled = tab._key_color_edit.text().lower()
         assert sampled == "#00ff00"
+
+    def test_right_click_cancels_pick_mode(self):
+        tab = RenderCompositionTab()
+        img = QImage(50, 50, QImage.Format.Format_RGB32)
+        img.fill(QColor("#ff0000"))
+        tab._preview_label.setPixmap(QPixmap.fromImage(img))
+
+        tab._on_pick_key_from_preview()
+
+        event = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(10, 10),
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+        assert tab.eventFilter(tab._preview_label, event) is True
+        assert tab._picking_key_color is False
+
+    def test_escape_cancels_pick_mode(self):
+        tab = RenderCompositionTab()
+        img = QImage(50, 50, QImage.Format.Format_RGB32)
+        img.fill(QColor("#ff0000"))
+        tab._preview_label.setPixmap(QPixmap.fromImage(img))
+
+        tab._on_pick_key_from_preview()
+
+        event = QKeyEvent(
+            QEvent.Type.KeyPress,
+            Qt.Key.Key_Escape,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+        assert tab.eventFilter(tab._preview_label, event) is True
+        assert tab._picking_key_color is False
+
+    def test_preview_refresh_completion_cancels_pick_mode(self, tmp_path):
+        tab = RenderCompositionTab()
+        img = QImage(50, 50, QImage.Format.Format_RGB32)
+        img.fill(QColor("#123456"))
+        tab._preview_label.setPixmap(QPixmap.fromImage(img))
+
+        tab._on_pick_key_from_preview()
+        assert tab._picking_key_color is True
+
+        preview_path = tmp_path / "preview.png"
+        assert img.save(str(preview_path))
+
+        tab._on_preview_finished(str(preview_path))
+
+        assert tab._picking_key_color is False
 
     def test_cancel_pick_mode(self):
         """Cancel pick mode resets state."""

@@ -194,8 +194,8 @@ class TestMainWindowSettings:
         main_window._apply_theme("on")
         assert main_window._current_theme_mode == "on"
         # Restore to default
-        main_window._apply_theme("off")
-        assert main_window._current_theme_mode == "off"
+        main_window._apply_theme("auto")
+        assert main_window._current_theme_mode == "auto"
 
     def test_theme_mode_persisted_in_collected_settings(self, main_window):
         """After applying a theme, _collect_settings reflects the new mode."""
@@ -203,7 +203,7 @@ class TestMainWindowSettings:
         settings = main_window._collect_settings()
         assert settings["app"]["theme_mode"] == "on"
         # Restore
-        main_window._apply_theme("off")
+        main_window._apply_theme("auto")
 
     def test_apply_settings_restores_theme(self, main_window):
         """_apply_settings applies theme_mode from data."""
@@ -275,6 +275,21 @@ class TestMainWindowSettings:
 
         window = MainWindow()
         assert window._current_theme_mode == "on"
+
+    def test_fresh_start_defaults_to_auto_theme(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            "audio_visualizer.ui.mainWindow.load_settings",
+            lambda _path: None,
+        )
+        monkeypatch.setattr(
+            MainWindow,
+            "_default_settings_path",
+            lambda self: tmp_path / "missing_settings.json",
+        )
+
+        window = MainWindow()
+
+        assert window._current_theme_mode == "auto"
 
     def test_apply_theme_light_clears_stylesheet(self, main_window):
         """Toggling from dark to light mode clears application-level stylesheet."""

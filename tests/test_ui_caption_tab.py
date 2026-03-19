@@ -839,3 +839,15 @@ class TestCaptionAnimatePreviewTempCleanup:
 
         assert not temp_dir.exists()
         assert tab._preview_temp_dir is None
+
+    def test_close_event_stops_preview_media_player(self):
+        """Tab teardown stops the preview player when preview playback is available."""
+        tab = CaptionAnimateTab()
+        tab._preview_available = True
+        tab._preview_media_player = MagicMock()
+
+        from PySide6.QtGui import QCloseEvent
+        event = QCloseEvent()
+        tab.closeEvent(event)
+
+        tab._preview_media_player.stop.assert_called_once()

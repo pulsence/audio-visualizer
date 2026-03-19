@@ -1727,7 +1727,7 @@ class CaptionAnimateTab(BaseTab):
         """Clean up preview temp directory on tab/application shutdown."""
         if self._preview_available:
             try:
-                self._preview_player.stop()
+                self._preview_media_player.stop()
             except Exception:
                 pass
         self._cleanup_preview_temp()

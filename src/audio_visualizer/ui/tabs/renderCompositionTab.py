@@ -246,6 +246,7 @@ class RenderCompositionTab(BaseTab):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding,
         )
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._preview_label.setStyleSheet("background: #1a1a1a; border: 1px solid #333;")
         self._preview_label.setText("Click 'Refresh Preview' to generate a frame")
         preview_layout.addWidget(self._preview_label)
@@ -1133,16 +1134,21 @@ class RenderCompositionTab(BaseTab):
             return
         self._picking_key_color = True
         self._preview_label.setCursor(QCursor(Qt.CursorShape.CrossCursor))
+        self._preview_label.setFocus(Qt.FocusReason.OtherFocusReason)
         self._preview_label.installEventFilter(self)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """Handle pick-from-preview mouse events."""
         if obj is self._preview_label and self._picking_key_color:
             if event.type() == QEvent.Type.MouseButtonPress:
-                self._sample_preview_color(event.position().toPoint())
+                if event.button() == Qt.MouseButton.RightButton:
+                    self._cancel_pick_mode()
+                    return True
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._sample_preview_color(event.position().toPoint())
+                    return True
                 return True
             if event.type() == QEvent.Type.KeyPress:
-                from PySide6.QtCore import QKeyCombination
                 if event.key() == Qt.Key.Key_Escape:
                     self._cancel_pick_mode()
                     return True
@@ -1336,6 +1342,8 @@ class RenderCompositionTab(BaseTab):
 
     def _on_refresh_preview(self) -> None:
         """Generate a single-frame preview at the selected timestamp."""
+        if self._picking_key_color:
+            self._cancel_pick_mode()
         valid, msg = self.validate_settings()
         if not valid:
             self._preview_status_label.setText(f"Cannot preview: {msg}")
@@ -1359,6 +1367,8 @@ class RenderCompositionTab(BaseTab):
 
     def _on_preview_finished(self, image_path: str) -> None:
         """Display the generated preview frame."""
+        if self._picking_key_color:
+            self._cancel_pick_mode()
         self._preview_refresh_btn.setEnabled(True)
         self._preview_status_label.setText("")
 
@@ -1377,6 +1387,8 @@ class RenderCompositionTab(BaseTab):
 
     def _on_preview_failed(self, error: str) -> None:
         """Handle preview generation failure."""
+        if self._picking_key_color:
+            self._cancel_pick_mode()
         self._preview_refresh_btn.setEnabled(True)
         self._preview_status_label.setText(f"Preview failed: {error}")
 

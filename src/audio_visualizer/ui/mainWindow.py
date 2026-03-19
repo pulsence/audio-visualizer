@@ -76,7 +76,7 @@ class MainWindow(QMainWindow):
         self._background_thread_pool = QThreadPool()
         self._global_busy = False
         self._busy_owner_tab_id: str | None = None
-        self._current_theme_mode = "off"
+        self._current_theme_mode = "auto"
         self._startup_settings_data: dict | None = None
 
         # Tab registry
@@ -109,11 +109,12 @@ class MainWindow(QMainWindow):
 
     def _prime_startup_settings(self) -> None:
         """Load persisted settings once so theme can apply before tab creation."""
+        self._apply_theme("auto")
         self._startup_settings_data = load_settings(self._default_settings_path())
         if self._startup_settings_data is None:
             return
         app_data = self._startup_settings_data.get("app", {})
-        self._apply_theme(app_data.get("theme_mode", "off"))
+        self._apply_theme(app_data.get("theme_mode", "auto"))
 
     def _build_shell(self) -> None:
         """Build the central QStackedWidget + NavigationSidebar + JobStatusWidget."""
@@ -683,7 +684,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() == dialog.DialogCode.Accepted:
             result = dialog.result_settings
             app_settings = result.get("app", {})
-            theme_mode = app_settings.get("theme_mode", "off")
+            theme_mode = app_settings.get("theme_mode", "auto")
             self._apply_theme(theme_mode)
             # Apply project folder
             project_folder = result.get("project_folder", "")
@@ -700,7 +701,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QPalette, QColor
 
         if mode not in {"off", "on", "auto"}:
-            mode = "off"
+            mode = "auto"
         self._current_theme_mode = mode
 
         app = QApplication.instance()
@@ -780,7 +781,7 @@ class MainWindow(QMainWindow):
 
         # App settings
         app_data = data.get("app", {})
-        theme_mode = app_data.get("theme_mode", "off")
+        theme_mode = app_data.get("theme_mode", "auto")
         self._apply_theme(theme_mode)
 
         # UI state

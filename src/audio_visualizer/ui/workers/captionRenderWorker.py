@@ -130,7 +130,8 @@ class CaptionRenderWorker(QRunnable):
                 )
             finally:
                 subprocess.Popen = original_popen  # type: ignore[misc]
-                self._captured_process = None
+                with self._process_lock:
+                    self._captured_process = None
 
             # Check cancel after render
             if self._cancel_flag.is_set():

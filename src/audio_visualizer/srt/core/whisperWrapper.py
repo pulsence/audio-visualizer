@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from pathlib import Path
 from typing import Tuple, Any, Optional
 
 from audio_visualizer.events import AppEvent, AppEventEmitter, EventType
@@ -25,15 +26,32 @@ def _check_cuda_runtime() -> Tuple[bool, str]:
         (False, diagnostic_message) with install instructions if not.
     """
     lib_name = "cublas64_12.dll" if sys.platform == "win32" else "libcublas.so.12"
-    try:
-        ctypes.cdll.LoadLibrary(lib_name)
-        return True, ""
-    except OSError:
-        msg = (
-            f"CUDA runtime library '{lib_name}' not found. "
-            "Install the missing package with: pip install nvidia-cublas-cu12"
-        )
-        return False, msg
+    seen: set[str] = set()
+    candidates = [lib_name]
+
+    for entry in sys.path:
+        if not entry:
+            continue
+        root = Path(entry)
+        for subdir in ("bin", "lib"):
+            candidate = root / "nvidia" / "cublas" / subdir / lib_name
+            candidate_str = str(candidate)
+            if candidate.is_file() and candidate_str not in seen:
+                seen.add(candidate_str)
+                candidates.append(candidate_str)
+
+    for candidate in candidates:
+        try:
+            ctypes.cdll.LoadLibrary(candidate)
+            return True, ""
+        except OSError:
+            continue
+
+    msg = (
+        f"CUDA runtime library '{lib_name}' not found. "
+        "Install the missing package with: pip install nvidia-cublas-cu12"
+    )
+    return False, msg
 
 
 # ============================================================
