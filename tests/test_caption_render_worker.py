@@ -179,6 +179,78 @@ class TestCaptionRenderWorkerConfig:
         assert worker._spec.config.apply_animation is False
         assert worker._spec.config.reskin is True
 
+    def test_delivery_output_when_overlay_equals_delivery(self, tmp_path):
+        """delivery output succeeds when overlay_path == delivery_path via temp+rename."""
+        overlay_path = tmp_path / "preview.mp4"
+        overlay_path.write_bytes(b"overlay-data")
+
+        spec = CaptionRenderJobSpec(
+            subtitle_path=Path("/tmp/test.srt"),
+            output_path=overlay_path,
+            delivery_output_path=overlay_path,
+            config=RenderConfig(),
+        )
+        emitter = AppEventEmitter()
+        worker = CaptionRenderWorker(spec=spec, emitter=emitter)
+
+        mock_result = RenderResult(
+            success=True,
+            output_path=overlay_path,
+            width=1920,
+            height=200,
+            duration_ms=5000,
+        )
+
+        completed = []
+        worker.signals.completed.connect(completed.append)
+
+        # Mock render_subtitle and _create_delivery_output to verify the pattern
+        with patch(
+            "audio_visualizer.ui.workers.captionRenderWorker.render_subtitle",
+            return_value=mock_result,
+        ):
+            # _create_delivery_output will be called with overlay_path == delivery_path
+            # Just verify the worker calls it without crashing
+            with patch.object(worker, "_create_delivery_output") as mock_delivery:
+                worker.run()
+                mock_delivery.assert_called_once_with(
+                    overlay_path=overlay_path,
+                    delivery_path=overlay_path,
+                    audio_path=None,
+                )
+
+    def test_cancel_before_subprocess_aborts_via_flag(self):
+        """Cancel before subprocess starts aborts via the cancel flag."""
+        spec = CaptionRenderJobSpec(
+            subtitle_path=Path("/tmp/test.srt"),
+            output_path=Path("/tmp/out.mov"),
+            config=RenderConfig(),
+        )
+        emitter = AppEventEmitter()
+        worker = CaptionRenderWorker(spec=spec, emitter=emitter)
+
+        canceled_msgs = []
+        worker.signals.canceled.connect(lambda msg: canceled_msgs.append(msg))
+
+        worker.cancel()
+        worker.run()
+
+        assert len(canceled_msgs) == 1
+        assert worker._captured_process is None
+
+    def test_process_lock_exists(self):
+        """Worker has a threading lock for process access."""
+        spec = CaptionRenderJobSpec(
+            subtitle_path=Path("/tmp/test.srt"),
+            output_path=Path("/tmp/out.mov"),
+            config=RenderConfig(),
+        )
+        emitter = AppEventEmitter()
+        worker = CaptionRenderWorker(spec=spec, emitter=emitter)
+        assert hasattr(worker, "_process_lock")
+        import threading
+        assert isinstance(worker._process_lock, type(threading.Lock()))
+
     def test_worker_can_emit_separate_delivery_and_overlay_outputs(self, monkeypatch, tmp_path):
         overlay_path = tmp_path / "overlay.mov"
         delivery_path = tmp_path / "delivery.mp4"

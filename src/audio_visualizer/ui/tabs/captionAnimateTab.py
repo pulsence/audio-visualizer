@@ -1124,6 +1124,19 @@ class CaptionAnimateTab(BaseTab):
         )
 
     # ------------------------------------------------------------------
+    # Preview temp cleanup
+    # ------------------------------------------------------------------
+
+    def _cleanup_preview_temp(self) -> None:
+        """Remove the preview temp directory if it exists."""
+        if self._preview_temp_dir is not None:
+            try:
+                shutil.rmtree(self._preview_temp_dir, ignore_errors=True)
+            except Exception:
+                logger.debug("Failed to clean up preview temp dir: %s", self._preview_temp_dir)
+            self._preview_temp_dir = None
+
+    # ------------------------------------------------------------------
     # Render preview
     # ------------------------------------------------------------------
 
@@ -1141,6 +1154,9 @@ class CaptionAnimateTab(BaseTab):
 
         import tempfile
         subtitle_path = Path(self._subtitle_edit.text().strip())
+
+        # Clean up previous preview temp dir before creating a new one
+        self._cleanup_preview_temp()
 
         # Create temp output for preview
         self._preview_temp_dir = tempfile.mkdtemp(prefix="caption_preview_")
@@ -1453,12 +1469,15 @@ class CaptionAnimateTab(BaseTab):
 
     def _on_render_failed(self, error_message: str, data: dict) -> None:
         self._active_worker = None
+        was_preview = self._is_preview_render
         self._start_btn.setEnabled(True)
         self._preview_render_btn.setEnabled(True)
         self._is_preview_render = False
         self._cancel_btn.setEnabled(False)
         self._progress_bar.setValue(0)
         self._status_label.setText(f"Failed: {error_message}")
+        if was_preview:
+            self._cleanup_preview_temp()
         mw = self._safe_main_window()
         if mw is not None:
             mw.show_job_failed(
@@ -1469,12 +1488,15 @@ class CaptionAnimateTab(BaseTab):
 
     def _on_render_canceled(self, message: str) -> None:
         self._active_worker = None
+        was_preview = self._is_preview_render
         self._start_btn.setEnabled(True)
         self._preview_render_btn.setEnabled(True)
         self._is_preview_render = False
         self._cancel_btn.setEnabled(False)
         self._progress_bar.setValue(0)
         self._status_label.setText(f"Cancelled: {message}")
+        if was_preview:
+            self._cleanup_preview_temp()
         mw = self._safe_main_window()
         if mw is not None:
             mw.show_job_canceled(
@@ -1696,3 +1718,17 @@ class CaptionAnimateTab(BaseTab):
             return Path(preset_path).stem if preset_path else "custom"
         preset_name = self._library_combo.currentText().strip()
         return Path(preset_name).stem if preset_name else "library"
+
+    # ------------------------------------------------------------------
+    # Teardown
+    # ------------------------------------------------------------------
+
+    def closeEvent(self, event) -> None:
+        """Clean up preview temp directory on tab/application shutdown."""
+        if self._preview_available:
+            try:
+                self._preview_player.stop()
+            except Exception:
+                pass
+        self._cleanup_preview_temp()
+        super().closeEvent(event)

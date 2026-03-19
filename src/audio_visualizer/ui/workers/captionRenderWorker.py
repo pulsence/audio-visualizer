@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +66,7 @@ class CaptionRenderWorker(QRunnable):
         self.signals = WorkerSignals()
         self._bridge = WorkerBridge(emitter, self.signals)
         self._captured_process: Optional[subprocess.Popen] = None
+        self._process_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Cancel support
@@ -73,7 +75,8 @@ class CaptionRenderWorker(QRunnable):
     def cancel(self) -> None:
         """Request cancellation. Terminates the FFmpeg subprocess if running."""
         self._cancel_flag.set()
-        proc = self._captured_process
+        with self._process_lock:
+            proc = self._captured_process
         if proc is not None:
             try:
                 proc.terminate()
@@ -112,7 +115,8 @@ class CaptionRenderWorker(QRunnable):
             class _CapturingPopen(subprocess.Popen):
                 def __init__(self_proc, *args, **kwargs):
                     super().__init__(*args, **kwargs)
-                    worker._captured_process = self_proc
+                    with worker._process_lock:
+                        worker._captured_process = self_proc
 
             subprocess.Popen = _CapturingPopen  # type: ignore[misc]
 
@@ -191,79 +195,103 @@ class CaptionRenderWorker(QRunnable):
         delivery_path: Path,
         audio_path: Optional[Path],
     ) -> None:
-        """Create the user-facing MP4 delivery artifact from the overlay render."""
+        """Create the user-facing MP4 delivery artifact from the overlay render.
+
+        Always writes to a temporary file first, then renames to delivery_path.
+        This avoids FFmpeg in-place read/write conflicts when overlay_path ==
+        delivery_path (e.g. preview renders).
+        """
         if self._cancel_flag.is_set():
             raise RuntimeError("Cancelled during render")
 
-        ffmpeg_cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(overlay_path),
-        ]
-        if audio_path is not None:
-            ffmpeg_cmd.extend(["-i", str(audio_path)])
-
-        ffmpeg_cmd.extend(
-            [
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                "18",
-                "-pix_fmt",
-                "yuv420p",
-            ]
+        # Write to a temp file in the same directory, then rename on success
+        fd, tmp_path_str = tempfile.mkstemp(
+            suffix=".mp4", dir=str(delivery_path.parent)
         )
-        if audio_path is not None:
+        import os
+        os.close(fd)
+        tmp_path = Path(tmp_path_str)
+
+        try:
+            ffmpeg_cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(overlay_path),
+            ]
+            if audio_path is not None:
+                ffmpeg_cmd.extend(["-i", str(audio_path)])
+
             ffmpeg_cmd.extend(
                 [
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
-                    "-shortest",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "medium",
+                    "-crf",
+                    "18",
+                    "-pix_fmt",
+                    "yuv420p",
                 ]
             )
-        else:
-            ffmpeg_cmd.append("-an")
+            if audio_path is not None:
+                ffmpeg_cmd.extend(
+                    [
+                        "-c:a",
+                        "aac",
+                        "-b:a",
+                        "192k",
+                        "-shortest",
+                    ]
+                )
+            else:
+                ffmpeg_cmd.append("-an")
 
-        ffmpeg_cmd.extend(
-            [
-                "-movflags",
-                "+faststart",
-                str(delivery_path),
-            ]
-        )
-
-        self._emitter.emit(
-            AppEvent(
-                event_type=EventType.STAGE,
-                message="Preparing delivery MP4",
-                data={"stage_number": 1, "total_stages": 2},
+            ffmpeg_cmd.extend(
+                [
+                    "-movflags",
+                    "+faststart",
+                    str(tmp_path),
+                ]
             )
-        )
 
-        proc = subprocess.Popen(
-            ffmpeg_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self._captured_process = proc
-        _stdout, stderr = proc.communicate()
-        self._captured_process = None
+            self._emitter.emit(
+                AppEvent(
+                    event_type=EventType.STAGE,
+                    message="Preparing delivery MP4",
+                    data={"stage_number": 1, "total_stages": 2},
+                )
+            )
 
-        if self._cancel_flag.is_set():
+            proc = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            with self._process_lock:
+                self._captured_process = proc
+            _stdout, stderr = proc.communicate()
+            with self._process_lock:
+                self._captured_process = None
+
+            if self._cancel_flag.is_set():
+                tmp_path.unlink(missing_ok=True)
+                raise RuntimeError("Cancelled during render")
+
+            if proc.returncode != 0:
+                tmp_path.unlink(missing_ok=True)
+                detail = (stderr or "").strip()[-500:]
+                raise RuntimeError(
+                    f"Failed to create MP4 delivery output: {detail or 'ffmpeg exited with an error.'}"
+                )
+
+            # Success — atomic rename temp to delivery
             if delivery_path.exists():
                 delivery_path.unlink(missing_ok=True)
-            raise RuntimeError("Cancelled during render")
+            tmp_path.rename(delivery_path)
 
-        if proc.returncode != 0:
-            if delivery_path.exists():
-                delivery_path.unlink(missing_ok=True)
-            detail = (stderr or "").strip()[-500:]
-            raise RuntimeError(
-                f"Failed to create MP4 delivery output: {detail or 'ffmpeg exited with an error.'}"
-            )
+        except Exception:
+            # Clean up temp on any failure
+            tmp_path.unlink(missing_ok=True)
+            raise

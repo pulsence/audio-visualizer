@@ -771,3 +771,71 @@ class TestCaptionAnimateRenderPreview:
         tab = CaptionAnimateTab()
         tab.set_global_busy(True, owner_tab_id="caption_animate")
         assert tab._preview_render_btn.isEnabled() is True
+
+
+class TestCaptionAnimatePreviewTempCleanup:
+    def test_cleanup_on_rerender(self, tmp_path):
+        """Starting a new preview cleans up the previous temp dir."""
+        tab = CaptionAnimateTab()
+        # Simulate a previous preview temp dir
+        old_dir = tmp_path / "caption_preview_old"
+        old_dir.mkdir()
+        tab._preview_temp_dir = str(old_dir)
+
+        tab._cleanup_preview_temp()
+
+        assert not old_dir.exists()
+        assert tab._preview_temp_dir is None
+
+    def test_cleanup_on_failure(self, tmp_path):
+        """Preview temp dir is cleaned on render failure when it was a preview."""
+        tab = CaptionAnimateTab()
+        temp_dir = tmp_path / "caption_preview_fail"
+        temp_dir.mkdir()
+        tab._preview_temp_dir = str(temp_dir)
+        tab._is_preview_render = True
+
+        tab._on_render_failed("test error", {})
+
+        assert not temp_dir.exists()
+        assert tab._preview_temp_dir is None
+
+    def test_cleanup_on_cancel(self, tmp_path):
+        """Preview temp dir is cleaned on render cancel when it was a preview."""
+        tab = CaptionAnimateTab()
+        temp_dir = tmp_path / "caption_preview_cancel"
+        temp_dir.mkdir()
+        tab._preview_temp_dir = str(temp_dir)
+        tab._is_preview_render = True
+
+        tab._on_render_canceled("user cancelled")
+
+        assert not temp_dir.exists()
+        assert tab._preview_temp_dir is None
+
+    def test_no_cleanup_on_non_preview_failure(self, tmp_path):
+        """Preview temp dir is NOT cleaned on failure if it was NOT a preview render."""
+        tab = CaptionAnimateTab()
+        temp_dir = tmp_path / "caption_preview_keep"
+        temp_dir.mkdir()
+        tab._preview_temp_dir = str(temp_dir)
+        tab._is_preview_render = False
+
+        tab._on_render_failed("test error", {})
+
+        # Should still exist since it wasn't a preview render
+        assert temp_dir.exists()
+
+    def test_cleanup_on_close_event(self, tmp_path):
+        """Preview temp dir is cleaned on tab close."""
+        tab = CaptionAnimateTab()
+        temp_dir = tmp_path / "caption_preview_close"
+        temp_dir.mkdir()
+        tab._preview_temp_dir = str(temp_dir)
+
+        from PySide6.QtGui import QCloseEvent
+        event = QCloseEvent()
+        tab.closeEvent(event)
+
+        assert not temp_dir.exists()
+        assert tab._preview_temp_dir is None
