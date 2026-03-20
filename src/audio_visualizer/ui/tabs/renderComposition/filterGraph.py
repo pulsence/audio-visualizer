@@ -46,34 +46,10 @@ def build_filter_graph(model: CompositionModel) -> str:
 
     current_label = canvas_label
     for i, (input_idx, layer) in enumerate(layers):
-        stream_label = f"in{input_idx}"
         scaled_label = f"scaled{i}"
         overlay_label = f"ovr{i}"
 
-        layer_filters: list[str] = []
-
-        # Scale to layer size
-        layer_filters.append(
-            f"[{stream_label}]scale={layer.width}:{layer.height}"
-        )
-
-        # Apply matte/key filters
-        matte_filter = _build_matte_filter(layer)
-        if matte_filter:
-            layer_filters[-1] += f",{matte_filter}"
-
-        # Apply timeline (trim + setpts)
-        timeline = _build_timeline_filter(layer, model)
-        if timeline:
-            layer_filters[-1] += f",{timeline}"
-
-        # Apply behavior_after_end
-        behavior = _build_behavior_filter(layer, model)
-        if behavior:
-            layer_filters[-1] += f",{behavior}"
-
-        layer_filters[-1] += f"[{scaled_label}]"
-        filters.append(layer_filters[-1])
+        filters.append(_build_visual_stream_filter(input_idx, layer, scaled_label))
 
         # Overlay onto current canvas
         overlay_x = layer.x
@@ -104,10 +80,9 @@ def build_preview_command(
 
     layers = _get_renderable_layers(model)
 
-    for input_idx, layer in layers:
-        path = _resolve_layer_path(layer)
-        if path:
-            _add_visual_input(cmd, layer, model)
+    for _input_idx, layer in layers:
+        if _resolve_layer_path(layer):
+            _add_visual_input(cmd, layer)
 
     filter_str = build_filter_graph(model)
     if filter_str:
@@ -160,7 +135,7 @@ def build_ffmpeg_command(
 
     # Add input files for each visual layer
     for _input_idx, layer in layers:
-        _add_visual_input(cmd, layer, model)
+        _add_visual_input(cmd, layer)
 
     # Add audio layer inputs
     audio_layers = _get_audio_layers(model)
@@ -305,7 +280,7 @@ def _get_audio_layers(model: CompositionModel) -> list[CompositionAudioLayer]:
     return result
 
 
-def _add_visual_input(cmd: list[str], layer: CompositionLayer, model: CompositionModel) -> None:
+def _add_visual_input(cmd: list[str], layer: CompositionLayer) -> None:
     """Add input arguments for a visual layer, with looping if needed."""
     path = _resolve_layer_path(layer)
     if not path:
@@ -334,6 +309,42 @@ def _duration_seconds(model: CompositionModel) -> float:
     if dur_ms <= 0:
         return 10.0  # fallback
     return dur_ms / 1000.0
+
+
+def _build_visual_stream_filter(
+    input_idx: int,
+    layer: CompositionLayer,
+    output_label: str,
+) -> str:
+    """Build the filter chain for a single visual input stream."""
+    filters: list[str] = []
+    requested_ms = layer.effective_duration_ms()
+
+    if layer.source_kind == "video" and requested_ms > 0:
+        filters.append(f"trim=duration={_seconds_string(requested_ms)}")
+
+    filters.append(f"scale={layer.width}:{layer.height}")
+
+    matte_filter = _build_matte_filter(layer)
+    if matte_filter:
+        filters.append(matte_filter)
+
+    filters.append(_build_timeline_filter(layer, None))
+
+    behavior = _build_behavior_filter(layer, None)
+    if behavior:
+        filters.append(behavior)
+
+    return f"[{input_idx}:v]{','.join(filters)}[{output_label}]"
+
+
+def _seconds_string(duration_ms: int) -> str:
+    """Return a stable ffmpeg-friendly seconds string from milliseconds."""
+    if duration_ms <= 0:
+        return "0"
+    seconds = duration_ms / 1000.0
+    formatted = f"{seconds:.3f}".rstrip("0").rstrip(".")
+    return formatted or "0"
 
 
 def _build_matte_filter(layer: CompositionLayer) -> str:
@@ -386,34 +397,32 @@ def _build_matte_filter(layer: CompositionLayer) -> str:
 
 def _build_timeline_filter(layer: CompositionLayer, model: CompositionModel) -> str:
     """Build trim + setpts filter for layer timeline."""
+    del model
+    start_s = layer.start_ms / 1000.0
     if layer.start_ms > 0:
-        start_s = layer.start_ms / 1000.0
         return f"setpts=PTS-STARTPTS+{start_s}/TB"
-    return ""
+    return "setpts=PTS-STARTPTS"
 
 
 def _build_behavior_filter(layer: CompositionLayer, model: CompositionModel) -> str:
     """Build filter for behavior_after_end."""
-    behavior = layer.behavior_after_end
-    if behavior == "loop":
-        return ""
+    del layer, model
     return ""
 
 
 def _build_enable_expr(layer: CompositionLayer) -> str:
     """Build an FFmpeg enable expression for layer timing."""
     start_s = layer.start_ms / 1000.0
-    end_s = layer.end_ms / 1000.0
+    requested_ms = layer.effective_duration_ms()
 
-    if start_s <= 0 and end_s <= 0:
+    if start_s <= 0 and requested_ms <= 0:
         return ""
 
     parts: list[str] = []
     if start_s > 0:
         parts.append(f"gte(t,{start_s})")
-    if end_s > 0:
-        if layer.behavior_after_end == "hide":
-            parts.append(f"lte(t,{end_s})")
+    if requested_ms > 0 and layer.end_ms > layer.start_ms:
+        parts.append(f"lt(t,{layer.end_ms / 1000.0})")
 
     if not parts:
         return ""

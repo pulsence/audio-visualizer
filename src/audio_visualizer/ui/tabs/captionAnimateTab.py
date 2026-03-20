@@ -201,6 +201,7 @@ class CaptionAnimateTab(BaseTab):
         audio_row.addWidget(QLabel("Input audio:"))
         self._input_audio_edit = QLineEdit()
         self._input_audio_edit.setPlaceholderText("Select audio for mux/reactive analysis")
+        self._input_audio_edit.editingFinished.connect(self._sync_input_audio_combo_to_path)
         audio_row.addWidget(self._input_audio_edit)
 
         self._input_audio_browse_btn = QPushButton("Browse...")
@@ -1014,6 +1015,7 @@ class CaptionAnimateTab(BaseTab):
         )
         if path:
             self._input_audio_edit.setText(path)
+            self._sync_input_audio_combo_to_path()
 
     def _on_input_session_audio_changed(self, index: int) -> None:
         """Populate input audio from session audio selection."""
@@ -1024,6 +1026,25 @@ class CaptionAnimateTab(BaseTab):
             asset = self.workspace_context.get_asset(data)
             if asset:
                 self._input_audio_edit.setText(str(asset.path))
+
+    def _sync_input_audio_combo_to_path(self) -> None:
+        """Select the session-audio combo entry that matches the current path."""
+        path_text = self._input_audio_edit.text().strip()
+        target_path = Path(path_text) if path_text else None
+
+        self._input_session_audio_combo.blockSignals(True)
+        try:
+            self._input_session_audio_combo.setCurrentIndex(0)
+            if target_path is None or self.workspace_context is None:
+                return
+            for index in range(1, self._input_session_audio_combo.count()):
+                asset_id = self._input_session_audio_combo.itemData(index)
+                asset = self.workspace_context.get_asset(asset_id) if asset_id else None
+                if asset is not None and asset.path == target_path:
+                    self._input_session_audio_combo.setCurrentIndex(index)
+                    return
+        finally:
+            self._input_session_audio_combo.blockSignals(False)
 
     def _pick_session_or_file(
         self,
@@ -1091,6 +1112,7 @@ class CaptionAnimateTab(BaseTab):
         if idx >= 0:
             self._input_session_audio_combo.setCurrentIndex(idx)
         self._input_session_audio_combo.blockSignals(False)
+        self._sync_input_audio_combo_to_path()
 
     def _on_session_subtitle_changed(self, index: int) -> None:
         asset_id = self._session_subtitle_combo.currentData()
@@ -1583,8 +1605,6 @@ class CaptionAnimateTab(BaseTab):
             "mux_audio": self._mux_audio_cb.isChecked(),
             "audio_reactive": {
                 "enabled": self._audio_reactive_group.isChecked(),
-                "audio_path": self._input_audio_edit.text(),
-                "session_audio": self._input_session_audio_combo.currentText(),
             },
         }
 
@@ -1709,10 +1729,7 @@ class CaptionAnimateTab(BaseTab):
             if ar_audio:
                 self._input_audio_edit.setText(ar_audio)
         self._mux_audio_cb.setChecked(data.get("mux_audio", False))
-        session_audio = ar.get("session_audio", "(none)")
-        idx = self._input_session_audio_combo.findText(session_audio)
-        if idx >= 0:
-            self._input_session_audio_combo.setCurrentIndex(idx)
+        self._sync_input_audio_combo_to_path()
 
     # ------------------------------------------------------------------
     # Global busy

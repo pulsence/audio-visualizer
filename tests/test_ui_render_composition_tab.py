@@ -1490,6 +1490,28 @@ class TestAudioLayerListUI:
         # Audio layer appears in the unified list
         assert tab._layer_list.count() == 1
 
+    def test_full_length_edit_keeps_duration_zero_in_model(self):
+        tab = RenderCompositionTab()
+        al = CompositionAudioLayer(
+            display_name="Music",
+            asset_path=Path("/tmp/music.mp3"),
+            source_duration_ms=5000,
+            duration_ms=2000,
+            use_full_length=False,
+        )
+        tab._model.audio_layers.append(al)
+        tab._refresh_layer_list()
+        tab._layer_list.setCurrentRow(0)
+        tab._load_audio_layer_properties(al)
+
+        tab._audio_full_length_cb.setChecked(True)
+        tab._audio_start_spin.setValue(1500)
+        tab._on_audio_layer_edited()
+
+        assert al.use_full_length is True
+        assert al.duration_ms == 0
+        assert al.start_ms == 1500
+
 
 # ------------------------------------------------------------------
 # Unified layer list
@@ -1614,6 +1636,17 @@ class TestUnifiedLayerList:
         assert len(tab._model.layers) == 1
         assert len(tab._model.audio_layers) == 0
         assert tab._layer_list.count() == 1
+
+    def test_refresh_layer_list_uses_visual_z_order(self):
+        tab = RenderCompositionTab()
+        low = CompositionLayer(display_name="Low", z_order=0)
+        high = CompositionLayer(display_name="High", z_order=5)
+        tab._model.layers.extend([high, low])
+
+        tab._refresh_layer_list()
+
+        assert "Low" in tab._layer_list.item(0).text()
+        assert "High" in tab._layer_list.item(1).text()
 
 
 # ------------------------------------------------------------------

@@ -128,16 +128,18 @@ Preview renders use the same pipeline with two differences:
 
 ### Looping
 
-- Audio layers whose `effective_duration_ms()` exceeds `source_duration_ms` use `-stream_loop -1` in the FFmpeg command for looping.
-- Video layers with a requested span longer than `source_duration_ms` also loop.
+- Audio layers whose `effective_duration_ms()` exceeds `source_duration_ms` use `-stream_loop -1`, then `atrim` and `adelay`, so render output matches the timeline loop markers.
+- Video layers with a requested span longer than `source_duration_ms` also use `-stream_loop -1`; visual streams are trimmed to the requested span and shifted with `setpts` before overlay.
+- Composition filter graphs now use actual FFmpeg input labels (`[0:v]`, `[1:v]`, ...) rather than synthetic placeholders, so preview/render commands and the filter graph stay in sync.
 
 ### Layer-Specific Preview
 
-`build_single_layer_preview_command()` generates an FFmpeg command for previewing an individual layer in isolation.
+`build_single_layer_preview_command()` generates an FFmpeg command for previewing an individual layer in isolation by building a temporary one-layer `CompositionModel`, so it reuses the same input, trim, loop, and timing helpers as the full-composition preview path.
 
 ### Timeline
 
 - Timeline items include `source_duration_ms` and draw loop markers (grey dashed lines) at source-duration boundaries when the effective duration extends beyond a single loop.
+- Timeline and final render share the same effective-duration helpers. Audio full-length mode stores `duration_ms=0` and derives timing from `source_duration_ms`.
 
 ### Presets
 

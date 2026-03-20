@@ -313,6 +313,21 @@ class WaveformView(QWidget):
         vb.setXRange(new_lo, new_lo + visible, padding=0)
         self._updating_scrollbar = False
 
+    def _pan_horizontal(self, delta: int) -> None:
+        """Pan the visible waveform range left/right by one wheel step."""
+        if self._duration_s <= 0:
+            return
+        vb = self._plot_widget.plotItem.vb
+        lo, hi = vb.viewRange()[0]
+        visible = hi - lo
+        shift = visible * 0.1 * (-1 if delta > 0 else 1)
+        new_lo = max(0.0, lo + shift)
+        new_hi = new_lo + visible
+        if new_hi > self._duration_s:
+            new_hi = self._duration_s
+            new_lo = max(0.0, new_hi - visible)
+        vb.setXRange(new_lo, new_hi, padding=0)
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         """Handle Space to toggle playback."""
         if event.key() == Qt.Key.Key_Space:
@@ -327,20 +342,8 @@ class WaveformView(QWidget):
             if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 # Let pyqtgraph handle zoom
                 return False
-            else:
-                # Horizontal pan
-                delta = event.angleDelta().y()
-                vb = self._plot_widget.plotItem.vb
-                lo, hi = vb.viewRange()[0]
-                visible = hi - lo
-                shift = visible * 0.1 * (-1 if delta > 0 else 1)
-                new_lo = max(0, lo + shift)
-                new_hi = new_lo + visible
-                if self._duration_s > 0 and new_hi > self._duration_s:
-                    new_hi = self._duration_s
-                    new_lo = max(0, new_hi - visible)
-                vb.setXRange(new_lo, new_hi, padding=0)
-                return True  # consume the event
+            self._pan_horizontal(event.angleDelta().y())
+            return True  # consume the event
         return super().eventFilter(obj, event)
 
     def wheelEvent(self, event) -> None:
@@ -349,11 +352,5 @@ class WaveformView(QWidget):
             # Let default handle zoom
             super().wheelEvent(event)
         else:
-            # Horizontal pan
-            delta = event.angleDelta().y()
-            vb = self._plot_widget.plotItem.vb
-            lo, hi = vb.viewRange()[0]
-            visible = hi - lo
-            shift = visible * 0.1 * (-1 if delta > 0 else 1)
-            vb.setXRange(lo + shift, hi + shift, padding=0)
+            self._pan_horizontal(event.angleDelta().y())
             event.accept()

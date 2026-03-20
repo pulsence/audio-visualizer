@@ -80,9 +80,7 @@ class TestCaptionAnimateTabSettings:
         assert set(settings["animation"].keys()) == {"apply", "type", "params"}
 
         # Audio-reactive sub-keys
-        assert set(settings["audio_reactive"].keys()) == {
-            "enabled", "audio_path", "session_audio",
-        }
+        assert set(settings["audio_reactive"].keys()) == {"enabled"}
 
     def test_apply_settings_roundtrip(self):
         tab = CaptionAnimateTab()
@@ -131,11 +129,10 @@ class TestCaptionAnimateTabSettings:
                 "type": "fade",
                 "params": {"in_ms": 200.0, "out_ms": 300.0},
             },
+            "input_audio_path": "/tmp/audio.mp3",
             "mux_audio": True,
             "audio_reactive": {
                 "enabled": True,
-                "audio_path": "/tmp/audio.mp3",
-                "session_audio": "(none)",
             },
         }
 
@@ -175,9 +172,9 @@ class TestCaptionAnimateTabSettings:
         assert restored["animation"]["params"]["in_ms"] == custom["animation"]["params"]["in_ms"]
         assert restored["animation"]["params"]["out_ms"] == custom["animation"]["params"]["out_ms"]
 
+        assert restored["input_audio_path"] == custom["input_audio_path"]
         assert restored["mux_audio"] == custom["mux_audio"]
         assert restored["audio_reactive"]["enabled"] == custom["audio_reactive"]["enabled"]
-        assert restored["audio_reactive"]["audio_path"] == custom["audio_reactive"]["audio_path"]
 
 
 class TestCaptionAnimateTabValidation:
@@ -293,6 +290,29 @@ class TestCaptionAnimateTabWorkspaceContext:
 
         assert tab._input_session_audio_combo.count() == 2
         assert tab._input_session_audio_combo.itemText(1) == "music.mp3"
+
+    def test_input_audio_path_selects_matching_session_asset(self):
+        tab = CaptionAnimateTab()
+        ctx = WorkspaceContext()
+        ctx.register_asset(SessionAsset(
+            id="audio1",
+            display_name="music.mp3",
+            path=Path("/tmp/music.mp3"),
+            category="audio",
+            source_tab="audio_visualizer",
+        ))
+        tab.set_workspace_context(ctx)
+
+        tab.apply_settings(
+            {
+                "subtitle_path": "/tmp/test.srt",
+                "input_audio_path": "/tmp/music.mp3",
+                "audio_reactive": {"enabled": False},
+            }
+        )
+
+        assert tab._input_audio_edit.text() == "/tmp/music.mp3"
+        assert tab._input_session_audio_combo.currentText() == "music.mp3"
 
     def test_render_defaults_to_project_folder_when_output_dir_blank(self, tmp_path, monkeypatch):
         main_window = _FakeCaptionMainWindow()
@@ -559,11 +579,10 @@ class TestMixedAnimationParamRoundTrip:
                     "unrevealed_color": None,
                 },
             },
+            "input_audio_path": "",
             "mux_audio": False,
             "audio_reactive": {
                 "enabled": False,
-                "audio_path": "",
-                "session_audio": "(none)",
             },
         }
 

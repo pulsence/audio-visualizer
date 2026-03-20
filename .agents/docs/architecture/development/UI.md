@@ -103,13 +103,14 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - `layer_type` has been removed entirely; source kind is determined by file extension.
 - Layer names default to the file name and are editable via `QLineEdit`.
 - Visual layers are draggable in the list to change z-order; audio layers are not draggable.
+- Visual/audio sources are rejected if required duration metadata cannot be resolved when the source is assigned.
 - The preview panel sits on the right side of the layout. Live Preview has "Timeline" and "Layer" tabs.
 - The render panel uses a compact size policy (`QSizePolicy.Maximum`); the timeline expands to fill available space.
 - Standard resolution presets (`HD`, `HD Vertical`, `2K`, `4K`) update width/height but manual edits still fall back to `Custom`.
 - The timeline widget reflects the same timing model used by preview and final render, with snap-to-align behavior at a 200ms threshold. Timeline supports scroll/zoom via `_pixels_per_ms` and `_scroll_offset` with a linked horizontal scrollbar. Normal scroll = pan, Ctrl+scroll = zoom.
 - A playhead (red vertical line) can be clicked to set position and is synced with the preview timestamp spin box.
 - Key color can be picked directly from the preview image.
-- Audio is layered, delayable, trimmable, and mixed during final FFmpeg export.
+- Audio is layered, delayable, trimmable, and mixed during final FFmpeg export. Video/audio looping in preview and final render follows the same source-duration rules the timeline uses.
 
 ## Caption Animate
 
@@ -120,7 +121,7 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - Full renders use the shared `MainWindow.render_thread_pool` with guarded `_safe_main_window()` calls so the tab is safe to use without a host window.
 - `_create_delivery_output()` writes to a temp file then renames to avoid FFmpeg in-place conflicts. A process lock guards `_captured_process`. Preview temp files are cleaned up on rerender, failure, cancel, and close.
 - Mixed-type animation parameters (numeric, string, `None`) are handled by a control registry that creates `QDoubleSpinBox` or `QLineEdit` widgets depending on the parameter type.
-- A unified input audio field in the Input/Output panel is shared by both mux and audio-reactive workflows.
+- A unified input audio field in the Input/Output panel is shared by both mux and audio-reactive workflows. Settings persist only the resolved audio path; the session-audio combo is re-derived by matching that path against current session assets.
 
 ## SRT Gen
 

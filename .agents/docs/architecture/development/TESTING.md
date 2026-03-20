@@ -8,7 +8,7 @@ This document describes the current test setup, existing tests, and coverage gap
 - **Config:** `tests/conftest.py` adds `src/` to `sys.path` so that `audio_visualizer` can be imported directly
 - **Run command:** `pytest tests/ -v`
 - **Test directory:** `tests/`
-- **Test count:** 932 tests currently pass across all packages
+- **Test count:** 938 tests currently pass across all packages
 
 ## Existing Tests
 
@@ -173,18 +173,20 @@ Cross-package integration tests:
 
 - Tests updated to remove references to `VALID_LAYER_TYPES`, `ChangeAudioSourceCommand`, and `PRESET_NAMES`.
 - Legacy audio source migration tests removed.
+- Added Render Composition command-generation tests that verify real FFmpeg input labels, audio/video loop handling, and single-layer preview timing.
+- Added UI tests for audio full-length reset semantics, visual z-order ordering in the unified layer list, and Caption Animate audio-path/session-asset synchronization.
 
 ## Coverage Gaps
 
 The following areas have no test coverage:
 
 - **Visualizer implementations** — No tests for any of the 14 visualizer types (`prepare_shapes()`, `generate_frame()`)
-- **UI components** — No tests for `MainWindow`, `RenderDialog`, or any View classes
-- **View validation** — No tests for `validate_view()` or `read_view_values()` on any View subclass
+- **UI components** — `MainWindow`, major tabs, and some view helpers are covered, but `RenderDialog` and most individual View subclasses still lack direct tests
+- **View validation** — `GeneralSettingsView` has path-normalization tests, but most View subclasses still lack direct `validate_view()` / `read_view_values()` coverage
 - **Render pipeline** — No integration tests for the full `RenderWorker` pipeline
 - **Audio analysis** — No tests for `AudioData.analyze_audio()` (volume and chromagram computation)
 - **Update checker** — No tests for `updater.py` functions
-- **Settings persistence** — No tests for `_collect_settings()` / `_apply_settings()` serialization roundtrip
+- **Settings persistence** — Main window and several tabs have settings roundtrip tests, but there is no single end-to-end test covering the full persisted schema across every tab and session asset combination
 - **Color parsing** — No tests for the `_parse_color()` helpers used across chroma views
 - **SRT full pipeline** — No end-to-end test of `transcribe_file()` (requires a Whisper model download)
 - **Caption full render** — No end-to-end test of `render_subtitle()` (requires FFmpeg with libass support)

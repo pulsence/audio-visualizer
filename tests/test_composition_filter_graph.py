@@ -7,6 +7,7 @@ import pytest
 from audio_visualizer.ui.tabs.renderComposition.filterGraph import (
     build_ffmpeg_command,
     build_filter_graph,
+    build_single_layer_preview_command,
     build_preview_command,
     _build_enable_expr,
     _build_matte_filter,
@@ -42,6 +43,7 @@ class TestBuildFilterGraph:
         ))
         graph = build_filter_graph(model)
         assert graph != ""
+        assert "[0:v]" in graph
         assert "scale=" in graph
         assert "overlay=" in graph
         assert "color=" in graph
@@ -192,7 +194,7 @@ class TestTimeline:
         expr = _build_enable_expr(layer)
         assert "gte(t,2.0)" in expr
 
-    def test_start_and_end_hide(self):
+    def test_start_and_end_respected(self):
         layer = CompositionLayer(
             display_name="Test",
             start_ms=1000, end_ms=5000,
@@ -200,26 +202,25 @@ class TestTimeline:
         )
         expr = _build_enable_expr(layer)
         assert "gte(t,1.0)" in expr
-        assert "lte(t,5.0)" in expr
+        assert "lt(t,5.0)" in expr
 
-    def test_freeze_last_frame_no_end_constraint(self):
+    def test_freeze_last_frame_still_stops_at_timeline_end(self):
         layer = CompositionLayer(
             display_name="Test",
             start_ms=0, end_ms=5000,
             behavior_after_end="freeze_last_frame",
         )
         expr = _build_enable_expr(layer)
-        # freeze_last_frame should not add lte constraint
-        assert "lte" not in expr
+        assert "lt(t,5.0)" in expr
 
-    def test_loop_no_end_constraint(self):
+    def test_loop_still_stops_at_timeline_end(self):
         layer = CompositionLayer(
             display_name="Test",
             start_ms=0, end_ms=5000,
             behavior_after_end="loop",
         )
         expr = _build_enable_expr(layer)
-        assert "lte" not in expr
+        assert "lt(t,5.0)" in expr
 
 
 # ------------------------------------------------------------------
@@ -370,6 +371,27 @@ class TestBuildPreviewCommand:
         ))
         cmd = build_preview_command(model, 1.0, "/tmp/preview.png")
         assert "-c:a" not in cmd
+
+    def test_single_layer_preview_uses_same_visual_timing_rules(self):
+        model = CompositionModel()
+        layer = CompositionLayer(
+            display_name="Looped Video",
+            asset_path=Path("/tmp/loop.mp4"),
+            source_kind="video",
+            source_duration_ms=3000,
+            start_ms=1000,
+            end_ms=7000,
+            width=1920,
+            height=1080,
+        )
+        model.add_layer(layer)
+
+        cmd = build_single_layer_preview_command(model, layer, 2.0, "/tmp/layer_preview.png")
+        cmd_str = " ".join(cmd)
+
+        assert "-stream_loop" in cmd
+        assert "trim=duration=6" in cmd_str
+        assert "setpts=PTS-STARTPTS+1.0/TB" in cmd_str
 
 
 # ------------------------------------------------------------------
@@ -531,4 +553,48 @@ class TestAudioLayersInFFmpegCommand:
         cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
         # Should not have audio codec since no valid audio layer
         assert "-c:a" not in cmd
+
+    def test_audio_layer_longer_than_source_uses_stream_loop_and_trim(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920,
+            height=1080,
+            end_ms=12000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Looped Music",
+            asset_path=Path("/tmp/music.mp3"),
+            source_duration_ms=3000,
+            duration_ms=9000,
+            use_full_length=False,
+            enabled=True,
+        ))
+
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        cmd_str = " ".join(cmd)
+
+        assert "-stream_loop" in cmd
+        assert "atrim=duration=9.0" in cmd_str
+
+    def test_video_layer_longer_than_source_uses_stream_loop_and_trim(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="Looped Video",
+            asset_path=Path("/tmp/video.mp4"),
+            source_kind="video",
+            source_duration_ms=2000,
+            start_ms=1000,
+            end_ms=7000,
+            width=1920,
+            height=1080,
+        ))
+
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        cmd_str = " ".join(cmd)
+
+        assert "-stream_loop" in cmd
+        assert "trim=duration=6" in cmd_str
+        assert "setpts=PTS-STARTPTS+1.0/TB" in cmd_str
 

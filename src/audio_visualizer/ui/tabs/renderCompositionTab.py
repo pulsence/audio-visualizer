@@ -618,7 +618,7 @@ class RenderCompositionTab(BaseTab):
         from audio_visualizer.ui.tabs.renderComposition.timelineWidget import TimelineItem
 
         items: list[TimelineItem] = []
-        for layer in self._model.layers:
+        for layer in self._model.get_layers_sorted():
             items.append(TimelineItem(
                 item_id=layer.id,
                 display_name=layer.display_name,
@@ -814,11 +814,11 @@ class RenderCompositionTab(BaseTab):
         """Rebuild the unified layer list widget from both visual and audio layers."""
         self._updating_ui = True
         try:
-            current_row = self._layer_list.currentRow()
+            selected_type, selected_id = self._unified_row_type(self._layer_list.currentRow())
             self._layer_list.clear()
 
             # Visual layers (draggable)
-            for layer in self._model.layers:
+            for layer in self._model.get_layers_sorted():
                 prefix = "[V]" if layer.enabled else "[V][ ]"
                 text = f"{prefix} {layer.display_name} (z={layer.z_order})"
                 item = QListWidgetItem(text)
@@ -833,12 +833,22 @@ class RenderCompositionTab(BaseTab):
                 item = QListWidgetItem(text)
                 item.setData(Qt.ItemDataRole.UserRole, ("audio", al.id))
                 # Clear drag flags for audio items
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
+                item.setFlags(
+                    item.flags()
+                    & ~Qt.ItemFlag.ItemIsDragEnabled
+                    & ~Qt.ItemFlag.ItemIsDropEnabled
+                )
                 self._layer_list.addItem(item)
 
-            if 0 <= current_row < self._layer_list.count():
-                self._layer_list.setCurrentRow(current_row)
-            elif self._layer_list.count() > 0:
+            restored = False
+            if selected_id:
+                for row in range(self._layer_list.count()):
+                    row_type, row_id = self._unified_row_type(row)
+                    if row_type == selected_type and row_id == selected_id:
+                        self._layer_list.setCurrentRow(row)
+                        restored = True
+                        break
+            if not restored and self._layer_list.count() > 0:
                 self._layer_list.setCurrentRow(0)
         finally:
             self._updating_ui = False
@@ -854,6 +864,7 @@ class RenderCompositionTab(BaseTab):
                 if layer is not None:
                     layer.z_order = z
                     z += 1
+        self._refresh_layer_list()
         self._refresh_timeline()
         self.settings_changed.emit()
 
@@ -1014,12 +1025,10 @@ class RenderCompositionTab(BaseTab):
             return
 
         suffix = path.suffix.lower()
-        source_duration_ms = 0
 
         if suffix in _AUDIO_EXTENSIONS:
-            source_duration_ms = self._probe_media_duration(path)
-            if suffix not in _IMAGE_EXTENSIONS and source_duration_ms == 0:
-                QMessageBox.warning(self, "Cannot Add", f"Could not determine duration for:\n{path}")
+            source_duration_ms = self._resolve_audio_source_duration(path)
+            if source_duration_ms is None:
                 return
             al = CompositionAudioLayer(
                 display_name=path.name,
@@ -1036,14 +1045,14 @@ class RenderCompositionTab(BaseTab):
             new_row = len(self._model.layers) + len(self._model.audio_layers) - 1
             self._layer_list.setCurrentRow(new_row)
         elif suffix in _VIDEO_EXTENSIONS:
-            source_duration_ms = self._probe_media_duration(path)
-            if source_duration_ms == 0:
-                QMessageBox.warning(self, "Cannot Add", f"Could not determine duration for:\n{path}")
+            resolved = self._resolve_visual_source_metadata(path)
+            if resolved is None:
                 return
+            source_kind, source_duration_ms = resolved
             layer = CompositionLayer(
                 display_name=path.name,
                 asset_path=path,
-                source_kind="video",
+                source_kind=source_kind,
                 source_duration_ms=source_duration_ms,
                 start_ms=0,
                 end_ms=source_duration_ms,
@@ -1059,11 +1068,15 @@ class RenderCompositionTab(BaseTab):
             new_row = len(self._model.layers) - 1
             self._layer_list.setCurrentRow(new_row)
         elif suffix in _IMAGE_EXTENSIONS:
+            resolved = self._resolve_visual_source_metadata(path)
+            if resolved is None:
+                return
+            source_kind, source_duration_ms = resolved
             layer = CompositionLayer(
                 display_name=path.name,
                 asset_path=path,
-                source_kind="image",
-                source_duration_ms=0,
+                source_kind=source_kind,
+                source_duration_ms=source_duration_ms,
                 start_ms=0,
                 end_ms=5000,
                 x=0, y=0,
@@ -1106,6 +1119,75 @@ class RenderCompositionTab(BaseTab):
         except Exception:
             logger.debug("Media probe failed for %s", path, exc_info=True)
         return 0
+
+    def _resolve_visual_source_metadata(
+        self,
+        path: Path,
+        *,
+        asset_id: str | None = None,
+        preferred_kind: str = "",
+        preferred_duration_ms: int = 0,
+        show_warning: bool = True,
+    ) -> tuple[str, int] | None:
+        """Resolve visual source kind and duration, aborting on unknown video duration."""
+        source_kind = preferred_kind
+        if source_kind not in {"image", "video"}:
+            suffix = path.suffix.lower()
+            if suffix in _IMAGE_EXTENSIONS:
+                source_kind = "image"
+            elif suffix in _VIDEO_EXTENSIONS:
+                source_kind = "video"
+
+        if source_kind == "image":
+            return ("image", 0)
+
+        if source_kind != "video":
+            if show_warning:
+                QMessageBox.warning(self, "Cannot Use Source", f"Unsupported visual source:\n{path}")
+            return None
+
+        duration_ms = preferred_duration_ms or self._probe_media_duration(path)
+        if duration_ms <= 0:
+            if show_warning:
+                QMessageBox.warning(
+                    self,
+                    "Cannot Use Source",
+                    f"Could not determine video duration for:\n{path}",
+                )
+            return None
+
+        if asset_id and self._workspace_context is not None:
+            asset = self._workspace_context.get_asset(asset_id)
+            if asset is not None and asset.duration_ms != duration_ms:
+                self._workspace_context.update_asset(asset_id, duration_ms=duration_ms)
+
+        return ("video", duration_ms)
+
+    def _resolve_audio_source_duration(
+        self,
+        path: Path,
+        *,
+        asset_id: str | None = None,
+        preferred_duration_ms: int = 0,
+        show_warning: bool = True,
+    ) -> int | None:
+        """Resolve audio duration, aborting when media metadata is incomplete."""
+        duration_ms = preferred_duration_ms or self._probe_media_duration(path)
+        if duration_ms <= 0:
+            if show_warning:
+                QMessageBox.warning(
+                    self,
+                    "Cannot Use Source",
+                    f"Could not determine audio duration for:\n{path}",
+                )
+            return None
+
+        if asset_id and self._workspace_context is not None:
+            asset = self._workspace_context.get_asset(asset_id)
+            if asset is not None and asset.duration_ms != duration_ms:
+                self._workspace_context.update_asset(asset_id, duration_ms=duration_ms)
+
+        return duration_ms
 
     # ------------------------------------------------------------------
     # Source / type changes
@@ -1161,21 +1243,27 @@ class RenderCompositionTab(BaseTab):
                 if asset:
                     asset_path = asset.path
                     display_name = asset.display_name
-                    if asset.category == "video":
-                        source_kind = "video"
-                        source_duration_ms = asset.duration_ms or 0
-                    elif asset.category == "image":
-                        source_kind = "image"
+                    if asset.category in ("video", "image"):
+                        resolved = self._resolve_visual_source_metadata(
+                            asset.path,
+                            asset_id=asset.id,
+                            preferred_kind=asset.category,
+                            preferred_duration_ms=asset.duration_ms or 0,
+                        )
+                        if resolved is None:
+                            return
+                        source_kind, source_duration_ms = resolved
 
         if asset_path:
-            suffix = asset_path.suffix.lower()
-            if not source_kind:
-                if suffix in _VIDEO_EXTENSIONS:
-                    source_kind = "video"
-                elif suffix in _IMAGE_EXTENSIONS:
-                    source_kind = "image"
-            if source_kind == "video" and source_duration_ms == 0:
-                source_duration_ms = self._probe_media_duration(asset_path)
+            resolved = self._resolve_visual_source_metadata(
+                asset_path,
+                asset_id=asset_id,
+                preferred_kind=source_kind,
+                preferred_duration_ms=source_duration_ms,
+            )
+            if resolved is None:
+                return
+            source_kind, source_duration_ms = resolved
 
         cmd = ChangeSourceCommand(
             self._model, layer.id, asset_id, asset_path,
@@ -1193,14 +1281,10 @@ class RenderCompositionTab(BaseTab):
             return
         path = self._pick_session_or_file(None, "Select Source", _ASSET_FILTERS)
         if path is not None:
-            suffix = path.suffix.lower()
-            source_kind = ""
-            source_duration_ms = 0
-            if suffix in _VIDEO_EXTENSIONS:
-                source_kind = "video"
-                source_duration_ms = self._probe_media_duration(path)
-            elif suffix in _IMAGE_EXTENSIONS:
-                source_kind = "image"
+            resolved = self._resolve_visual_source_metadata(path)
+            if resolved is None:
+                return
+            source_kind, source_duration_ms = resolved
 
             cmd = ChangeSourceCommand(
                 self._model, layer.id, None, path,
@@ -1427,12 +1511,14 @@ class RenderCompositionTab(BaseTab):
         al = self._selected_audio_layer()
         if al is None:
             return
+        use_full_length = self._audio_full_length_cb.isChecked()
+        duration_ms = 0 if use_full_length else self._audio_duration_spin.value()
         cmd = EditAudioLayerCommand(
             self._model,
             al.id,
             start_ms=self._audio_start_spin.value(),
-            duration_ms=self._audio_duration_spin.value(),
-            use_full_length=self._audio_full_length_cb.isChecked(),
+            duration_ms=duration_ms,
+            use_full_length=use_full_length,
         )
         self._push_command(cmd)
         self._refresh_timeline()
@@ -1453,18 +1539,18 @@ class RenderCompositionTab(BaseTab):
                 use_full_length=True,
             )
             self._push_command(cmd)
-            self._updating_ui = True
-            self._audio_duration_spin.setValue(al.source_duration_ms)
-            self._audio_duration_spin.setEnabled(False)
-            self._updating_ui = False
         else:
+            duration_ms = self._audio_duration_spin.value()
+            if duration_ms <= 0 and al.source_duration_ms > 0:
+                duration_ms = al.source_duration_ms
             cmd = EditAudioLayerCommand(
                 self._model,
                 al.id,
+                duration_ms=duration_ms,
                 use_full_length=False,
             )
             self._push_command(cmd)
-            self._audio_duration_spin.setEnabled(True)
+        self._load_audio_layer_properties(al)
         self._refresh_timeline()
         self.settings_changed.emit()
 
@@ -1478,13 +1564,16 @@ class RenderCompositionTab(BaseTab):
         if not path:
             return
         path = Path(path)
-        source_duration_ms = self._probe_media_duration(path)
+        source_duration_ms = self._resolve_audio_source_duration(path)
+        if source_duration_ms is None:
+            return
 
         al = self._selected_audio_layer()
         if al is not None:
             cmd = EditAudioLayerCommand(
                 self._model,
                 al.id,
+                asset_id=None,
                 asset_path=path,
                 display_name=path.name,
                 source_duration_ms=source_duration_ms,

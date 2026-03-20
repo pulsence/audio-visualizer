@@ -135,6 +135,7 @@ class TimelineWidget(QWidget):
 
     def set_scroll_offset(self, ms: int) -> None:
         self._scroll_offset = max(0, ms)
+        self._clamp_scroll()
         self._emit_scroll_state()
         self.update()
 
@@ -151,10 +152,10 @@ class TimelineWidget(QWidget):
         return self._pixels_per_ms
 
     def _visible_duration_ms(self) -> int:
-        available = self.width() - _HEADER_WIDTH
+        available = max(1, self.width() - _HEADER_WIDTH)
         if self._pixels_per_ms <= 0:
             return self._duration_ms
-        return int(available / self._pixels_per_ms)
+        return max(1, int(available / self._pixels_per_ms))
 
     def _clamp_scroll(self) -> None:
         max_offset = max(0, self._duration_ms - self._visible_duration_ms())
@@ -325,9 +326,10 @@ class TimelineWidget(QWidget):
         if event.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(event)
 
-        # Update playhead on any left click
-        self._playhead_ms = self._x_to_ms(event.position().x())
-        self.playhead_changed.emit(self._playhead_ms)
+        if event.position().x() >= _HEADER_WIDTH:
+            # Update playhead on any left click in the timeline content area.
+            self._playhead_ms = self._x_to_ms(event.position().x())
+            self.playhead_changed.emit(self._playhead_ms)
 
         item, hit_type = self._item_at(event.position().x(), event.position().y())
         if item is not None:
