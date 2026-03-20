@@ -727,15 +727,6 @@ class MainWindow(QMainWindow):
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(128, 128, 128))
             return palette
 
-        prefers_dark = False
-        if mode == "auto":
-            try:
-                prefers_dark = "dark" in str(app.styleHints().colorScheme()).lower()
-            except (AttributeError, RuntimeError):
-                prefers_dark = False
-        elif mode == "on":
-            prefers_dark = True
-
         def build_light_palette() -> QPalette:
             palette = QPalette()
             palette.setColor(QPalette.ColorRole.Window, QColor(240, 240, 240))
@@ -755,43 +746,21 @@ class MainWindow(QMainWindow):
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(120, 120, 120))
             return palette
 
+        prefers_dark = False
+        if mode == "auto":
+            try:
+                prefers_dark = "dark" in str(app.styleHints().colorScheme()).lower()
+            except (AttributeError, RuntimeError):
+                prefers_dark = False
+        elif mode == "on":
+            prefers_dark = True
+
         if prefers_dark:
-            dark_palette = build_dark_palette()
-            app.setPalette(dark_palette)
-            # Supplementary stylesheet to ensure menus, tooltips, and popups
-            # respect the dark palette on all platforms
-            app.setStyleSheet("""
-                QToolTip {
-                    color: #ffffff;
-                    background-color: #191919;
-                    border: 1px solid #3a3a3a;
-                }
-                QMenu {
-                    background-color: #353535;
-                    color: #ffffff;
-                    border: 1px solid #555555;
-                }
-                QMenu::item:selected {
-                    background-color: #2a82da;
-                }
-                QMenuBar {
-                    background-color: #353535;
-                    color: #ffffff;
-                }
-                QMenuBar::item:selected {
-                    background-color: #2a82da;
-                }
-                QComboBox QAbstractItemView {
-                    background-color: #353535;
-                    color: #ffffff;
-                    selection-background-color: #2a82da;
-                }
-            """)
-        else:
-            # Clear any dark-mode stylesheet, then apply explicit light palette
             app.setStyleSheet("")
-            light_palette = build_light_palette()
-            app.setPalette(light_palette)
+            app.setPalette(build_dark_palette())
+        else:
+            app.setStyleSheet("")
+            app.setPalette(build_light_palette())
 
         if hasattr(self, '_sidebar') and self._sidebar:
             self._sidebar.refresh_theme()

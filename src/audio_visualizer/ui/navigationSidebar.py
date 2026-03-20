@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
@@ -27,6 +28,16 @@ logger = logging.getLogger(__name__)
 
 SIDEBAR_WIDTH = 180
 SPINNER_PREFIX = "\u27f3 "  # "⟳ "
+
+
+class _NoFocusDelegate(QStyledItemDelegate):
+    """Item delegate that suppresses the native focus rectangle."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        # Remove the focus state so Qt never paints a focus rect / border
+        from PySide6.QtWidgets import QStyle
+        option.state &= ~QStyle.StateFlag.State_HasFocus
 
 
 class NavigationSidebar(QWidget):
@@ -52,6 +63,7 @@ class NavigationSidebar(QWidget):
         self._list = QListWidget()
         self._list.setObjectName("navigationList")
         self._list.setSpacing(2)
+        self._list.setItemDelegate(_NoFocusDelegate(self._list))
 
         heading = QLabel("Navigation")
         heading.setObjectName("navigationHeading")
@@ -185,26 +197,25 @@ class NavigationSidebar(QWidget):
             }
             #navigationList {
                 border: none;
+                outline: none;
                 padding: 2px;
             }
             #navigationList::item {
-                padding: 4px 6px;
+                padding: 6px 8px;
                 border: none;
                 border-bottom: 1px solid palette(mid);
-            }
-            #navigationList::item:pressed {
-                border: none;
-                outline: none;
             }
             #navigationList::item:selected {
                 background-color: palette(highlight);
                 color: palette(highlighted-text);
                 border: none;
+                border-bottom: none;
                 outline: none;
             }
-            #navigationList::item:focus {
+            #navigationList::item:hover:!selected {
+                background-color: palette(midlight);
                 border: none;
-                outline: none;
+                border-bottom: 1px solid palette(mid);
             }
             """
         )

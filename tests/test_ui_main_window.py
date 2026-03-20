@@ -239,6 +239,9 @@ class TestMainWindowSettings:
             def style(self):
                 return _FakeStyle()
 
+            def setStyle(self, style):
+                pass
+
             def setPalette(self, palette):
                 self.palette = palette
 

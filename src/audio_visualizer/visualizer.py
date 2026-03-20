@@ -44,6 +44,15 @@ def _resolve_icon_path() -> Path | None:
 
 def main():
     app = QApplication([])
+
+    # Use Fusion style so custom palettes are respected by all widgets
+    # including menus, tooltips, combo popups, and context menus.
+    # Must be set before creating any widgets.
+    from PySide6.QtWidgets import QStyleFactory
+    fusion = QStyleFactory.create("Fusion")
+    if fusion is not None:
+        app.setStyle(fusion)
+
     icon_path = _resolve_icon_path()
     if icon_path is not None:
         app.setWindowIcon(QIcon(str(icon_path)))
