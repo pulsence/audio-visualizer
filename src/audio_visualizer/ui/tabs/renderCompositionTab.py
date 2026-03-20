@@ -531,6 +531,7 @@ class RenderCompositionTab(BaseTab):
         self._timeline.item_selected.connect(self._on_timeline_item_selected)
         self._timeline.item_moved.connect(self._on_timeline_item_moved)
         self._timeline.item_trimmed.connect(self._on_timeline_item_trimmed)
+        self._timeline.item_reordered.connect(self._on_timeline_item_reordered)
         self._timeline.playhead_changed.connect(self._on_playhead_changed)
         layout.addWidget(self._timeline)
 
@@ -695,6 +696,27 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._load_audio_layer_properties(al)
             self.settings_changed.emit()
+
+    def _on_timeline_item_reordered(self, item_id: str, new_visual_index: int) -> None:
+        """Handle visual layer reorder from timeline drag."""
+        layer = self._model.get_layer(item_id)
+        if layer is None:
+            return
+        # Rebuild z-order based on the new visual index order from the timeline
+        visual_items = [i for i in self._model.layers]
+        dragged = None
+        for i, l in enumerate(visual_items):
+            if l.id == item_id:
+                dragged = visual_items.pop(i)
+                break
+        if dragged is not None:
+            new_visual_index = max(0, min(new_visual_index, len(visual_items)))
+            visual_items.insert(new_visual_index, dragged)
+            for z, l in enumerate(visual_items):
+                l.z_order = z
+            self._model.layers = visual_items
+        self._refresh_layer_list()
+        self.settings_changed.emit()
 
     def _on_timeline_scroll(self, value: int) -> None:
         self._timeline.set_scroll_offset(value)
@@ -1049,6 +1071,10 @@ class RenderCompositionTab(BaseTab):
             if resolved is None:
                 return
             source_kind, source_duration_ms = resolved
+            # Use native video dimensions centered in output
+            native_w, native_h = self._probe_media_dimensions(path)
+            center_x = (self._model.output_width - native_w) // 2
+            center_y = (self._model.output_height - native_h) // 2
             layer = CompositionLayer(
                 display_name=path.name,
                 asset_path=path,
@@ -1056,9 +1082,9 @@ class RenderCompositionTab(BaseTab):
                 source_duration_ms=source_duration_ms,
                 start_ms=0,
                 end_ms=source_duration_ms,
-                x=0, y=0,
-                width=self._model.output_width,
-                height=self._model.output_height,
+                x=center_x, y=center_y,
+                width=native_w,
+                height=native_h,
                 z_order=len(self._model.layers),
                 enabled=True,
             )
@@ -1119,6 +1145,17 @@ class RenderCompositionTab(BaseTab):
         except Exception:
             logger.debug("Media probe failed for %s", path, exc_info=True)
         return 0
+
+    def _probe_media_dimensions(self, path: Path) -> tuple[int, int]:
+        """Probe media file and return (width, height), falling back to output dimensions."""
+        try:
+            from audio_visualizer.ui.mediaProbe import probe_media
+            info = probe_media(str(path))
+            if info and info.get("width") and info.get("height"):
+                return (int(info["width"]), int(info["height"]))
+        except Exception:
+            logger.debug("Media dimension probe failed for %s", path, exc_info=True)
+        return (self._model.output_width, self._model.output_height)
 
     def _resolve_visual_source_metadata(
         self,
@@ -1272,6 +1309,15 @@ class RenderCompositionTab(BaseTab):
             source_duration_ms=source_duration_ms,
         )
         self._push_command(cmd)
+        # Update dimensions for video sources to native size, centered
+        if source_kind == "video" and asset_path:
+            native_w, native_h = self._probe_media_dimensions(asset_path)
+            layer.width = native_w
+            layer.height = native_h
+            layer.x = (self._model.output_width - native_w) // 2
+            layer.y = (self._model.output_height - native_h) // 2
+            if source_duration_ms > 0:
+                layer.end_ms = layer.start_ms + source_duration_ms
         self._refresh_layer_list()
         self.settings_changed.emit()
 
@@ -1286,13 +1332,25 @@ class RenderCompositionTab(BaseTab):
                 return
             source_kind, source_duration_ms = resolved
 
+            display_name = path.name
+
             cmd = ChangeSourceCommand(
                 self._model, layer.id, None, path,
-                display_name=path.name,
+                display_name=display_name,
                 source_kind=source_kind,
                 source_duration_ms=source_duration_ms,
             )
             self._push_command(cmd)
+
+            # Update dimensions for video sources to native size, centered
+            if source_kind == "video":
+                native_w, native_h = self._probe_media_dimensions(path)
+                layer.width = native_w
+                layer.height = native_h
+                layer.x = (self._model.output_width - native_w) // 2
+                layer.y = (self._model.output_height - native_h) // 2
+                layer.end_ms = layer.start_ms + source_duration_ms
+
             self._load_layer_properties(layer)
             self._refresh_layer_list()
             self.settings_changed.emit()
@@ -1379,7 +1437,14 @@ class RenderCompositionTab(BaseTab):
         if self._updating_ui:
             return
         layer = self._selected_layer()
-        if layer is None or layer.source_kind != "video" or layer.source_duration_ms <= 0:
+        if layer is None or layer.source_kind != "video":
+            return
+        # Re-probe if source duration is unknown
+        if layer.source_duration_ms <= 0 and layer.asset_path:
+            probed = self._probe_media_duration(layer.asset_path)
+            if probed > 0:
+                layer.source_duration_ms = probed
+        if layer.source_duration_ms <= 0:
             return
         if checked:
             layer.end_ms = layer.start_ms + layer.source_duration_ms
@@ -1532,11 +1597,17 @@ class RenderCompositionTab(BaseTab):
         if al is None:
             return
         if checked:
+            # If source_duration_ms is unknown, try to probe it now
+            if al.source_duration_ms <= 0 and al.asset_path:
+                probed = self._probe_media_duration(al.asset_path)
+                if probed > 0:
+                    al.source_duration_ms = probed
             cmd = EditAudioLayerCommand(
                 self._model,
                 al.id,
                 duration_ms=0,
                 use_full_length=True,
+                source_duration_ms=al.source_duration_ms,
             )
             self._push_command(cmd)
         else:

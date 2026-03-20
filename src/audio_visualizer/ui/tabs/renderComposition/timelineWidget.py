@@ -55,6 +55,7 @@ class TimelineWidget(QWidget):
     item_selected = Signal(str)
     item_moved = Signal(str, int, int)
     item_trimmed = Signal(str, str, int)
+    item_reordered = Signal(str, int)  # (item_id, new_visual_index)
     scroll_state_changed = Signal(int, int, int, int)
     playhead_changed = Signal(int)
 
@@ -79,8 +80,10 @@ class TimelineWidget(QWidget):
         self._drag_item_id: str | None = None
         self._drag_mode: str = ""  # "move", "trim_start", "trim_end"
         self._drag_start_x: int = 0
+        self._drag_start_y: int = 0
         self._drag_original_start: int = 0
         self._drag_original_end: int = 0
+        self._drag_original_visual_index: int = -1
 
     def set_items(self, items: list[TimelineItem]) -> None:
         """Set the timeline items and refresh."""
@@ -339,8 +342,17 @@ class TimelineWidget(QWidget):
             self._dragging = True
             self._drag_item_id = item.item_id
             self._drag_start_x = event.position().x()
+            self._drag_start_y = event.position().y()
             self._drag_original_start = item.start_ms
             self._drag_original_end = item.end_ms
+
+            # Record original visual index for reorder detection
+            visual_items = [i for i in self._items if i.track_type == "visual"]
+            self._drag_original_visual_index = -1
+            for vi, vi_item in enumerate(visual_items):
+                if vi_item.item_id == item.item_id:
+                    self._drag_original_visual_index = vi
+                    break
 
             if hit_type == "handle_start":
                 self._drag_mode = "trim_start"
@@ -399,6 +411,35 @@ class TimelineWidget(QWidget):
             else:
                 item.start_ms = new_start
                 item.end_ms = new_start + duration
+
+            # Vertical reorder: detect when a visual item is dragged to a different track row
+            if item.track_type == "visual" and self._drag_original_visual_index >= 0:
+                visual_items = [i for i in self._items if i.track_type == "visual"]
+                y = event.position().y()
+                y_base = 25  # after ruler
+                track_step = _TRACK_HEIGHT + _TRACK_SPACING
+                target_index = max(0, min(int((y - y_base) / track_step), len(visual_items) - 1))
+                if target_index != self._drag_original_visual_index:
+                    # Swap the item in the visual items list
+                    old_idx = self._drag_original_visual_index
+                    # Find and move in self._items
+                    vis_ids = [vi.item_id for vi in visual_items]
+                    dragged_id = item.item_id
+                    if dragged_id in vis_ids:
+                        vis_ids.remove(dragged_id)
+                        vis_ids.insert(target_index, dragged_id)
+                        # Rebuild self._items: visual in new order, then audio
+                        audio_items = [i for i in self._items if i.track_type == "audio"]
+                        new_items = []
+                        for vid in vis_ids:
+                            for it in self._items:
+                                if it.item_id == vid:
+                                    new_items.append(it)
+                                    break
+                        new_items.extend(audio_items)
+                        self._items = new_items
+                        self._drag_original_visual_index = target_index
+                        self.item_reordered.emit(dragged_id, target_index)
 
         elif self._drag_mode == "trim_start":
             new_start = max(0, min(self._drag_original_start + delta_ms, item.end_ms - 100))
