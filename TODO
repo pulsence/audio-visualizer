@@ -23,7 +23,7 @@ Both work flows should be integrated into this single app.
 ### Stage One: (COMPLETED)
 - Review all the files in `.agents/*` and update them to properly align with the projec code in `src/*`. IGNORE ALL FILES IN `Projects to integrate/`.
 
-### Stage Two:
+### Stage Two: (COMPLETED)
 - There are two projects in `Projects to integrate/`;
   - Caption Animator (`Projects to integrate/Caption Animator/`)
   - Local SRT (`Projects to integrate/Local SRT/`)
@@ -47,13 +47,30 @@ Both work flows should be integrated into this single app.
     a single video file.
 
 
-## Future Work
+## v0.7.0
+### Edit SRT Screen
+- Load SRT bundle produced by SRT Gen screen to work on word-level parings
+
+### Render Composition Screen
+- Ability to set audio volume
+- Ability to "scrub" the timeline and update the live preview
+- Live preview should auto update when ever the user places the track head on the timeline
+- User should be able to stop `[]`/start `|>`/jump to start `<<`/jump to end `>>` using the
+  standard symbols for the functions in the live preview panel. User should be able to press
+  space to start/stop live preview playback.
+- Audio tracks on timeline should have basic waveform that can be generated more quickly than in SRT Edit.
+
+### SRT Gen Screen
+- The user should be able to pass in the plain text of a script for a particular audio file and this is used to
+  help automatically generate/correct the srt file.
+
 ### Visualizers
 - Set video dimensions by number of objects in visualizer
 - Future visualizers:
     - Cloud/Particles
     - Ring
-### Todo from Caption Animator:
+
+### Caption Animator:
 - Improved animation support:
   - Add ability to set font bold or italics
   - Add ability to configure margins and paddings in interactive
@@ -62,9 +79,8 @@ Both work flows should be integrated into this single app.
   - Create a new animation that mimics a typewriter effect
   - Add ability to highlight specific words in a sentence
   - For many of the abilities, take in a general srt and word-level srt to produce the proper effect.
-- Update tests and make sure that the codebase is comprehensively covered
 
-### Todo from Local SRT:
+### SRT:
 - Improve test benchmarking harness to be configurable to point at folder with .mp3 and .srt and a set of
   setting configurations and then run these configurations on the inputs and generate results based upon
   outputs compared to provided srt.

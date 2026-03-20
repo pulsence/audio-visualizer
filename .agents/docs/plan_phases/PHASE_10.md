@@ -389,7 +389,7 @@ Review the completed Phase 10 work as an integrated whole and clean up any tempo
 
 **Phase 10 Changelog:**
 - Added a dedicated third user-debug phase after Phase 9 so another round of post-integration fixes has an explicit place in the plan
-- Shifted `Final Review` to Phase 11 to preserve chronological phase ordering
+- Shifted `Final Review` to Phase 12 to preserve chronological phase ordering
 - Reserved a scoped handoff point for future user-reported fixes before release-review work begins
 - Expanded with 5 implementation subphases (10.1–10.5) plus a dedicated Phase 10 code-review subphase covering 14 user-reported issues
 - Clarified that SRT Gen CUDA runtime checks must live at the shared Whisper wrapper so explicit model loads and batch generation stay in sync
