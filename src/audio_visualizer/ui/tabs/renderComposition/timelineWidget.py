@@ -146,7 +146,7 @@ class TimelineWidget(QWidget):
         return self._scroll_offset
 
     def set_pixels_per_ms(self, value: float) -> None:
-        self._pixels_per_ms = max(0.02, min(2.0, value))
+        self._pixels_per_ms = max(0.0001, min(100.0, value))
         self._clamp_scroll()
         self._emit_scroll_state()
         self.update()
@@ -486,7 +486,7 @@ class TimelineWidget(QWidget):
             # Zoom around mouse position
             mouse_ms = self._x_to_ms(event.position().x())
             factor = 1.2 if delta > 0 else 1 / 1.2
-            new_ppm = max(0.02, min(2.0, self._pixels_per_ms * factor))
+            new_ppm = max(0.0001, min(100.0, self._pixels_per_ms * factor))
             # Anchor: keep mouse_ms at the same pixel
             mouse_px = event.position().x() - _HEADER_WIDTH
             new_offset = int(mouse_ms - mouse_px / new_ppm)

@@ -105,18 +105,18 @@ def build_single_layer_preview_command(
     timestamp_s: float,
     output_path: str | Path,
 ) -> list[str]:
-    """Build an FFmpeg command to preview a single layer at a timestamp."""
+    """Build an FFmpeg command to preview a single layer at its actual dimensions."""
+    import copy
+
     single_model = CompositionModel()
-    single_model.output_width = model.output_width
-    single_model.output_height = model.output_height
+    # Use the layer's own dimensions as the canvas so it renders at native size
+    single_model.output_width = layer.width
+    single_model.output_height = layer.height
     single_model.output_fps = model.output_fps
 
-    import copy
     single_layer = copy.deepcopy(layer)
     single_layer.x = 0
     single_layer.y = 0
-    single_layer.width = model.output_width
-    single_layer.height = model.output_height
     single_model.layers.append(single_layer)
 
     return build_preview_command(single_model, timestamp_s, output_path)

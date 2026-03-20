@@ -231,6 +231,7 @@ class TestMainWindowSettings:
         class _FakeApp:
             def __init__(self):
                 self.palette = None
+                self.stylesheet = ""
 
             def styleHints(self):
                 return _FakeStyleHints()
@@ -240,6 +241,9 @@ class TestMainWindowSettings:
 
             def setPalette(self, palette):
                 self.palette = palette
+
+            def setStyleSheet(self, ss):
+                self.stylesheet = ss
 
             def processEvents(self):
                 return None
