@@ -208,3 +208,7 @@ All stages emit AppEvent (STAGE, RENDER_START/PROGRESS/COMPLETE) via emitter.
 ## View-to-Visualizer Mapping
 
 `MainWindow._VIEW_ATTRIBUTE_MAP` maps attribute names (e.g., `_volume_rectangle_view`) to `VisualizerOptions` enum values. When a visualizer type is selected in the dropdown, `MainWindow.__getattr__()` lazy-loads the corresponding View subclass, and `_create_visualizer()` instantiates the matching Visualizer subclass with the collected settings.
+
+## Phase 11 Changes
+
+Phase 11 simplified the composition model by removing `layer_type` in favour of extension-based `source_kind`, added `source_duration_ms` with looping support, introduced user-saved presets, unified asset management in the Loaded Assets panel, added timeline scroll/zoom with a playhead, and cleaned up theming (explicit `build_light_palette()`, `refresh_theme()`, "Light"/"Dark"/"Auto" labels). See the [UI](./architecture/development/UI.md), [Rendering](./architecture/development/RENDERING.md), and [Testing](./architecture/development/TESTING.md) development overviews for full details.

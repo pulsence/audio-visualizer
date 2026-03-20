@@ -116,6 +116,33 @@ Preview renders use the same pipeline with two differences:
 
 `CaptionAnimateTab._create_delivery_output()` writes the final file to a temporary path then renames it to the target, avoiding FFmpeg in-place read/write conflicts. A process lock guards `_captured_process`. Preview temp files are cleaned up on rerender, failure, cancel, and close.
 
+## Composition Model (Phase 11)
+
+### CompositionLayer Changes
+
+- `layer_type` has been removed from `CompositionLayer`.
+- `source_kind` (derived from file extension) and `source_duration_ms` have been added to `CompositionLayer`.
+- `source_duration_ms` has also been added to `CompositionAudioLayer`.
+- Both layer types expose `effective_duration_ms()` and `effective_end_ms()` helper methods.
+- Legacy fields and helpers removed: `audio_source_asset_id`, `audio_source_path`, `ChangeAudioSourceCommand`, `_resolve_audio_path()`.
+
+### Looping
+
+- Audio layers whose `effective_duration_ms()` exceeds `source_duration_ms` use `-stream_loop -1` in the FFmpeg command for looping.
+- Video layers with a requested span longer than `source_duration_ms` also loop.
+
+### Layer-Specific Preview
+
+`build_single_layer_preview_command()` generates an FFmpeg command for previewing an individual layer in isolation.
+
+### Timeline
+
+- Timeline items include `source_duration_ms` and draw loop markers (grey dashed lines) at source-duration boundaries when the effective duration extends beyond a single loop.
+
+### Presets
+
+Presets now support user-saved presets in addition to built-in presets via `save_preset()`, `load_preset()`, and `list_presets()`.
+
 ## Post-Render Playback
 
 After a full render completes, `render_finished()` opens a `RenderDialog` — a modal `QDialog` with a `QMediaPlayer`, `QVideoWidget`, `QAudioOutput`, and volume slider. The video loops automatically. Volume persists across dialog instances via a class variable.

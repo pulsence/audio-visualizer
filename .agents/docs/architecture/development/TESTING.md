@@ -8,7 +8,7 @@ This document describes the current test setup, existing tests, and coverage gap
 - **Config:** `tests/conftest.py` adds `src/` to `sys.path` so that `audio_visualizer` can be imported directly
 - **Run command:** `pytest tests/ -v`
 - **Test directory:** `tests/`
-- **Test count:** 312+ tests across all packages
+- **Test count:** 932 tests currently pass across all packages
 
 ## Existing Tests
 
@@ -168,6 +168,11 @@ Cross-package integration tests:
 - Both srt and caption packages can be imported together
 - Shared events module works across packages
 - No import conflicts between packages
+
+## Phase 11 Test Updates
+
+- Tests updated to remove references to `VALID_LAYER_TYPES`, `ChangeAudioSourceCommand`, and `PRESET_NAMES`.
+- Legacy audio source migration tests removed.
 
 ## Coverage Gaps
 

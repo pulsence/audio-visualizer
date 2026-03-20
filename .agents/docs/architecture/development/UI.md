@@ -98,11 +98,16 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 
 `RenderCompositionTab` is now a layer editor backed by a persistent `CompositionModel`.
 
+- The "Loaded Assets" panel provides "Add Asset" (unified file picker), "Remove", a preset dropdown, "Apply", and "Save Preset" buttons. The legacy "Add Layer", "Add Audio", "Up", and "Down" buttons have been removed.
 - A unified layer list shows both visual (`[V]` prefix) and audio (`[A]` prefix) layers. Selecting a layer switches a `QStackedWidget` to display context-sensitive settings for that layer type.
-- The preview panel sits on the right side of the layout.
-- Render and output sections are merged; the separate cancel button has been removed.
+- `layer_type` has been removed entirely; source kind is determined by file extension.
+- Layer names default to the file name and are editable via `QLineEdit`.
+- Visual layers are draggable in the list to change z-order; audio layers are not draggable.
+- The preview panel sits on the right side of the layout. Live Preview has "Timeline" and "Layer" tabs.
+- The render panel uses a compact size policy (`QSizePolicy.Maximum`); the timeline expands to fill available space.
 - Standard resolution presets (`HD`, `HD Vertical`, `2K`, `4K`) update width/height but manual edits still fall back to `Custom`.
-- A timeline widget reflects the same timing model used by preview and final render, with snap-to-align behavior at a 200ms threshold.
+- The timeline widget reflects the same timing model used by preview and final render, with snap-to-align behavior at a 200ms threshold. Timeline supports scroll/zoom via `_pixels_per_ms` and `_scroll_offset` with a linked horizontal scrollbar. Normal scroll = pan, Ctrl+scroll = zoom.
+- A playhead (red vertical line) can be clicked to set position and is synced with the preview timestamp spin box.
 - Key color can be picked directly from the preview image.
 - Audio is layered, delayable, trimmable, and mixed during final FFmpeg export.
 
@@ -115,6 +120,7 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - Full renders use the shared `MainWindow.render_thread_pool` with guarded `_safe_main_window()` calls so the tab is safe to use without a host window.
 - `_create_delivery_output()` writes to a temp file then renames to avoid FFmpeg in-place conflicts. A process lock guards `_captured_process`. Preview temp files are cleaned up on rerender, failure, cancel, and close.
 - Mixed-type animation parameters (numeric, string, `None`) are handled by a control registry that creates `QDoubleSpinBox` or `QLineEdit` widgets depending on the parameter type.
+- A unified input audio field in the Input/Output panel is shared by both mux and audio-reactive workflows.
 
 ## SRT Gen
 
@@ -124,6 +130,7 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - `SrtGenWorker` owns the model thread: the same thread that calls `load()` also calls `transcribe()`, avoiding cross-thread GPU handle issues.
 - Cancel is responsive during model loading via a polling loop around the blocking load call.
 - Compute type fallback uses a valid value (`int8`) instead of `"default"`.
+- The input panel uses a compact size policy (`QSizePolicy.Maximum`).
 - The event log panel uses an expanding size policy (no fixed 150px max height cap).
 - Worker completed payload includes `device_used` and `compute_type_used`; the tab displays the resolved device info after transcription.
 
@@ -131,10 +138,10 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 
 `SrtEditTab` provides waveform-synced subtitle editing with tab-scoped undo.
 
-- Ctrl+wheel pans horizontally via an event filter on the `PlotWidget` viewport; the horizontal scrollbar stays synchronized.
+- Scroll behaviour: normal scroll = pan, Ctrl+scroll = zoom on the waveform (consistent with the Render Composition timeline). The horizontal scrollbar stays synchronized.
 - Inline table edits (text, timestamps, speaker) emit a structured signal from `SubtitleTableModel` instead of mutating the document directly. `SrtEditTab` converts these into undoable commands (`EditTextCommand`, `EditTimestampCommand`, `EditSpeakerCommand`).
 - Multiline text edits auto-resize their table rows via a `dataChanged` handler.
-- Audio loading is performed on a background `_WaveformLoadWorker(QRunnable)` with a monotonic request ID so stale completions are ignored. `WaveformView` exposes `set_loading_message()`, `set_error_message()`, and `clear_message()` for an overlay status API.
+- Audio loading is performed on a background `_WaveformLoadWorker(QRunnable)` with a monotonic request ID so stale completions are ignored. `WaveformView` exposes `set_loading_message()`, `set_error_message()`, and `clear_message()` for an overlay status API. Subtitle overlays are restored after background waveform loading completes.
 
 ## Tab-Scoped Undo/Redo
 
@@ -145,5 +152,6 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 `AssetsTab` is a support screen rather than a workflow stage.
 
 - Shows a live table of current `SessionAsset` entries.
+- Provides "Remove from Session", "Delete from Disk", and "Load from Project Folder" buttons.
 - Imports individual external files or folders through `WorkspaceContext` helper methods.
 - Persists the visible imported-source list through tab settings so autosave/project restore can explain where external assets came from.
