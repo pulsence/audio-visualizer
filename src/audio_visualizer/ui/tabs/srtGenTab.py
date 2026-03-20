@@ -255,6 +255,7 @@ class SrtGenTab(BaseTab):
         layout.addLayout(btn_row)
 
         group.setLayout(layout)
+        group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self._content_layout.addWidget(group)
 
     # ==================================================================

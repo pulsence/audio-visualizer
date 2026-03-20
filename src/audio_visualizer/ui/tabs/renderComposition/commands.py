@@ -159,7 +159,7 @@ class ReorderLayerCommand(QUndoCommand):
 
 
 class ChangeSourceCommand(QUndoCommand):
-    """Change the source asset of a layer."""
+    """Change the source asset of a layer (including source metadata)."""
 
     def __init__(
         self,
@@ -167,6 +167,9 @@ class ChangeSourceCommand(QUndoCommand):
         layer_id: str,
         new_asset_id: str | None,
         new_asset_path: Path | None,
+        display_name: str | None = None,
+        source_kind: str = "",
+        source_duration_ms: int = 0,
         parent: QUndoCommand | None = None,
     ) -> None:
         super().__init__(parent)
@@ -174,51 +177,37 @@ class ChangeSourceCommand(QUndoCommand):
         self._layer_id = layer_id
         self._new_asset_id = new_asset_id
         self._new_asset_path = new_asset_path
+        self._new_display_name = display_name
+        self._new_source_kind = source_kind
+        self._new_source_duration_ms = source_duration_ms
         layer = model.get_layer(layer_id)
         self._old_asset_id = layer.asset_id if layer else None
         self._old_asset_path = layer.asset_path if layer else None
+        self._old_display_name = layer.display_name if layer else ""
+        self._old_source_kind = layer.source_kind if layer else ""
+        self._old_source_duration_ms = layer.source_duration_ms if layer else 0
         self.setText("Change layer source")
 
     def redo(self) -> None:
-        self._model.update_layer(
-            self._layer_id,
-            asset_id=self._new_asset_id,
-            asset_path=self._new_asset_path,
-        )
+        updates: dict[str, Any] = {
+            "asset_id": self._new_asset_id,
+            "asset_path": self._new_asset_path,
+            "source_kind": self._new_source_kind,
+            "source_duration_ms": self._new_source_duration_ms,
+        }
+        if self._new_display_name is not None:
+            updates["display_name"] = self._new_display_name
+        self._model.update_layer(self._layer_id, **updates)
 
     def undo(self) -> None:
-        self._model.update_layer(
-            self._layer_id,
-            asset_id=self._old_asset_id,
-            asset_path=self._old_asset_path,
-        )
-
-
-class ChangeAudioSourceCommand(QUndoCommand):
-    """Change the composition audio source."""
-
-    def __init__(
-        self,
-        model: CompositionModel,
-        new_asset_id: str | None,
-        new_path: Path | None = None,
-        parent: QUndoCommand | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._model = model
-        self._new_asset_id = new_asset_id
-        self._new_path = new_path
-        self._old_asset_id = model.audio_source_asset_id
-        self._old_path = model.audio_source_path
-        self.setText("Change audio source")
-
-    def redo(self) -> None:
-        self._model.audio_source_asset_id = self._new_asset_id
-        self._model.audio_source_path = self._new_path
-
-    def undo(self) -> None:
-        self._model.audio_source_asset_id = self._old_asset_id
-        self._model.audio_source_path = self._old_path
+        updates: dict[str, Any] = {
+            "asset_id": self._old_asset_id,
+            "asset_path": self._old_asset_path,
+            "display_name": self._old_display_name,
+            "source_kind": self._old_source_kind,
+            "source_duration_ms": self._old_source_duration_ms,
+        }
+        self._model.update_layer(self._layer_id, **updates)
 
 
 class ApplyPresetCommand(QUndoCommand):

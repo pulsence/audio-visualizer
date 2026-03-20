@@ -157,6 +157,10 @@ class NavigationSidebar(QWidget):
         """
         return self._list.currentRow()
 
+    def refresh_theme(self) -> None:
+        """Re-apply styles after a theme change."""
+        self._apply_styles()
+
     # ------------------------------------------------------------------
     # Internal slots
     # ------------------------------------------------------------------
@@ -188,12 +192,10 @@ class NavigationSidebar(QWidget):
                 border-bottom: 1px solid palette(mid);
             }
             #navigationList::item:pressed {
-                border-left: 3px solid palette(highlight);
             }
             #navigationList::item:selected {
                 background-color: palette(highlight);
                 color: palette(highlighted-text);
-                border-left: 3px solid palette(highlight);
             }
             """
         )

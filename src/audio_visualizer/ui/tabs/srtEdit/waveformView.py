@@ -107,6 +107,19 @@ class WaveformView(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def has_regions(self) -> bool:
+        """Return True if subtitle regions are currently displayed."""
+        return len(self._regions) > 0
+
+    def clear_regions(self) -> None:
+        """Remove all subtitle regions from the waveform."""
+        for region in self._regions:
+            self._plot_widget.removeItem(region)
+        self._regions.clear()
+        if self._highlight_region is not None:
+            self._plot_widget.removeItem(self._highlight_region)
+            self._highlight_region = None
+
     def set_loading_message(self, message: str) -> None:
         """Show a loading message overlay, hiding the plot widget."""
         self._overlay_label.setText(message)
@@ -309,9 +322,13 @@ class WaveformView(QWidget):
         super().keyPressEvent(event)
 
     def eventFilter(self, obj, event):
-        """Intercept Ctrl+wheel on the plot viewport for horizontal panning."""
+        """Intercept wheel on the plot viewport: normal = pan, Ctrl = zoom (pyqtgraph default)."""
         if obj is self._plot_widget.viewport() and event.type() == event.Type.Wheel:
             if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                # Let pyqtgraph handle zoom
+                return False
+            else:
+                # Horizontal pan
                 delta = event.angleDelta().y()
                 vb = self._plot_widget.plotItem.vb
                 lo, hi = vb.viewRange()[0]
@@ -327,8 +344,11 @@ class WaveformView(QWidget):
         return super().eventFilter(obj, event)
 
     def wheelEvent(self, event) -> None:
-        """Ctrl+wheel: horizontal panning. Normal wheel: zoom (default)."""
+        """Normal wheel: horizontal pan. Ctrl+wheel: zoom (default)."""
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Let default handle zoom
+            super().wheelEvent(event)
+        else:
             # Horizontal pan
             delta = event.angleDelta().y()
             vb = self._plot_widget.plotItem.vb
@@ -337,5 +357,3 @@ class WaveformView(QWidget):
             shift = visible * 0.1 * (-1 if delta > 0 else 1)
             vb.setXRange(lo + shift, hi + shift, padding=0)
             event.accept()
-        else:
-            super().wheelEvent(event)

@@ -127,6 +127,7 @@ class SrtEditTab(BaseTab):
         self._lint_issues: list[LintIssue] = []
         self._refreshing_asset_combos = False
         self._waveform_request_id: int = 0
+        self._pending_highlight_row: int | None = None
 
         self._build_ui()
         self._connect_signals()
@@ -367,6 +368,10 @@ class SrtEditTab(BaseTab):
         self._audio_combo.addItem(os.path.basename(path), path)
         self._audio_combo.blockSignals(False)
 
+        # Clear existing regions and pending highlight before reload
+        self._pending_highlight_row = None
+        self._waveform_view.clear_regions()
+
         # Show loading indicator and launch background waveform load
         self._waveform_request_id += 1
         request_id = self._waveform_request_id
@@ -388,10 +393,22 @@ class SrtEditTab(BaseTab):
             return  # Stale result — user selected a newer file
         self._waveform_view.load_waveform(samples, sr)
 
+        # Re-apply subtitle regions if document has entries
+        if self._document.entries:
+            self._waveform_view.set_regions(self._document.entries)
+
+        # Replay pending or current highlight
+        if self._pending_highlight_row is not None:
+            self._waveform_view.highlight_region(self._pending_highlight_row)
+            self._pending_highlight_row = None
+        elif self._table_view.currentIndex().isValid():
+            self._waveform_view.highlight_region(self._table_view.currentIndex().row())
+
     def _on_waveform_load_failed(self, error_message: str, request_id: int) -> None:
         """Handle failed waveform load on the UI thread."""
         if request_id != self._waveform_request_id:
             return  # Stale result
+        self._pending_highlight_row = None
         logger.error("Failed to load waveform: %s", error_message)
         self._waveform_view.set_error_message("Failed to load waveform")
 
@@ -433,6 +450,8 @@ class SrtEditTab(BaseTab):
 
         self._table_model.refresh()
         self._waveform_view.set_regions(self._document.entries)
+        if self._table_view.currentIndex().isValid():
+            self._waveform_view.highlight_region(self._table_view.currentIndex().row())
         self._clear_undo_stack()
         logger.info("Subtitle loaded: %s (%d entries)", path, len(self._document.entries))
         self.settings_changed.emit()
@@ -560,6 +579,9 @@ class SrtEditTab(BaseTab):
     def _on_table_selection_changed(self) -> None:
         row = self._selected_row()
         if row >= 0:
+            if not self._waveform_view.has_regions():
+                self._pending_highlight_row = row
+                return
             self._waveform_view.highlight_region(row)
 
     def _on_inline_edit(self, row: int, col: int, value: object) -> None:

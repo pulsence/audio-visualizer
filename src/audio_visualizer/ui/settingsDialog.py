@@ -24,9 +24,9 @@ from PySide6.QtWidgets import (
 logger = logging.getLogger(__name__)
 
 _THEME_OPTIONS = [
-    ("off", "Off (Light)"),
-    ("on", "On (Dark)"),
-    ("auto", "Auto (System)"),
+    ("off", "Light"),
+    ("on", "Dark"),
+    ("auto", "Auto"),
 ]
 
 

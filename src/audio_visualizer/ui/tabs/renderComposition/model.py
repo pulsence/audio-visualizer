@@ -21,14 +21,6 @@ logger = logging.getLogger(__name__)
 # Constants
 # ------------------------------------------------------------------
 
-VALID_LAYER_TYPES: tuple[str, ...] = (
-    "background",
-    "visualizer",
-    "caption_overlay",
-    "subtitle_direct",
-    "custom",
-)
-
 VALID_BEHAVIORS: tuple[str, ...] = (
     "freeze_last_frame",
     "hide",
@@ -83,8 +75,10 @@ class CompositionLayer:
         Reference to a SessionAsset id, or None for unassigned layers.
     asset_path : Path | None
         Direct file path (used when asset_id is None).
-    layer_type : str
-        One of :data:`VALID_LAYER_TYPES`.
+    source_kind : str
+        One of ``""``, ``"image"``, ``"video"``.
+    source_duration_ms : int
+        Duration of the source media in milliseconds (0 for images/unknown).
     x, y : int
         Top-left position in output coordinates.
     width, height : int
@@ -107,7 +101,8 @@ class CompositionLayer:
     display_name: str = ""
     asset_id: str | None = None
     asset_path: Path | None = None
-    layer_type: str = "custom"
+    source_kind: str = ""  # "", "image", "video"
+    source_duration_ms: int = 0
     x: int = 0
     y: int = 0
     width: int = 1920
@@ -122,6 +117,10 @@ class CompositionLayer:
     def __post_init__(self) -> None:
         if not self.id:
             self.id = str(uuid.uuid4())
+
+    def effective_duration_ms(self) -> int:
+        """Return ``max(0, end_ms - start_ms)``."""
+        return max(0, self.end_ms - self.start_ms)
 
 
 # ------------------------------------------------------------------
@@ -159,11 +158,22 @@ class CompositionAudioLayer:
     start_ms: int = 0
     duration_ms: int = 0  # 0 means full length
     use_full_length: bool = True
+    source_duration_ms: int = 0
     enabled: bool = True
 
     def __post_init__(self) -> None:
         if not self.id:
             self.id = str(uuid.uuid4())
+
+    def effective_duration_ms(self) -> int:
+        """Return the effective duration: source duration when full length, else duration_ms."""
+        if self.use_full_length:
+            return self.source_duration_ms
+        return self.duration_ms
+
+    def effective_end_ms(self) -> int:
+        """Return start_ms + effective_duration_ms()."""
+        return self.start_ms + self.effective_duration_ms()
 
 
 # ------------------------------------------------------------------
@@ -180,8 +190,6 @@ class CompositionModel:
     def __init__(self) -> None:
         self.layers: list[CompositionLayer] = []
         self.audio_layers: list[CompositionAudioLayer] = []
-        self.audio_source_asset_id: str | None = None
-        self.audio_source_path: Path | None = None
         self.output_width: int = 1920
         self.output_height: int = 1080
         self.output_fps: float = 30.0
@@ -255,22 +263,11 @@ class CompositionModel:
         max_ms = 0
         for layer in self.layers:
             if layer.enabled:
-                max_ms = max(max_ms, layer.end_ms)
+                max_ms = max(max_ms, layer.start_ms + layer.effective_duration_ms())
         for al in self.audio_layers:
             if al.enabled:
-                if not al.use_full_length and al.duration_ms > 0:
-                    end = al.start_ms + al.duration_ms
-                else:
-                    end = al.start_ms
-                max_ms = max(max_ms, end)
-        if max_ms > 0:
-            return max_ms
-        # Fallback: if no enabled layers or audio layers contributed,
-        # check if any enabled video layers exist.
-        enabled = [l for l in self.layers if l.enabled]
-        if enabled:
-            return max(l.end_ms for l in enabled)
-        return 0
+                max_ms = max(max_ms, al.effective_end_ms())
+        return max_ms
 
     def get_layers_sorted(self) -> list[CompositionLayer]:
         """Return layers sorted by z_order (lowest first)."""
@@ -287,7 +284,8 @@ class CompositionModel:
                 "display_name": layer.display_name,
                 "asset_id": layer.asset_id,
                 "asset_path": str(layer.asset_path) if layer.asset_path else None,
-                "layer_type": layer.layer_type,
+                "source_kind": layer.source_kind,
+                "source_duration_ms": layer.source_duration_ms,
                 "x": layer.x,
                 "y": layer.y,
                 "width": layer.width,
@@ -311,15 +309,13 @@ class CompositionModel:
                 "start_ms": al.start_ms,
                 "duration_ms": al.duration_ms,
                 "use_full_length": al.use_full_length,
+                "source_duration_ms": al.source_duration_ms,
                 "enabled": al.enabled,
             })
 
         return {
             "layers": layers_out,
             "audio_layers": audio_layers_out,
-            # Keep legacy fields for backward compat
-            "audio_source_asset_id": self.audio_source_asset_id,
-            "audio_source_path": str(self.audio_source_path) if self.audio_source_path else None,
             "output_width": self.output_width,
             "output_height": self.output_height,
             "output_fps": self.output_fps,
@@ -330,9 +326,6 @@ class CompositionModel:
     def from_dict(cls, data: dict[str, Any]) -> CompositionModel:
         """Restore a model from a dictionary produced by :meth:`to_dict`."""
         model = cls()
-        model.audio_source_asset_id = data.get("audio_source_asset_id")
-        audio_path = data.get("audio_source_path")
-        model.audio_source_path = Path(audio_path) if audio_path else None
         model.output_width = data.get("output_width", 1920)
         model.output_height = data.get("output_height", 1080)
         model.output_fps = data.get("output_fps", 30.0)
@@ -345,7 +338,8 @@ class CompositionModel:
                 display_name=layer_dict.get("display_name", ""),
                 asset_id=layer_dict.get("asset_id"),
                 asset_path=Path(asset_path) if asset_path else None,
-                layer_type=layer_dict.get("layer_type", "custom"),
+                source_kind=layer_dict.get("source_kind", ""),
+                source_duration_ms=layer_dict.get("source_duration_ms", 0),
                 x=layer_dict.get("x", 0),
                 y=layer_dict.get("y", 0),
                 width=layer_dict.get("width", 1920),
@@ -359,7 +353,6 @@ class CompositionModel:
             )
             model.layers.append(layer)
 
-        # Load new audio layers
         for al_dict in data.get("audio_layers", []):
             ap = al_dict.get("asset_path")
             al = CompositionAudioLayer(
@@ -370,17 +363,9 @@ class CompositionModel:
                 start_ms=al_dict.get("start_ms", 0),
                 duration_ms=al_dict.get("duration_ms", 0),
                 use_full_length=al_dict.get("use_full_length", True),
+                source_duration_ms=al_dict.get("source_duration_ms", 0),
                 enabled=al_dict.get("enabled", True),
             )
             model.audio_layers.append(al)
-
-        # Backward compat: migrate single audio source to audio layer
-        if not model.audio_layers and (model.audio_source_asset_id or model.audio_source_path):
-            legacy_layer = CompositionAudioLayer(
-                display_name="Audio Source",
-                asset_id=model.audio_source_asset_id,
-                asset_path=model.audio_source_path,
-            )
-            model.audio_layers.append(legacy_layer)
 
         return model

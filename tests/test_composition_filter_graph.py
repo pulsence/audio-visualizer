@@ -36,7 +36,6 @@ class TestBuildFilterGraph:
         model.output_fps = 30.0
         model.add_layer(CompositionLayer(
             display_name="BG",
-            layer_type="background",
             asset_path=Path("/tmp/bg.mp4"),
             width=1920, height=1080,
             z_order=0, end_ms=5000,
@@ -53,14 +52,12 @@ class TestBuildFilterGraph:
         model.output_height = 1080
         model.add_layer(CompositionLayer(
             display_name="BG",
-            layer_type="background",
             asset_path=Path("/tmp/bg.mp4"),
             width=1920, height=1080,
             z_order=0, end_ms=5000,
         ))
         model.add_layer(CompositionLayer(
             display_name="Overlay",
-            layer_type="visualizer",
             asset_path=Path("/tmp/overlay.mp4"),
             x=100, y=100, width=800, height=600,
             z_order=1, end_ms=5000,
@@ -274,12 +271,16 @@ class TestBuildFFmpegCommand:
 
     def test_audio_source_included(self):
         model = CompositionModel()
-        model.audio_source_path = Path("/tmp/audio.mp3")
         model.add_layer(CompositionLayer(
             display_name="BG",
             asset_path=Path("/tmp/bg.mp4"),
             width=1920, height=1080,
             end_ms=5000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Audio",
+            asset_path=Path("/tmp/audio.mp3"),
+            enabled=True,
         ))
         cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
         assert str(Path("/tmp/audio.mp3")) in cmd
@@ -356,7 +357,11 @@ class TestBuildPreviewCommand:
     def test_preview_command_no_audio(self):
         """Preview commands should not include audio codec flags."""
         model = CompositionModel()
-        model.audio_source_path = Path("/tmp/audio.mp3")
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Audio",
+            asset_path=Path("/tmp/audio.mp3"),
+            enabled=True,
+        ))
         model.add_layer(CompositionLayer(
             display_name="BG",
             asset_path=Path("/tmp/bg.mp4"),
@@ -527,36 +532,3 @@ class TestAudioLayersInFFmpegCommand:
         # Should not have audio codec since no valid audio layer
         assert "-c:a" not in cmd
 
-    def test_legacy_audio_source_still_works(self):
-        """When no audio_layers, the legacy audio_source_path is used."""
-        model = CompositionModel()
-        model.audio_source_path = Path("/tmp/legacy_audio.mp3")
-        model.add_layer(CompositionLayer(
-            display_name="BG",
-            asset_path=Path("/tmp/bg.mp4"),
-            width=1920, height=1080,
-            end_ms=5000,
-        ))
-        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
-        assert str(Path("/tmp/legacy_audio.mp3")) in cmd
-        assert "-c:a" in cmd
-
-    def test_audio_layers_take_precedence_over_legacy(self):
-        """When audio_layers exist, they are used instead of legacy audio_source."""
-        model = CompositionModel()
-        model.audio_source_path = Path("/tmp/legacy.mp3")
-        model.add_layer(CompositionLayer(
-            display_name="BG",
-            asset_path=Path("/tmp/bg.mp4"),
-            width=1920, height=1080,
-            end_ms=5000,
-        ))
-        model.audio_layers.append(CompositionAudioLayer(
-            display_name="New Audio",
-            asset_path=Path("/tmp/new_audio.mp3"),
-            enabled=True,
-        ))
-        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
-        assert str(Path("/tmp/new_audio.mp3")) in cmd
-        # Legacy audio should not be included as a separate input
-        assert str(Path("/tmp/legacy.mp3")) not in cmd

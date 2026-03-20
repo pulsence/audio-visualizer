@@ -19,13 +19,11 @@ from audio_visualizer.ui.tabs.renderComposition.model import (
     RESOLUTION_PRESET_LABELS,
     RESOLUTION_PRESETS,
     VALID_BEHAVIORS,
-    VALID_LAYER_TYPES,
 )
 from audio_visualizer.ui.tabs.renderComposition.commands import (
     AddAudioLayerCommand,
     AddLayerCommand,
     ApplyPresetCommand,
-    ChangeAudioSourceCommand,
     ChangeSourceCommand,
     EditAudioLayerCommand,
     MoveLayerCommand,
@@ -35,7 +33,7 @@ from audio_visualizer.ui.tabs.renderComposition.commands import (
     ResizeLayerCommand,
 )
 from audio_visualizer.ui.tabs.renderComposition.presets import (
-    PRESET_NAMES,
+    BUILTIN_PRESET_NAMES,
     get_preset,
 )
 
@@ -78,7 +76,7 @@ class TestRenderCompositionTabSettings:
         settings = tab.collect_settings()
         model_data = settings["model"]
         assert "layers" in model_data
-        assert "audio_source_asset_id" in model_data
+        assert "audio_layers" in model_data
         assert "output_width" in model_data
         assert "output_height" in model_data
         assert "output_fps" in model_data
@@ -89,7 +87,6 @@ class TestRenderCompositionTabSettings:
         # Add a layer through the model and set output settings
         tab._model.add_layer(CompositionLayer(
             display_name="Test BG",
-            layer_type="background",
             x=0, y=0, width=1920, height=1080,
             z_order=0, start_ms=0, end_ms=10000,
         ))
@@ -109,7 +106,6 @@ class TestRenderCompositionTabSettings:
         assert restored["model"]["output_fps"] == 24.0
         assert len(restored["model"]["layers"]) == 1
         assert restored["model"]["layers"][0]["display_name"] == "Test BG"
-        assert restored["model"]["layers"][0]["layer_type"] == "background"
 
     def test_apply_settings_output_path(self):
         tab = RenderCompositionTab()
@@ -134,7 +130,6 @@ class TestRenderCompositionTabValidation:
         tab = RenderCompositionTab()
         tab._model.add_layer(CompositionLayer(
             display_name="Empty",
-            layer_type="custom",
         ))
         valid, msg = tab.validate_settings()
         assert valid is False
@@ -144,7 +139,6 @@ class TestRenderCompositionTabValidation:
         tab = RenderCompositionTab()
         tab._model.add_layer(CompositionLayer(
             display_name="BG",
-            layer_type="background",
             asset_path=Path("/tmp/test.mp4"),
         ))
         valid, msg = tab.validate_settings()
@@ -230,9 +224,8 @@ class TestCompositionModel:
         model = CompositionModel()
         layer = CompositionLayer(display_name="Update")
         model.add_layer(layer)
-        model.update_layer(layer.id, display_name="Updated", layer_type="background")
+        model.update_layer(layer.id, display_name="Updated")
         assert layer.display_name == "Updated"
-        assert layer.layer_type == "background"
 
     def test_get_duration_ms(self):
         model = CompositionModel()
@@ -258,11 +251,8 @@ class TestCompositionModel:
         model.output_width = 1280
         model.output_height = 720
         model.output_fps = 24.0
-        model.audio_source_asset_id = "audio-123"
-        model.audio_source_path = Path("/tmp/audio.mp3")
         model.add_layer(CompositionLayer(
             display_name="BG",
-            layer_type="background",
             asset_path=Path("/tmp/bg.mp4"),
             x=10, y=20, width=1280, height=720,
             z_order=0, start_ms=0, end_ms=5000,
@@ -275,12 +265,9 @@ class TestCompositionModel:
         assert restored.output_width == 1280
         assert restored.output_height == 720
         assert restored.output_fps == 24.0
-        assert restored.audio_source_asset_id == "audio-123"
-        assert restored.audio_source_path == Path("/tmp/audio.mp3")
         assert len(restored.layers) == 1
         layer = restored.layers[0]
         assert layer.display_name == "BG"
-        assert layer.layer_type == "background"
         assert layer.asset_path == Path("/tmp/bg.mp4")
         assert layer.x == 10
         assert layer.y == 20
@@ -403,29 +390,13 @@ class TestUndoCommands:
         assert layer.asset_id is None
         assert layer.asset_path is None
 
-    def test_change_audio_source_command(self):
-        model = CompositionModel()
-
-        cmd = ChangeAudioSourceCommand(
-            model,
-            new_asset_id="audio-1",
-            new_path=Path("/tmp/audio.mp3"),
-        )
-        cmd.redo()
-        assert model.audio_source_asset_id == "audio-1"
-        assert model.audio_source_path == Path("/tmp/audio.mp3")
-
-        cmd.undo()
-        assert model.audio_source_asset_id is None
-        assert model.audio_source_path is None
-
     def test_apply_preset_command(self):
         model = CompositionModel()
         model.add_layer(CompositionLayer(display_name="Original"))
 
         preset_layers = [
-            CompositionLayer(display_name="Preset BG", layer_type="background"),
-            CompositionLayer(display_name="Preset Viz", layer_type="visualizer"),
+            CompositionLayer(display_name="Preset BG"),
+            CompositionLayer(display_name="Preset Viz"),
         ]
 
         cmd = ApplyPresetCommand(model, preset_layers, "test_preset")
@@ -464,19 +435,19 @@ class TestUndoCommands:
 
 class TestPresets:
     def test_all_presets_available(self):
-        assert "fullscreen_bg_centered_viz" in PRESET_NAMES
-        assert "fullscreen_bg_bottom_captions" in PRESET_NAMES
-        assert "pip_overlay" in PRESET_NAMES
+        assert "fullscreen_bg_centered_viz" in BUILTIN_PRESET_NAMES
+        assert "fullscreen_bg_bottom_captions" in BUILTIN_PRESET_NAMES
+        assert "pip_overlay" in BUILTIN_PRESET_NAMES
 
     def test_fullscreen_bg_centered_viz(self):
         layers = get_preset("fullscreen_bg_centered_viz", 1920, 1080)
         assert len(layers) == 2
         bg = layers[0]
         viz = layers[1]
-        assert bg.layer_type == "background"
+        assert bg.display_name == "Background"
         assert bg.width == 1920
         assert bg.height == 1080
-        assert viz.layer_type == "visualizer"
+        assert viz.display_name == "Visualizer"
         # Visualizer should be centered and smaller
         assert viz.width < 1920
         assert viz.height < 1080
@@ -488,8 +459,8 @@ class TestPresets:
         assert len(layers) == 2
         bg = layers[0]
         cap = layers[1]
-        assert bg.layer_type == "background"
-        assert cap.layer_type == "caption_overlay"
+        assert bg.display_name == "Background"
+        assert cap.display_name == "Captions"
         # Captions should be at the bottom
         assert cap.y > 0
         assert cap.width == 1920
@@ -500,8 +471,8 @@ class TestPresets:
         assert len(layers) == 2
         bg = layers[0]
         pip = layers[1]
-        assert bg.layer_type == "background"
-        assert pip.layer_type == "visualizer"
+        assert bg.display_name == "Background"
+        assert pip.display_name == "PiP Visualizer"
         # PiP should be small and in corner
         assert pip.width < 1920 // 2
         assert pip.height < 1080 // 2
@@ -537,7 +508,6 @@ class TestDirectFileSourceHandling:
         tab = RenderCompositionTab()
         layer = CompositionLayer(
             display_name="BG",
-            layer_type="background",
             asset_path=Path("/tmp/my_background.mp4"),
         )
         tab._model.add_layer(layer)
@@ -617,16 +587,19 @@ class TestDirectFileSourceHandling:
                 asset_path=Path("/tmp/bg_from_settings.mp4"),
             )
         )
-        model.audio_source_path = Path("/tmp/audio_from_settings.wav")
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Audio",
+            asset_path=Path("/tmp/audio_from_settings.wav"),
+            enabled=True,
+        ))
 
         tab.apply_settings({"model": model.to_dict()})
 
         source_texts = [tab._source_combo.itemText(i) for i in range(tab._source_combo.count())]
 
         assert any("bg_from_settings.mp4" in text for text in source_texts)
-        # Audio layers are now shown in the unified layer list, not a separate combo
-        # Legacy audio_source_path migrates to an audio layer in model.from_dict
-        assert len(tab._model.audio_layers) >= 1
+        # Audio layers are shown in the unified layer list
+        assert len(tab._model.audio_layers) == 1
 
     def test_output_path_gets_mp4_extension(self):
         """Output path without extension gets .mp4 appended."""
@@ -1018,13 +991,11 @@ class TestTimelineIntegration:
         tab = RenderCompositionTab()
         tab._model.add_layer(CompositionLayer(
             display_name="BG",
-            layer_type="background",
             start_ms=0,
             end_ms=5000,
         ))
         tab._model.add_layer(CompositionLayer(
             display_name="Viz",
-            layer_type="visualizer",
             start_ms=1000,
             end_ms=8000,
         ))
@@ -1140,7 +1111,6 @@ class TestTimelineIntegration:
         tab = RenderCompositionTab()
         tab._model.add_layer(CompositionLayer(
             display_name="Visual",
-            layer_type="background",
             start_ms=0,
             end_ms=5000,
         ))
@@ -1245,23 +1215,18 @@ class TestCompositionModelAudioLayers:
         assert model.audio_layers[1].id == "al-2"
         assert model.audio_layers[1].enabled is False
 
-    def test_from_dict_backward_compat_migrates_single_audio(self):
-        """Legacy data with audio_source_path but no audio_layers gets migrated."""
+    def test_from_dict_ignores_legacy_audio_source_fields(self):
+        """Legacy audio_source_path/audio_source_asset_id fields are ignored."""
         data = {
             "audio_source_asset_id": "audio-legacy",
             "audio_source_path": "/tmp/legacy_audio.mp3",
         }
         model = CompositionModel.from_dict(data)
-        assert len(model.audio_layers) == 1
-        assert model.audio_layers[0].display_name == "Audio Source"
-        assert model.audio_layers[0].asset_id == "audio-legacy"
-        assert model.audio_layers[0].asset_path == Path("/tmp/legacy_audio.mp3")
+        assert len(model.audio_layers) == 0
 
-    def test_from_dict_no_migration_when_audio_layers_present(self):
-        """If audio_layers are present, legacy fields are not migrated."""
+    def test_from_dict_audio_layers_present(self):
+        """audio_layers in data are restored correctly."""
         data = {
-            "audio_source_asset_id": "audio-old",
-            "audio_source_path": "/tmp/old.mp3",
             "audio_layers": [
                 {"id": "al-1", "display_name": "New Track", "asset_path": "/tmp/new.mp3"},
             ],
@@ -1463,7 +1428,7 @@ class TestAudioLayerListUI:
         """Audio controls exist as part of the unified layer list and settings stack."""
         tab = RenderCompositionTab()
         assert hasattr(tab, "_layer_list")  # unified list
-        assert hasattr(tab, "_add_audio_btn")
+        assert hasattr(tab, "_add_asset_btn")
         assert hasattr(tab, "_audio_start_spin")
         assert hasattr(tab, "_audio_duration_spin")
         assert hasattr(tab, "_audio_full_length_cb")
@@ -1471,14 +1436,20 @@ class TestAudioLayerListUI:
 
     def test_add_audio_layer_updates_unified_list(self):
         tab = RenderCompositionTab()
-        tab._on_add_audio_layer()
+        al = CompositionAudioLayer(display_name="Test Audio")
+        cmd = AddAudioLayerCommand(tab._model, al)
+        tab._push_command(cmd)
+        tab._refresh_layer_list()
         assert len(tab._model.audio_layers) == 1
         # Audio layer appears in the unified list after visual layers
         assert tab._layer_list.count() == 1  # no visual layers, 1 audio
 
     def test_remove_audio_layer_from_unified_list(self):
         tab = RenderCompositionTab()
-        tab._on_add_audio_layer()
+        al = CompositionAudioLayer(display_name="Test Audio")
+        cmd = AddAudioLayerCommand(tab._model, al)
+        tab._push_command(cmd)
+        tab._refresh_layer_list()
         assert tab._layer_list.count() == 1
 
         # Select the audio layer row (first and only item)

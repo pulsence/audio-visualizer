@@ -28,13 +28,15 @@ _SNAP_THRESHOLD_MS = 200
 class TimelineItem:
     """Represents a single item on the timeline."""
     def __init__(self, item_id: str, display_name: str, start_ms: int,
-                 end_ms: int, track_type: str = "visual", enabled: bool = True):
+                 end_ms: int, track_type: str = "visual", enabled: bool = True,
+                 source_duration_ms: int = 0):
         self.item_id = item_id
         self.display_name = display_name
         self.start_ms = start_ms
         self.end_ms = end_ms
         self.track_type = track_type  # "visual" or "audio"
         self.enabled = enabled
+        self.source_duration_ms = source_duration_ms
 
 
 class TimelineWidget(QWidget):
@@ -53,6 +55,8 @@ class TimelineWidget(QWidget):
     item_selected = Signal(str)
     item_moved = Signal(str, int, int)
     item_trimmed = Signal(str, str, int)
+    scroll_state_changed = Signal(int, int, int, int)
+    playhead_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -64,6 +68,8 @@ class TimelineWidget(QWidget):
         self._duration_ms: int = 10000  # default 10 seconds
         self._pixels_per_ms: float = 0.1
         self._scroll_offset: int = 0
+
+        self._playhead_ms: int = 0
 
         # Snap guide state
         self._snap_line_x: float | None = None
@@ -87,6 +93,11 @@ class TimelineWidget(QWidget):
         self._selected_id = item_id
         self.update()
 
+    def set_playhead_ms(self, ms: int) -> None:
+        """Set the playhead position in milliseconds."""
+        self._playhead_ms = max(0, ms)
+        self.update()
+
     def _recalc_duration(self) -> None:
         """Recalculate duration from items."""
         if self._items:
@@ -96,6 +107,7 @@ class TimelineWidget(QWidget):
             )
         else:
             self._duration_ms = 10000
+        self._clamp_scroll()
 
     def _snap_value(self, ms: int, exclude_id: str) -> int:
         """Return *ms* snapped to the nearest start/end edge of another item.
@@ -117,19 +129,51 @@ class TimelineWidget(QWidget):
             return closest
         return ms
 
+    # ------------------------------------------------------------------
+    # Scroll / zoom API
+    # ------------------------------------------------------------------
+
+    def set_scroll_offset(self, ms: int) -> None:
+        self._scroll_offset = max(0, ms)
+        self._emit_scroll_state()
+        self.update()
+
+    def scroll_offset(self) -> int:
+        return self._scroll_offset
+
+    def set_pixels_per_ms(self, value: float) -> None:
+        self._pixels_per_ms = max(0.02, min(2.0, value))
+        self._clamp_scroll()
+        self._emit_scroll_state()
+        self.update()
+
+    def pixels_per_ms(self) -> float:
+        return self._pixels_per_ms
+
+    def _visible_duration_ms(self) -> int:
+        available = self.width() - _HEADER_WIDTH
+        if self._pixels_per_ms <= 0:
+            return self._duration_ms
+        return int(available / self._pixels_per_ms)
+
+    def _clamp_scroll(self) -> None:
+        max_offset = max(0, self._duration_ms - self._visible_duration_ms())
+        self._scroll_offset = max(0, min(self._scroll_offset, max_offset))
+
+    def _emit_scroll_state(self) -> None:
+        visible = self._visible_duration_ms()
+        max_val = max(0, self._duration_ms - visible)
+        self.scroll_state_changed.emit(0, max_val, visible, self._scroll_offset)
+
     def _ms_to_x(self, ms: int) -> float:
         """Convert milliseconds to pixel X coordinate."""
-        available_width = self.width() - _HEADER_WIDTH
-        if self._duration_ms <= 0:
-            return _HEADER_WIDTH
-        return _HEADER_WIDTH + (ms / self._duration_ms) * available_width
+        return _HEADER_WIDTH + (ms - self._scroll_offset) * self._pixels_per_ms
 
     def _x_to_ms(self, x: float) -> int:
         """Convert pixel X coordinate to milliseconds."""
-        available_width = self.width() - _HEADER_WIDTH
-        if available_width <= 0:
+        if self._pixels_per_ms <= 0:
             return 0
-        ms = int(((x - _HEADER_WIDTH) / available_width) * self._duration_ms)
+        ms = int((x - _HEADER_WIDTH) / self._pixels_per_ms) + self._scroll_offset
         return max(0, ms)
 
     def paintEvent(self, event) -> None:
@@ -177,6 +221,14 @@ class TimelineWidget(QWidget):
             painter.drawLine(int(self._snap_line_x), 0,
                              int(self._snap_line_x), self.height())
 
+        # Draw playhead
+        playhead_x = self._ms_to_x(self._playhead_ms)
+        if _HEADER_WIDTH <= playhead_x <= self.width():
+            playhead_pen = QPen(QColor(255, 0, 0))
+            playhead_pen.setWidth(2)
+            painter.setPen(playhead_pen)
+            painter.drawLine(int(playhead_x), 0, int(playhead_x), self.height())
+
         painter.end()
 
     def _draw_ruler(self, painter: QPainter) -> None:
@@ -214,6 +266,24 @@ class TimelineWidget(QWidget):
         painter.setPen(QPen(QColor(255, 255, 255)))
         text_rect = rect.adjusted(4, 0, -4, 0)
         painter.drawText(text_rect.toRect(), Qt.AlignmentFlag.AlignVCenter, item.display_name)
+
+        # Draw loop markers (grey dashed lines at source duration boundaries)
+        if item.source_duration_ms > 0:
+            span = item.end_ms - item.start_ms
+            if span > item.source_duration_ms:
+                loop_pen = QPen(QColor(160, 160, 160, 200))
+                loop_pen.setStyle(Qt.PenStyle.DashLine)
+                loop_pen.setWidth(1)
+                painter.setPen(loop_pen)
+                n = 1
+                while True:
+                    boundary_ms = item.start_ms + n * item.source_duration_ms
+                    if boundary_ms >= item.end_ms:
+                        break
+                    bx = self._ms_to_x(boundary_ms)
+                    if rect.left() < bx < rect.right():
+                        painter.drawLine(int(bx), int(rect.top()), int(bx), int(rect.bottom()))
+                    n += 1
 
         # Draw trim handles
         if item.item_id == self._selected_id:
@@ -254,6 +324,10 @@ class TimelineWidget(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(event)
+
+        # Update playhead on any left click
+        self._playhead_ms = self._x_to_ms(event.position().x())
+        self.playhead_changed.emit(self._playhead_ms)
 
         item, hit_type = self._item_at(event.position().x(), event.position().y())
         if item is not None:
@@ -362,3 +436,33 @@ class TimelineWidget(QWidget):
         self._drag_mode = ""
         self._snap_line_x = None
         self.update()
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        delta = event.angleDelta().y()
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Zoom around mouse position
+            mouse_ms = self._x_to_ms(event.position().x())
+            factor = 1.2 if delta > 0 else 1 / 1.2
+            new_ppm = max(0.02, min(2.0, self._pixels_per_ms * factor))
+            # Anchor: keep mouse_ms at the same pixel
+            mouse_px = event.position().x() - _HEADER_WIDTH
+            new_offset = int(mouse_ms - mouse_px / new_ppm)
+            self._pixels_per_ms = new_ppm
+            self._scroll_offset = max(0, new_offset)
+            self._clamp_scroll()
+            self._emit_scroll_state()
+            self.update()
+        else:
+            # Pan
+            visible = self._visible_duration_ms()
+            shift = int(visible * 0.1) * (-1 if delta > 0 else 1)
+            self._scroll_offset = max(0, self._scroll_offset + shift)
+            self._clamp_scroll()
+            self._emit_scroll_state()
+            self.update()
+        event.accept()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._clamp_scroll()
+        self._emit_scroll_state()

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -66,6 +67,23 @@ class AssetsTab(BaseTab):
         )
         assets_layout.addWidget(self._asset_table)
 
+        btn_row = QHBoxLayout()
+
+        self._remove_from_session_btn = QPushButton("Remove from Session")
+        self._remove_from_session_btn.clicked.connect(self._on_remove_from_session)
+        btn_row.addWidget(self._remove_from_session_btn)
+
+        self._delete_from_disk_btn = QPushButton("Delete from Disk")
+        self._delete_from_disk_btn.clicked.connect(self._on_delete_from_disk)
+        btn_row.addWidget(self._delete_from_disk_btn)
+
+        self._load_project_folder_btn = QPushButton("Load from Project Folder")
+        self._load_project_folder_btn.clicked.connect(self._on_load_from_project_folder)
+        btn_row.addWidget(self._load_project_folder_btn)
+
+        btn_row.addStretch()
+        assets_layout.addLayout(btn_row)
+
         assets_group.setLayout(assets_layout)
         layout.addWidget(assets_group, stretch=2)
 
@@ -108,7 +126,9 @@ class AssetsTab(BaseTab):
         assets = ctx.list_assets()
         self._asset_table.setRowCount(len(assets))
         for row, asset in enumerate(assets):
-            self._asset_table.setItem(row, 0, QTableWidgetItem(asset.display_name))
+            name_item = QTableWidgetItem(asset.display_name)
+            name_item.setData(Qt.ItemDataRole.UserRole, asset.id)
+            self._asset_table.setItem(row, 0, name_item)
             self._asset_table.setItem(row, 1, QTableWidgetItem(asset.category))
             self._asset_table.setItem(row, 2, QTableWidgetItem(asset.role or ""))
             self._asset_table.setItem(row, 3, QTableWidgetItem(asset.source_tab or ""))
@@ -123,6 +143,83 @@ class AssetsTab(BaseTab):
             self._asset_table.setItem(row, 8, QTableWidgetItem(
                 "Yes" if asset.has_audio else ("No" if asset.has_audio is False else "")
             ))
+
+    # -- Selection helpers --
+
+    def _selected_asset_ids(self) -> list[str]:
+        """Return asset IDs for all selected rows."""
+        ids = []
+        for row in sorted(set(idx.row() for idx in self._asset_table.selectedIndexes())):
+            item = self._asset_table.item(row, 0)
+            if item is not None:
+                asset_id = item.data(Qt.ItemDataRole.UserRole)
+                if asset_id:
+                    ids.append(asset_id)
+        return ids
+
+    # -- Asset action handlers --
+
+    def _on_remove_from_session(self) -> None:
+        """Remove selected assets from the session (keep files on disk)."""
+        asset_ids = self._selected_asset_ids()
+        if not asset_ids:
+            return
+        ctx = self.workspace_context
+        if ctx is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Remove from Session",
+            f"Remove {len(asset_ids)} asset(s) from the session?\n"
+            "Files will remain on disk.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        for asset_id in asset_ids:
+            ctx.remove_asset(asset_id)
+
+    def _on_delete_from_disk(self) -> None:
+        """Delete selected assets from disk and remove from session."""
+        asset_ids = self._selected_asset_ids()
+        if not asset_ids:
+            return
+        ctx = self.workspace_context
+        if ctx is None:
+            return
+        answer = QMessageBox.warning(
+            self,
+            "Delete from Disk",
+            f"Permanently delete {len(asset_ids)} asset(s) from disk?\n"
+            "This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        for asset_id in asset_ids:
+            asset = ctx.get_asset(asset_id)
+            if asset is not None:
+                try:
+                    asset.path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Could not delete file: %s", asset.path)
+            ctx.remove_asset(asset_id)
+
+    def _on_load_from_project_folder(self) -> None:
+        """Load/reload assets from the configured project folder."""
+        ctx = self.workspace_context
+        if ctx is None:
+            return
+        folder = ctx.project_folder
+        if not folder:
+            QMessageBox.information(
+                self,
+                "No Project Folder",
+                "No project folder is configured.\n"
+                "Set one in Settings > Project Folder.",
+            )
+            return
+        ctx.import_asset_folder(folder, source_tab="assets")
 
     # -- Import handlers --
 

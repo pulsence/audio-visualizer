@@ -54,6 +54,7 @@ class TestCaptionAnimateTabSettings:
             "styling",
             "layout",
             "animation",
+            "input_audio_path",
             "mux_audio",
             "audio_reactive",
         }
@@ -290,8 +291,8 @@ class TestCaptionAnimateTabWorkspaceContext:
             source_tab="audio_visualizer",
         ))
 
-        assert tab._session_audio_combo.count() == 2
-        assert tab._session_audio_combo.itemText(1) == "music.mp3"
+        assert tab._input_session_audio_combo.count() == 2
+        assert tab._input_session_audio_combo.itemText(1) == "music.mp3"
 
     def test_render_defaults_to_project_folder_when_output_dir_blank(self, tmp_path, monkeypatch):
         main_window = _FakeCaptionMainWindow()

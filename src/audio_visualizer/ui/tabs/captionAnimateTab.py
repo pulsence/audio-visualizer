@@ -196,6 +196,24 @@ class CaptionAnimateTab(BaseTab):
         out_row.addWidget(self._output_browse_btn)
         layout.addLayout(out_row)
 
+        # Input audio row
+        audio_row = QHBoxLayout()
+        audio_row.addWidget(QLabel("Input audio:"))
+        self._input_audio_edit = QLineEdit()
+        self._input_audio_edit.setPlaceholderText("Select audio for mux/reactive analysis")
+        audio_row.addWidget(self._input_audio_edit)
+
+        self._input_audio_browse_btn = QPushButton("Browse...")
+        self._input_audio_browse_btn.clicked.connect(self._browse_input_audio)
+        audio_row.addWidget(self._input_audio_browse_btn)
+
+        self._input_session_audio_combo = QComboBox()
+        self._input_session_audio_combo.addItem("(none)")
+        self._input_session_audio_combo.currentIndexChanged.connect(self._on_input_session_audio_changed)
+        audio_row.addWidget(self._input_session_audio_combo)
+
+        layout.addLayout(audio_row)
+
         group.setLayout(layout)
         return group
 
@@ -538,26 +556,8 @@ class CaptionAnimateTab(BaseTab):
         self._audio_reactive_group = group
         layout = QVBoxLayout()
 
-        audio_row = QHBoxLayout()
-        audio_row.addWidget(QLabel("Audio file:"))
-        self._audio_file_edit = QLineEdit()
-        self._audio_file_edit.setPlaceholderText("Select audio for reactive analysis")
-        audio_row.addWidget(self._audio_file_edit)
-        self._audio_browse_btn = QPushButton("Browse...")
-        self._audio_browse_btn.clicked.connect(self._browse_audio_file)
-        audio_row.addWidget(self._audio_browse_btn)
-        layout.addLayout(audio_row)
-
-        # Session audio assets
-        session_audio_row = QHBoxLayout()
-        session_audio_row.addWidget(QLabel("Session audio:"))
-        self._session_audio_combo = QComboBox()
-        self._session_audio_combo.addItem("(none)")
-        self._session_audio_combo.currentIndexChanged.connect(
-            self._on_session_audio_changed
-        )
-        session_audio_row.addWidget(self._session_audio_combo)
-        layout.addLayout(session_audio_row)
+        info_label = QLabel("Uses the Input audio file from the Input / Output panel above.")
+        layout.addWidget(info_label)
 
         group.setLayout(layout)
         return group
@@ -1001,16 +1001,29 @@ class CaptionAnimateTab(BaseTab):
         if path:
             self._font_file_edit.setText(path)
 
-    def _browse_audio_file(self) -> None:
-        path = self._pick_session_or_file(
-            "audio",
-            "Select Audio File",
-            _AUDIO_FILTERS,
-            current_path=self._audio_file_edit.text(),
-            selected_asset_path=self._session_asset_path(self._session_audio_combo),
+    def _browse_input_audio(self) -> None:
+        """Browse for input audio file."""
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+        start_dir = resolve_browse_directory(
+            self._input_audio_edit.text(),
+            self.workspace_context,
         )
-        if path is not None:
-            self._audio_file_edit.setText(str(path))
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Audio File", start_dir,
+            "Audio files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.wma);;All files (*)",
+        )
+        if path:
+            self._input_audio_edit.setText(path)
+
+    def _on_input_session_audio_changed(self, index: int) -> None:
+        """Populate input audio from session audio selection."""
+        if index <= 0:
+            return
+        data = self._input_session_audio_combo.currentData()
+        if data and self.workspace_context:
+            asset = self.workspace_context.get_asset(data)
+            if asset:
+                self._input_audio_edit.setText(str(asset.path))
 
     def _pick_session_or_file(
         self,
@@ -1068,16 +1081,16 @@ class CaptionAnimateTab(BaseTab):
         self._session_subtitle_combo.blockSignals(False)
 
         # Audio assets
-        current_audio = self._session_audio_combo.currentText()
-        self._session_audio_combo.blockSignals(True)
-        self._session_audio_combo.clear()
-        self._session_audio_combo.addItem("(none)")
+        current_audio = self._input_session_audio_combo.currentText()
+        self._input_session_audio_combo.blockSignals(True)
+        self._input_session_audio_combo.clear()
+        self._input_session_audio_combo.addItem("(none)")
         for asset in ctx.list_assets(category="audio"):
-            self._session_audio_combo.addItem(asset.display_name, asset.id)
-        idx = self._session_audio_combo.findText(current_audio)
+            self._input_session_audio_combo.addItem(asset.display_name, asset.id)
+        idx = self._input_session_audio_combo.findText(current_audio)
         if idx >= 0:
-            self._session_audio_combo.setCurrentIndex(idx)
-        self._session_audio_combo.blockSignals(False)
+            self._input_session_audio_combo.setCurrentIndex(idx)
+        self._input_session_audio_combo.blockSignals(False)
 
     def _on_session_subtitle_changed(self, index: int) -> None:
         asset_id = self._session_subtitle_combo.currentData()
@@ -1086,14 +1099,6 @@ class CaptionAnimateTab(BaseTab):
         asset = self.workspace_context.get_asset(asset_id)
         if asset:
             self._subtitle_edit.setText(str(asset.path))
-
-    def _on_session_audio_changed(self, index: int) -> None:
-        asset_id = self._session_audio_combo.currentData()
-        if not asset_id or not self.workspace_context:
-            return
-        asset = self.workspace_context.get_asset(asset_id)
-        if asset:
-            self._audio_file_edit.setText(str(asset.path))
 
     # ------------------------------------------------------------------
     # Preview
@@ -1176,8 +1181,8 @@ class CaptionAnimateTab(BaseTab):
         preset_override = self._collect_preset_config()
 
         audio_path = None
-        if self._audio_file_edit.text().strip():
-            audio_path = Path(self._audio_file_edit.text().strip())
+        if self._input_audio_edit.text().strip():
+            audio_path = Path(self._input_audio_edit.text().strip())
 
         spec = CaptionRenderJobSpec(
             subtitle_path=subtitle_path,
@@ -1303,8 +1308,8 @@ class CaptionAnimateTab(BaseTab):
 
         # Determine audio path for muxing or audio-reactive features
         audio_path = None
-        if self._audio_file_edit.text().strip():
-            audio_path = Path(self._audio_file_edit.text().strip())
+        if self._input_audio_edit.text().strip():
+            audio_path = Path(self._input_audio_edit.text().strip())
         delivery_audio_path = audio_path if self._mux_audio_cb.isChecked() else None
 
         spec = CaptionRenderJobSpec(
@@ -1516,7 +1521,7 @@ class CaptionAnimateTab(BaseTab):
         p = Path(sub_path)
         if p.suffix.lower() not in (".srt", ".ass"):
             return False, "Subtitle file must be .srt or .ass."
-        if self._mux_audio_cb.isChecked() and not self._audio_file_edit.text().strip():
+        if self._mux_audio_cb.isChecked() and not self._input_audio_edit.text().strip():
             return False, "Select an audio file before enabling delivery audio mux."
         return True, ""
 
@@ -1574,17 +1579,23 @@ class CaptionAnimateTab(BaseTab):
                     for k, ctrl in self._anim_param_controls.items()
                 },
             },
+            "input_audio_path": self._input_audio_edit.text(),
             "mux_audio": self._mux_audio_cb.isChecked(),
             "audio_reactive": {
                 "enabled": self._audio_reactive_group.isChecked(),
-                "audio_path": self._audio_file_edit.text(),
-                "session_audio": self._session_audio_combo.currentText(),
+                "audio_path": self._input_audio_edit.text(),
+                "session_audio": self._input_session_audio_combo.currentText(),
             },
         }
 
     def apply_settings(self, data: dict[str, Any]) -> None:
         self._subtitle_edit.setText(data.get("subtitle_path", ""))
         self._output_dir_edit.setText(data.get("output_dir", ""))
+
+        # Input audio path
+        audio_path = data.get("input_audio_path", "")
+        if audio_path:
+            self._input_audio_edit.setText(audio_path)
 
         # Session subtitle
         session_sub = data.get("session_subtitle", "(none)")
@@ -1692,12 +1703,16 @@ class CaptionAnimateTab(BaseTab):
         # Audio-reactive
         ar = data.get("audio_reactive", {})
         self._audio_reactive_group.setChecked(ar.get("enabled", False))
-        self._audio_file_edit.setText(ar.get("audio_path", ""))
+        # Backward compat: if no top-level input_audio_path, fall back to ar.audio_path
+        if not data.get("input_audio_path"):
+            ar_audio = ar.get("audio_path", "")
+            if ar_audio:
+                self._input_audio_edit.setText(ar_audio)
         self._mux_audio_cb.setChecked(data.get("mux_audio", False))
         session_audio = ar.get("session_audio", "(none)")
-        idx = self._session_audio_combo.findText(session_audio)
+        idx = self._input_session_audio_combo.findText(session_audio)
         if idx >= 0:
-            self._session_audio_combo.setCurrentIndex(idx)
+            self._input_session_audio_combo.setCurrentIndex(idx)
 
     # ------------------------------------------------------------------
     # Global busy

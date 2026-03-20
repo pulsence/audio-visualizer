@@ -1,6 +1,6 @@
 # UI Architecture
 
-This document describes the Phase 10 UI shell: lazy tab startup, shared session state, browse-path defaults, and the main cross-tab workflows.
+This document describes the UI shell (through Phase 11): lazy tab startup, shared session state, browse-path defaults, theming, scroll/zoom behaviour, and the main cross-tab workflows.
 
 ## Shell Layout
 
@@ -26,8 +26,8 @@ Only `AudioVisualizerTab` is instantiated during startup. The remaining tabs are
 Startup work is split so theme and shell state are ready before heavy tabs import their large dependencies.
 
 1. `MainWindow` loads the last saved settings file once.
-2. The saved app theme is applied immediately (fresh installs default to `auto` — system theme preference — rather than light mode).
-3. The shell widgets are created.
+2. The saved app theme is applied immediately (fresh installs default to `auto` — system theme preference — rather than light mode). Theme dropdown labels are "Light", "Dark", and "Auto". Light mode now uses an explicit `build_light_palette()` instead of `standardPalette()`. `refresh_theme()` is called on theme change to update the entire widget tree.
+3. The shell widgets are created. Navigation sidebar selected items no longer use a `border-left` indicator.
 4. The eager Audio Visualizer tab is instantiated.
 5. Heavy tabs remain placeholders until first use.
 6. Full settings are replayed, with per-tab settings queued for still-lazy tabs.
@@ -89,7 +89,7 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 
 `AudioVisualizerTab` still owns the legacy visualizer-specific view registry.
 
-- `GeneralSettingsView` handles input/output file paths and now receives workspace context so project-folder defaults apply there too. The video output path field auto-appends `.mp4` on focus-out when no extension is present.
+- `GeneralSettingsView` handles input/output file paths and now receives workspace context so project-folder defaults apply there too. The video output path field auto-appends `.mp4` using `setAcceptMode(AcceptSave)` + `setDefaultSuffix("mp4")` + a shared `_normalize_video_output_path()` helper.
 - `GeneralVisualizerView` and the chroma force views use clickable swatches for color selection.
 - Per-band chroma force controls use tabbed 12-band editors instead of a single pipe-delimited text field.
 - Live preview remains a debounced 5-second render driven from the shared render pool.

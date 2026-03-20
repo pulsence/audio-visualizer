@@ -44,6 +44,17 @@ from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
 from .generalView import View
 from audio_visualizer.ui.views.general.utilities import Fonts
 
+
+def _normalize_video_output_path(text: str) -> str:
+    """Normalize video output path: ensure .mp4 suffix if no extension."""
+    text = text.strip()
+    if not text:
+        return ""
+    _, ext = os.path.splitext(text)
+    if not ext:
+        return text + ".mp4"
+    return text
+
 class GeneralSettings:
     video_width = 0
     video_height = 0
@@ -94,9 +105,10 @@ class GeneralSettingsView(View):
         self.video_file_button = QPushButton("Select Video File")
         self.video_file_dialog = QFileDialog()
         self.video_file_dialog.setWindowTitle("Select Video File")
-        self.video_file_dialog.setFileMode(QFileDialog.FileMode.AnyFile)
+        self.video_file_dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        self.video_file_dialog.setDefaultSuffix("mp4")
         self.video_file_dialog.setNameFilter("Video Files (*.mp4)")
-        self.video_file_dialog.fileSelected.connect(self.video_file_path.setText)
+        self.video_file_dialog.fileSelected.connect(self._on_video_file_selected)
         self.video_file_button.clicked.connect(self._on_video_file_button_clicked)
         self.video_file_path.editingFinished.connect(self._on_video_path_editing_finished)
         video_file_row.addWidget(self.video_file_button)
@@ -157,10 +169,14 @@ class GeneralSettingsView(View):
         self.video_file_dialog.setDirectory(initial_dir)
         self.video_file_dialog.open()
 
+    def _on_video_file_selected(self, path: str) -> None:
+        """Handle video file dialog selection with normalization."""
+        self.video_file_path.setText(_normalize_video_output_path(path))
+
     def _on_video_path_editing_finished(self):
-        text = self.video_file_path.text().strip()
-        if text and not os.path.splitext(text)[1]:
-            self.video_file_path.setText(text + ".mp4")
+        normalized = _normalize_video_output_path(self.video_file_path.text())
+        if normalized != self.video_file_path.text():
+            self.video_file_path.setText(normalized)
 
     '''
     Verifies that the input values in the view are valide.
@@ -210,6 +226,10 @@ class GeneralSettingsView(View):
                 self.last_error = "CRF must be between 0 and 51."
                 return False
         
+        video_path = _normalize_video_output_path(self.video_file_path.text())
+        if video_path != self.video_file_path.text():
+            self.video_file_path.setText(video_path)
+
         ext = os.path.splitext(self.video_file_path.text())[1]
         if ext == '':
             self.video_file_path.setText(self.video_file_path.text() + ".mp4")

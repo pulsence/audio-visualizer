@@ -29,25 +29,12 @@ def build_filter_graph(model: CompositionModel) -> str:
     Only enabled layers with a source (asset_path or asset_id) are
     included.  Layers are processed in z_order, each scaled and
     overlaid at its specified position.
-
-    Parameters
-    ----------
-    model : CompositionModel
-        The composition model containing layer definitions.
-
-    Returns
-    -------
-    str
-        The filter_complex string for FFmpeg.
     """
     layers = _get_renderable_layers(model)
     if not layers:
         return ""
 
     filters: list[str] = []
-    # Input indices: 0 is always the first layer's input.
-    # Additional inputs follow in layer order.
-    # We build a chain: scale input -> overlay onto canvas/previous result.
 
     # Create a base canvas with the output resolution
     canvas_label = "canvas"
@@ -61,7 +48,6 @@ def build_filter_graph(model: CompositionModel) -> str:
     for i, (input_idx, layer) in enumerate(layers):
         stream_label = f"in{input_idx}"
         scaled_label = f"scaled{i}"
-        timeline_label = f"tl{i}"
         overlay_label = f"ovr{i}"
 
         layer_filters: list[str] = []
@@ -103,7 +89,6 @@ def build_filter_graph(model: CompositionModel) -> str:
         )
         current_label = overlay_label
 
-    # Final output label
     filter_str = ";\n".join(filters)
     return filter_str
 
@@ -113,31 +98,16 @@ def build_preview_command(
     timestamp_s: float,
     output_path: str | Path,
 ) -> list[str]:
-    """Build an FFmpeg command to extract a single preview frame.
-
-    Parameters
-    ----------
-    model : CompositionModel
-        The composition model.
-    timestamp_s : float
-        The timestamp (in seconds) at which to extract the frame.
-    output_path : str | Path
-        Destination path for the preview image (PNG recommended).
-
-    Returns
-    -------
-    list[str]
-        The FFmpeg command as a list of arguments.
-    """
+    """Build an FFmpeg command to extract a single preview frame."""
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     cmd: list[str] = [ffmpeg, "-y"]
 
     layers = _get_renderable_layers(model)
 
-    for _input_idx, layer in layers:
+    for input_idx, layer in layers:
         path = _resolve_layer_path(layer)
         if path:
-            cmd.extend(["-i", str(path)])
+            _add_visual_input(cmd, layer, model)
 
     filter_str = build_filter_graph(model)
     if filter_str:
@@ -154,67 +124,66 @@ def build_preview_command(
     return cmd
 
 
+def build_single_layer_preview_command(
+    model: CompositionModel,
+    layer: CompositionLayer,
+    timestamp_s: float,
+    output_path: str | Path,
+) -> list[str]:
+    """Build an FFmpeg command to preview a single layer at a timestamp."""
+    single_model = CompositionModel()
+    single_model.output_width = model.output_width
+    single_model.output_height = model.output_height
+    single_model.output_fps = model.output_fps
+
+    import copy
+    single_layer = copy.deepcopy(layer)
+    single_layer.x = 0
+    single_layer.y = 0
+    single_layer.width = model.output_width
+    single_layer.height = model.output_height
+    single_model.layers.append(single_layer)
+
+    return build_preview_command(single_model, timestamp_s, output_path)
+
+
 def build_ffmpeg_command(
     model: CompositionModel,
     output_path: str | Path,
     extra_args: list[str] | None = None,
 ) -> list[str]:
-    """Build a complete FFmpeg command from *model*.
-
-    Parameters
-    ----------
-    model : CompositionModel
-        The composition model.
-    output_path : str | Path
-        Destination file path.
-    extra_args : list[str] | None
-        Additional FFmpeg arguments to insert before the output.
-
-    Returns
-    -------
-    list[str]
-        The FFmpeg command as a list of arguments.
-    """
+    """Build a complete FFmpeg command from *model*."""
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     cmd: list[str] = [ffmpeg, "-y"]
 
     layers = _get_renderable_layers(model)
 
-    # Add input files for each layer
+    # Add input files for each visual layer
     for _input_idx, layer in layers:
-        path = _resolve_layer_path(layer)
-        if path:
-            cmd.extend(["-i", str(path)])
+        _add_visual_input(cmd, layer, model)
 
     # Add audio layer inputs
     audio_layers = _get_audio_layers(model)
     audio_input_indices: list[int] = []
     for al in audio_layers:
         audio_input_indices.append(len(layers) + len(audio_input_indices))
-        cmd.extend(["-i", str(al.asset_path)])
+        _add_audio_input(cmd, al)
 
-    # Fallback: legacy single audio source (if no audio layers matched)
-    audio_input_idx: int | None = None
-    if not audio_input_indices:
-        audio_path = _resolve_audio_path(model)
-        if audio_path:
-            audio_input_idx = len(layers)
-            cmd.extend(["-i", str(audio_path)])
-
-    has_audio = bool(audio_input_indices) or audio_input_idx is not None
+    has_audio = bool(audio_input_indices)
 
     # Build filter graph
     filter_str = build_filter_graph(model)
 
-    # Build audio mixing filter if multiple audio layers
+    # Build audio mixing filter
     if len(audio_input_indices) > 1:
         audio_filters: list[str] = []
         audio_labels: list[str] = []
         for i, (input_idx, al) in enumerate(zip(audio_input_indices, audio_layers)):
             label = f"aud{i}"
             parts: list[str] = []
-            if not al.use_full_length and al.duration_ms > 0:
-                dur_s = al.duration_ms / 1000.0
+            eff_dur = al.effective_duration_ms()
+            if eff_dur > 0:
+                dur_s = eff_dur / 1000.0
                 parts.append(f"atrim=duration={dur_s}")
             if al.start_ms > 0:
                 delay_ms = al.start_ms
@@ -241,12 +210,12 @@ def build_ffmpeg_command(
             cmd.extend(["-map", f"[{last_label}]"])
         cmd.extend(["-map", f"[{mix_label}]"])
     elif len(audio_input_indices) == 1:
-        # Single audio layer -- apply trim/delay if needed
         al = audio_layers[0]
         input_idx = audio_input_indices[0]
         parts_single: list[str] = []
-        if not al.use_full_length and al.duration_ms > 0:
-            dur_s = al.duration_ms / 1000.0
+        eff_dur = al.effective_duration_ms()
+        if eff_dur > 0:
+            dur_s = eff_dur / 1000.0
             parts_single.append(f"atrim=duration={dur_s}")
         if al.start_ms > 0:
             delay_ms = al.start_ms
@@ -265,7 +234,6 @@ def build_ffmpeg_command(
                 cmd.extend(["-map", f"[{last_label}]"])
             cmd.extend(["-map", f"[{single_label}]"])
         else:
-            # No trim/delay needed, simple map
             if filter_str:
                 cmd.extend(["-filter_complex", filter_str])
                 if layers:
@@ -273,14 +241,11 @@ def build_ffmpeg_command(
                     cmd.extend(["-map", f"[{last_label}]"])
             cmd.extend(["-map", f"{input_idx}:a?"])
     else:
-        # No audio layers -- use legacy audio path or no audio
         if filter_str:
             cmd.extend(["-filter_complex", filter_str])
             if layers:
                 last_label = f"ovr{len(layers) - 1}"
                 cmd.extend(["-map", f"[{last_label}]"])
-        if audio_input_idx is not None:
-            cmd.extend(["-map", f"{audio_input_idx}:a?"])
 
     # Output settings
     duration_s = _duration_seconds(model)
@@ -340,9 +305,27 @@ def _get_audio_layers(model: CompositionModel) -> list[CompositionAudioLayer]:
     return result
 
 
-def _resolve_audio_path(model: CompositionModel) -> Path | None:
-    """Return the audio source path, or None."""
-    return model.audio_source_path
+def _add_visual_input(cmd: list[str], layer: CompositionLayer, model: CompositionModel) -> None:
+    """Add input arguments for a visual layer, with looping if needed."""
+    path = _resolve_layer_path(layer)
+    if not path:
+        return
+    requested = layer.effective_duration_ms()
+    if (layer.source_kind == "video"
+            and layer.source_duration_ms > 0
+            and requested > layer.source_duration_ms):
+        cmd.extend(["-stream_loop", "-1", "-i", str(path)])
+    else:
+        cmd.extend(["-i", str(path)])
+
+
+def _add_audio_input(cmd: list[str], al: CompositionAudioLayer) -> None:
+    """Add input arguments for an audio layer, with looping if needed."""
+    eff_dur = al.effective_duration_ms()
+    if al.source_duration_ms > 0 and eff_dur > al.source_duration_ms:
+        cmd.extend(["-stream_loop", "-1", "-i", str(al.asset_path)])
+    else:
+        cmd.extend(["-i", str(al.asset_path)])
 
 
 def _duration_seconds(model: CompositionModel) -> float:
@@ -362,7 +345,6 @@ def _build_matte_filter(layer: CompositionLayer) -> str:
         return ""
 
     key_target = settings.get("key_target", "#00FF00")
-    # Convert hex color to FFmpeg color format
     color = key_target.lstrip("#")
     if len(color) == 6:
         color = f"0x{color}"
@@ -382,7 +364,6 @@ def _build_matte_filter(layer: CompositionLayer) -> str:
     else:
         return ""
 
-    # Cleanup filters
     erode = settings.get("erode", 0)
     dilate = settings.get("dilate", 0)
     feather = settings.get("feather", 0)
@@ -394,11 +375,9 @@ def _build_matte_filter(layer: CompositionLayer) -> str:
     if feather > 0:
         parts.append(f"gblur=sigma={feather}")
 
-    # Despill (approximate with hue shift)
     if settings.get("despill", False) and mode in ("colorkey", "chromakey"):
         parts.append("despill=type=green")
 
-    # Invert alpha
     if settings.get("invert", False):
         parts.append("negate=negate_alpha=1")
 
@@ -407,7 +386,6 @@ def _build_matte_filter(layer: CompositionLayer) -> str:
 
 def _build_timeline_filter(layer: CompositionLayer, model: CompositionModel) -> str:
     """Build trim + setpts filter for layer timeline."""
-    # If the layer has a non-zero start, offset it
     if layer.start_ms > 0:
         start_s = layer.start_ms / 1000.0
         return f"setpts=PTS-STARTPTS+{start_s}/TB"
@@ -418,9 +396,7 @@ def _build_behavior_filter(layer: CompositionLayer, model: CompositionModel) -> 
     """Build filter for behavior_after_end."""
     behavior = layer.behavior_after_end
     if behavior == "loop":
-        # Loop is handled via stream_loop in input, not filter
         return ""
-    # freeze_last_frame and hide are handled via enable expression
     return ""
 
 
@@ -438,7 +414,6 @@ def _build_enable_expr(layer: CompositionLayer) -> str:
     if end_s > 0:
         if layer.behavior_after_end == "hide":
             parts.append(f"lte(t,{end_s})")
-        # freeze_last_frame and loop don't need an end constraint
 
     if not parts:
         return ""

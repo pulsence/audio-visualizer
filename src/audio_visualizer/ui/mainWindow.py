@@ -736,12 +736,33 @@ class MainWindow(QMainWindow):
         elif mode == "on":
             prefers_dark = True
 
+        def build_light_palette() -> QPalette:
+            palette = QPalette()
+            palette.setColor(QPalette.ColorRole.Window, QColor(240, 240, 240))
+            palette.setColor(QPalette.ColorRole.WindowText, QColor(0, 0, 0))
+            palette.setColor(QPalette.ColorRole.Base, QColor(255, 255, 255))
+            palette.setColor(QPalette.ColorRole.AlternateBase, QColor(245, 245, 245))
+            palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 220))
+            palette.setColor(QPalette.ColorRole.ToolTipText, QColor(0, 0, 0))
+            palette.setColor(QPalette.ColorRole.Text, QColor(0, 0, 0))
+            palette.setColor(QPalette.ColorRole.Button, QColor(240, 240, 240))
+            palette.setColor(QPalette.ColorRole.ButtonText, QColor(0, 0, 0))
+            palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 0, 0))
+            palette.setColor(QPalette.ColorRole.Link, QColor(0, 102, 204))
+            palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 120, 215))
+            palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+            palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(120, 120, 120))
+            palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(120, 120, 120))
+            return palette
+
         if prefers_dark:
             app.setPalette(build_dark_palette())
-            return
+        else:
+            app.setStyleSheet("")
+            app.setPalette(build_light_palette())
 
-        app.setStyleSheet("")
-        app.setPalette(app.style().standardPalette())
+        if hasattr(self, '_sidebar') and self._sidebar:
+            self._sidebar.refresh_theme()
 
     # ------------------------------------------------------------------
     # Settings persistence (versioned schema)

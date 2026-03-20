@@ -32,9 +32,9 @@ class TestVideoPathMp4Append:
         view._on_video_path_editing_finished()
         assert view.video_file_path.text() == ""
 
-    def test_whitespace_only_path_unchanged(self):
+    def test_whitespace_only_path_normalized_to_empty(self):
         view = GeneralSettingsView()
         view.video_file_path.setText("   ")
         view._on_video_path_editing_finished()
-        # Whitespace-only is treated as empty — no .mp4 appended
-        assert view.video_file_path.text() == "   "
+        # Whitespace-only is stripped to empty — no .mp4 appended
+        assert view.video_file_path.text() == ""
