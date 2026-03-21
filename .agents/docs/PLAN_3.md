@@ -360,8 +360,8 @@ Important implementation rules:
 - [x] [PHASE_8.md](./plan_phases/PHASE_8.md) - User Debug - 1
 - [x] [PHASE_9.md](./plan_phases/PHASE_9.md) - User Debug - 2
 - [x] [PHASE_10.md](./plan_phases/PHASE_10.md) - User Debug - 3
-- [ ] [PHASE_11.md](./plan_phases/PHASE_11.md) - User Debug - 4
-- [ ] [PHASE_12.md](./plan_phases/PHASE_12.md) - Final Review
+- [x] [PHASE_11.md](./plan_phases/PHASE_11.md) - User Debug - 4
+- [x] [PHASE_12.md](./plan_phases/PHASE_12.md) - Final Review
 
 ---
 Implementation details for each phase live exclusively in the phase files above.
