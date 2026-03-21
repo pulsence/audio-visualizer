@@ -1,10 +1,10 @@
 # UI Architecture
 
-This document describes the UI shell (through Phase 11): lazy tab startup, shared session state, browse-path defaults, theming, scroll/zoom behaviour, and the main cross-tab workflows.
+This document describes the UI shell: lazy tab startup, shared session state, browse-path defaults, theming, scroll/zoom behavior, and the main cross-tab workflows.
 
 ## Shell Layout
 
-`MainWindow` now hosts a two-part shell:
+`MainWindow` hosts a multi-tab shell:
 
 - Left: `NavigationSidebar`
 - Right: `QStackedWidget` containing one eager tab and five lazy tabs

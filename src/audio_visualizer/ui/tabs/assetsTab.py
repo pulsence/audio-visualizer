@@ -285,8 +285,5 @@ class AssetsTab(BaseTab):
         }
 
     def apply_settings(self, data: dict[str, Any]) -> None:
-        self._imported_sources = data.get(
-            "imported_sources",
-            data.get("imported_roots", []),
-        )
+        self._imported_sources = data.get("imported_sources", [])
         self._update_imported_label()

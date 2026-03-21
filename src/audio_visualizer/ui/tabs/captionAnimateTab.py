@@ -59,10 +59,6 @@ _SUBTITLE_FILTERS = (
     "All files (*)"
 )
 
-_AUDIO_FILTERS = (
-    "Audio files (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.wma);;"
-    "All files (*)"
-)
 
 _FPS_OPTIONS = ["24", "25", "29.97", "30", "60"]
 

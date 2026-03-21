@@ -7,7 +7,6 @@ transcription worker.  Completed outputs are registered as SessionAssets.
 from __future__ import annotations
 
 import dataclasses
-import json
 import logging
 import threading
 import uuid

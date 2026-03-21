@@ -14,8 +14,46 @@ src/audio_visualizer/
     updater.py               # GitHub release update checker
     events.py                # Shared event protocol (AppEvent, AppEventEmitter, LoggingBridge)
     ui/
-        mainWindow.py        # MainWindow — primary application window
+        mainWindow.py        # MainWindow — thin multi-tab shell
+        navigationSidebar.py # NavigationSidebar — left-side tab switcher
+        workspaceContext.py  # WorkspaceContext, SessionAsset — cross-tab state
+        jobStatusWidget.py   # JobStatusWidget — global job progress/cancel bar
+        settingsDialog.py    # SettingsDialog — app theme and project folder
+        settingsSchema.py    # Settings schema helpers and version migration
+        sessionFilePicker.py # Shared browse-path resolution and session-aware chooser
+        mediaProbe.py        # FFprobe-based media metadata extraction
+        workflowRecipes.py   # Workflow recipe create/save/load/apply
         renderDialog.py      # RenderDialog — post-render playback dialog
+        widgets/
+            clickableColorSwatch.py  # Clickable color swatch for chroma views
+        tabs/
+            baseTab.py               # BaseTab — abstract tab contract
+            audioVisualizerTab.py    # AudioVisualizerTab — visualizer workflow
+            srtGenTab.py             # SrtGenTab — batch transcription
+            srtEditTab.py            # SrtEditTab — waveform-synced subtitle editor
+            captionAnimateTab.py     # CaptionAnimateTab — subtitle overlay rendering
+            renderCompositionTab.py  # RenderCompositionTab — layer-based compositor
+            assetsTab.py             # AssetsTab — session asset browser
+            srtEdit/
+                document.py          # SubtitleDocument, SubtitleEntry — in-memory model
+                parser.py            # SRT/ASS/VTT parsing via pysubs2
+                tableModel.py        # SubtitleTableModel for QTableView
+                waveformView.py      # WaveformView — pyqtgraph waveform display
+                commands.py          # Undoable subtitle edit commands
+                lint.py              # QA lint profiles and issue detection
+                resync.py            # Timing resync algorithms
+            renderComposition/
+                __init__.py
+                model.py             # CompositionLayer, CompositionAudioLayer, CompositionModel
+                commands.py          # Undoable composition commands
+                filterGraph.py       # FFmpeg filter_complex command builder
+                timelineWidget.py    # TimelineWidget — scroll/zoom/playhead timeline
+                presets.py           # Composition preset save/load/list
+        workers/
+            workerBridge.py          # WorkerBridge, WorkerSignals — Qt signal base
+            srtGenWorker.py          # SrtGenWorker — background transcription
+            captionRenderWorker.py   # CaptionRenderWorker — FFmpeg caption render
+            compositionWorker.py     # CompositionRenderWorker — FFmpeg composition render
         views/
             __init__.py      # Re-exports View, Fonts
             general/
@@ -118,7 +156,7 @@ See individual package documentation in the [architecture/packages](./architectu
 
 - [audio_visualizer](./architecture/packages/audio_visualizer.md) — Root package, version, entry points, dependency list.
 - [audio_visualizer.core](./architecture/packages/audio_visualizer.core.md) — Application bootstrap, logging, platform paths, update checker.
-- [audio_visualizer.ui](./architecture/packages/audio_visualizer.ui.md) — MainWindow, RenderDialog, render threading, settings persistence.
+- [audio_visualizer.ui](./architecture/packages/audio_visualizer.ui.md) — MainWindow shell, tabs, workers, shared infrastructure.
 - [audio_visualizer.ui.views](./architecture/packages/audio_visualizer.ui.views.md) — View base class and all visualizer-specific settings views.
 - [audio_visualizer.visualizers](./architecture/packages/audio_visualizer.visualizers.md) — Visualizer base class, data models, and all visualizer implementations.
 - [audio_visualizer.srt](./architecture/packages/audio_visualizer.srt.md) — Subtitle generation from media using faster-whisper.
@@ -130,14 +168,20 @@ Developer-focused architecture notes:
 
 - [Overview](./architecture/development/OVERVIEW.md) — System context, component diagram, data flow.
 - [Visualizers](./architecture/development/VISUALIZERS.md) — Visualizer lifecycle and adding new types.
-- [UI](./architecture/development/UI.md) — MainWindow layout, view mapping, settings persistence.
-- [Rendering](./architecture/development/RENDERING.md) — Threading model and video encoding pipeline.
+- [UI](./architecture/development/UI.md) — MainWindow layout, tab architecture, settings persistence.
+- [Rendering](./architecture/development/RENDERING.md) — Threading model, video pipeline, composition engine.
 - [Testing](./architecture/development/TESTING.md) — Test setup, existing tests, coverage gaps.
 
 ## Key Abstractions
 
 | Abstraction | Location | Purpose |
 |---|---|---|
+| `BaseTab` | `ui/tabs/baseTab.py` | Abstract base for all workflow tabs |
+| `WorkspaceContext` | `ui/workspaceContext.py` | Cross-tab asset registry and analysis cache |
+| `SessionAsset` | `ui/workspaceContext.py` | Shared media asset with metadata |
+| `WorkerBridge` | `ui/workers/workerBridge.py` | Qt signal base for background workers |
+| `CompositionModel` | `ui/tabs/renderComposition/model.py` | Layer/audio model for video composition |
+| `SubtitleDocument` | `ui/tabs/srtEdit/document.py` | In-memory subtitle editing model |
 | `Visualizer` | `visualizers/genericVisualizer.py` | Abstract base for all frame generators |
 | `View` | `ui/views/general/generalView.py` | Abstract base for all settings panels |
 | `AudioData` | `visualizers/utilities.py` | Audio loading, chunking, and analysis |
@@ -205,10 +249,19 @@ Subtitle file (.srt/.ass) → pysubs2.load() → SubtitleFile
 All stages emit AppEvent (STAGE, RENDER_START/PROGRESS/COMPLETE) via emitter.
 ```
 
+### Render Composition Pipeline
+
+```
+CompositionModel (visual layers + audio layers)
+    → filterGraph.build_composition_command() → FFmpeg filter_complex
+    → visual layers: scale, overlay, loop, trim, setpts per layer
+    → audio layers: adelay, atrim, stream_loop, amix
+    → CompositionRenderWorker → FFmpeg subprocess
+    → progress parsed from stderr → output MP4
+
+Preview uses the same filter graph helpers with timestamp-based seek.
+```
+
 ## View-to-Visualizer Mapping
 
-`MainWindow._VIEW_ATTRIBUTE_MAP` maps attribute names (e.g., `_volume_rectangle_view`) to `VisualizerOptions` enum values. When a visualizer type is selected in the dropdown, `MainWindow.__getattr__()` lazy-loads the corresponding View subclass, and `_create_visualizer()` instantiates the matching Visualizer subclass with the collected settings.
-
-## Phase 11 Changes
-
-Phase 11 simplified the composition model by removing `layer_type` in favour of extension-based `source_kind`, added `source_duration_ms` with looping support, unified Loaded Assets management, and aligned Render Composition timeline, preview, and final-render timing through shared FFmpeg helpers. It also consolidated Caption Animate audio input into one persisted field, added timeline scroll/zoom plus a playhead, and cleaned up theming (explicit `build_light_palette()`, `refresh_theme()`, "Light"/"Dark"/"Auto" labels). See the [UI](./architecture/development/UI.md), [Rendering](./architecture/development/RENDERING.md), and [Testing](./architecture/development/TESTING.md) development overviews for full details.
+`AudioVisualizerTab._VIEW_CLASS_REGISTRY` maps `VisualizerOptions` enum values to `(module_path, class_name)` pairs. When a visualizer type is selected, the tab lazy-loads the corresponding View subclass. `_create_visualizer()` instantiates the matching Visualizer subclass with the collected settings.

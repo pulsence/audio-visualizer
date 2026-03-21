@@ -125,7 +125,8 @@ class CompositionWorker(QRunnable):
         # Read stderr for progress
         stderr_lines: list[str] = []
         try:
-            assert self._process.stderr is not None
+            if self._process.stderr is None:
+                raise RuntimeError("FFmpeg process stderr is unavailable")
             for line in self._process.stderr:
                 if self._cancel_flag.is_set():
                     self._cleanup()

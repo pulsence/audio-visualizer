@@ -1,18 +1,21 @@
 # Overview
 This app turns any audio file into a video visualization. It was built for creating audiograms from spoken content, but works for music and general audio as well. The output video can be layered over images or footage in any editor.
 
-Starting with v0.6.0, Audio Visualizer also includes integrated subtitle generation (`audio_visualizer.srt`) and subtitle overlay rendering (`audio_visualizer.caption`) packages.
+Starting with v0.6.0, Audio Visualizer is a multi-tab workflow desktop app with six screens: Audio Visualizer, SRT Gen, SRT Edit, Caption Animate, Render Composition, and Assets. The app includes integrated subtitle generation (`audio_visualizer.srt`), subtitle editing with waveform sync, caption animation rendering (`audio_visualizer.caption`), and layer-based video composition.
 
 This project is provided as-is under the MIT License. It is maintained for personal use, but shared in case it helps others.
 
 ## Features
-- Render videos from audio with configurable FPS, size, codec, and colors.
-- Live preview panel in the main UI (toggleable).
-- Per-visualizer settings with saved project presets.
-- Volume and chroma (pitch class) visualizers, including "force" variants.
-- Built-in update check via Help menu.
-- Subtitle generation from audio/video using faster-whisper (`audio_visualizer.srt`).
-- Subtitle overlay rendering with animated effects (`audio_visualizer.caption`).
+- Multi-tab workflow with shared session assets across all screens.
+- Audio visualization rendering with 14 visualizer types, live preview, and configurable output.
+- Batch subtitle generation from audio/video using faster-whisper with word-level timing.
+- Waveform-synced subtitle editor with undo/redo, QA lint profiles, and resync tools.
+- Animated subtitle overlay rendering with preset-based styling and multiple quality tiers.
+- Layer-based video composition with timeline, drag-to-reorder, looping, keying, and audio mixing.
+- Workflow recipe system for reusable pipeline templates.
+- Session asset management with cross-tab file sharing.
+- Cancellable background jobs with global progress tracking.
+- Project save/load and auto-save on close.
 
 ## Feature Table
 | Area | Highlights |
@@ -22,9 +25,12 @@ This project is provided as-is under the MIT License. It is maintained for perso
 | Volume Visualizers | Rectangle, Circle, Smooth Line, Force Line |
 | Chroma Visualizers | Rectangle, Circle, Smooth Line, Lines, Force Rectangle/Circle/Line/Lines |
 | Combined | Volume + Chroma rectangle mode |
-| Projects | Save/load presets to JSON |
-| SRT Generation | Whisper-based transcription, word-level timing, multiple output formats |
-| Caption Rendering | Animated subtitle overlays, preset system, transparent video output |
+| Projects | Save/load project files, auto-save, workflow recipes |
+| SRT Generation | Whisper-based transcription, word-level timing, batch queue, multiple output formats |
+| SRT Editing | Waveform-synced editor, undo/redo, QA lint, resync (shift, stretch, FPS drift, silence snap) |
+| Caption Rendering | Animated subtitle overlays, preset system, transparent video output (H.264, ProRes 422 HQ, ProRes 4444) |
+| Render Composition | Layer-based compositor, timeline with scroll/zoom, audio mixing, looping, chroma/luma keying |
+| Assets | Session asset browser, cross-tab file sharing, project folder import |
 
 ## Visualizers
 Volume:
@@ -52,6 +58,7 @@ Combined:
 - librosa
 - PIL (Pillow)
 - PySide6
+- pyqtgraph
 - faster-whisper
 - python-docx
 - pysubs2

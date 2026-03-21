@@ -4,7 +4,7 @@ This document is the entry point for Claude/Codex agents working on Audio Visual
 
 ## Project Overview
 
-Desktop application for generating synchronized audio visualization videos. Users select an audio file, configure a visualizer type and rendering options, and produce an MP4 video with animated graphics driven by the audio's volume and chromatic content.
+Multi-tab desktop application for audio visualization, subtitle generation, subtitle editing, caption animation, and video composition. The app hosts six workflow screens: Audio Visualizer, SRT Gen, SRT Edit, Caption Animate, Render Composition, and Assets.
 
 - **Language:** Python >=3.13
 - **Entry:** `python -m audio_visualizer` or `audio-visualizer` script
@@ -34,7 +34,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the detailed package structure.
 
 - [audio_visualizer](./architecture/packages/audio_visualizer.md) — Root package, version, entry points.
 - [audio_visualizer.core](./architecture/packages/audio_visualizer.core.md) — Bootstrap, logging, paths, updater.
-- [audio_visualizer.ui](./architecture/packages/audio_visualizer.ui.md) — MainWindow, RenderDialog, threading.
+- [audio_visualizer.ui](./architecture/packages/audio_visualizer.ui.md) — MainWindow shell, tabs, workers, shared infrastructure.
 - [audio_visualizer.ui.views](./architecture/packages/audio_visualizer.ui.views.md) — View base class, settings views for all visualizer types.
 - [audio_visualizer.visualizers](./architecture/packages/audio_visualizer.visualizers.md) — Visualizer base class, AudioData, VideoData, all visualizer implementations.
 - [audio_visualizer.srt](./architecture/packages/audio_visualizer.srt.md) — Subtitle generation from media using faster-whisper.
@@ -44,8 +44,8 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the detailed package structure.
 
 - [Overview](./architecture/development/OVERVIEW.md) — System map and data flow.
 - [Visualizers](./architecture/development/VISUALIZERS.md) — Visualizer lifecycle and how to add new types.
-- [UI](./architecture/development/UI.md) — MainWindow layout, view mapping, settings persistence.
-- [Rendering](./architecture/development/RENDERING.md) — Threading model and video pipeline.
+- [UI](./architecture/development/UI.md) — MainWindow layout, tab architecture, settings persistence.
+- [Rendering](./architecture/development/RENDERING.md) — Threading model, video pipeline, composition engine.
 - [Testing](./architecture/development/TESTING.md) — Test setup, existing tests, coverage gaps.
 
 ## Developer Guides
@@ -80,10 +80,13 @@ Run the application and the test suite from the project `.venv`. If the virtuale
 - **Platform paths:** `app_paths.py` uses `LOCALAPPDATA` on Windows and XDG directories on Unix for config and data storage.
 - **Logging:** `app_logging.setup_logging()` writes to `{config_dir}/audio_visualizer.log` at INFO level.
 - **Update checking:** `updater.py` queries the GitHub Releases API. The repo can be overridden via the `AUDIO_VISUALIZER_REPO` environment variable.
-- **Rendering:** `MainWindow` uses a `QThreadPool` (max 1 thread) for render workers. A separate background thread pool handles update checks.
+- **Multi-tab shell:** `MainWindow` is a thin shell hosting six tabs via `QStackedWidget` with a `NavigationSidebar`. Only `AudioVisualizerTab` is instantiated at startup; the remaining five are lazy-loaded on first activation.
+- **Shared job pool:** `MainWindow.render_thread_pool` (`QThreadPool`, max 1) is shared across all tabs for heavy work. A separate background pool handles update checks and waveform loading.
+- **Cross-tab assets:** `WorkspaceContext` maintains a `SessionAsset` registry. Tab outputs are registered as assets; downstream tabs can pick them via `SessionFilePickerDialog`.
 - **Live preview:** A `QTimer` with 400ms debounce triggers 5-second preview renders when settings change.
-- **Settings persistence:** Settings are serialized as JSON. Auto-saved on close, auto-loaded on startup. Users can also save/load named project files.
-- **View-to-Visualizer mapping:** `MainWindow._VIEW_ATTRIBUTE_MAP` maps view attribute names to `VisualizerOptions` enum values for lazy-loading visualizer-specific UI panels.
+- **Settings persistence:** Settings are serialized as versioned JSON with `app`, `ui`, `tabs`, and `session` sections. Auto-saved on close, auto-loaded on startup. Users can also save/load named project files.
+- **Workflow recipes:** Reusable workflow templates stored as `.avrecipe.json` files. Recipes capture tab settings and asset role bindings without machine-local state.
+- **View-to-Visualizer mapping:** `AudioVisualizerTab._VIEW_CLASS_REGISTRY` maps `VisualizerOptions` enum values to module/class pairs for lazy-loading visualizer-specific UI panels.
 - **Shared event protocol:** `events.py` defines `AppEvent`, `AppEventEmitter`, and `LoggingBridge`. Both the `srt` and `caption` packages emit structured events (LOG, PROGRESS, STAGE, JOB_START/COMPLETE, RENDER_START/PROGRESS/COMPLETE, MODEL_LOAD) via optional emitter parameters, decoupling progress reporting from any specific UI.
 - **Lazy loading:** Both `srt` and `caption` packages use `__getattr__`-based lazy loading in their `__init__.py` files. Heavy dependencies (faster-whisper, pysubs2, Pillow) are only imported when first accessed.
 - **SRT transcription:** The `srt` package provides a 4-stage pipeline (audio conversion, transcription, chunking/formatting, output writing). Supports multiple output formats (SRT, VTT, ASS, TXT, JSON), word-level timestamps, silence-aware splitting, script alignment, correction SRT alignment, and optional speaker diarization via pyannote.audio.

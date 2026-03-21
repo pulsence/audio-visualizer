@@ -74,7 +74,7 @@ Modal settings dialog for app-level and session-level defaults.
 Left-side tab switcher that drives `QStackedWidget` tab display.
 
 - Shows all six tabs with labels and optional busy-state indicators.
-- Items are separated by horizontal rule dividers and use a left-border indicator for the selected tab.
+- Items use a highlight background for the selected tab with no border indicator.
 - Sidebar clicks trigger `_ensure_tab_instantiated()` for lazy tabs before switching.
 
 ## CaptionAnimateTab

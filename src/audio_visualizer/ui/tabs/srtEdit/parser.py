@@ -6,12 +6,8 @@ VTT formats using pysubs2.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 import pysubs2
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

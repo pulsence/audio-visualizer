@@ -169,12 +169,24 @@ Cross-package integration tests:
 - Shared events module works across packages
 - No import conflicts between packages
 
-## Phase 11 Test Updates
+## UI Tests
 
-- Tests updated to remove references to `VALID_LAYER_TYPES`, `ChangeAudioSourceCommand`, and `PRESET_NAMES`.
-- Legacy audio source migration tests removed.
-- Added Render Composition command-generation tests that verify real FFmpeg input labels, audio/video loop handling, and single-layer preview timing.
-- Added UI tests for audio full-length reset semantics, visual z-order ordering in the unified layer list, and Caption Animate audio-path/session-asset synchronization.
+Stage Three added dedicated test files for:
+
+- `test_ui_base_tab.py` — BaseTab contract and undo/redo helpers
+- `test_ui_audio_visualizer_tab.py` — AudioVisualizerTab settings, validation, view registry
+- `test_ui_srt_gen_tab.py` — SrtGenTab settings, batch queue, worker lifecycle
+- `test_ui_srt_edit_tab.py` — SrtEditTab document model, inline edits, undo commands, waveform loading
+- `test_ui_assets_tab.py` — AssetsTab import, scan, settings roundtrip
+- `test_ui_workspace_context.py` — SessionAsset CRUD, project folder, import helpers
+- `test_ui_session_file_picker.py` — Browse/output path resolution
+- `test_ui_job_status_widget.py` — Job lifecycle, cancel wiring, auto-clear timer
+- `test_ui_settings_schema.py` — Schema versioning and migration
+- `test_ui_render_composition_tab.py` — Layer model, commands, FFmpeg filter graph, presets, preview
+- `test_ui_render_composition_timeline_widget.py` — Timeline scroll/zoom, snap, playhead
+- `test_ui_render_composition_filter_graph.py` — Filter graph command generation, looping, timing
+- `test_workflow_recipes.py` — Recipe create/save/load/apply roundtrip, validation, library
+- `test_integration_smoke.py` — Cross-package import and event system verification
 
 ## Coverage Gaps
 
