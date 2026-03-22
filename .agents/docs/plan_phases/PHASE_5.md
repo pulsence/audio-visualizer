@@ -1,92 +1,93 @@
-# Phase 5: Build the Caption Animate Tab
+# Phase 5: Advanced Screen — Correction Database and Prompt Management
 
-**Parent plan:** [PLAN_3.md](../PLAN_3.md)
+[Back to Plan Index](../v_0_7_0_PLAN.md)
 
-This phase file is extracted from the Stage Three implementation plan. Shared target-state details, contracts, and cross-phase rules remain defined in [PLAN_3.md](../PLAN_3.md).
+Follow the shared implementation rules in the main plan index. This file contains the detailed execution steps for Phase 5.
 
-### 5.1: Create the Caption Animate UI and full preset workflow
+Implement the correction-tracking database and the first user-facing Advanced-tab tools.
 
-The caption tab should expose the full capability of the integrated `audio_visualizer.caption` package while supporting all three approved preset-source paths: built-ins, explicit files, and the app-data preset library.
+### 5.1: SQLite Correction Database
 
-**Tasks:**
-- Create `CaptionAnimateTab` with subtitle input, output path, FPS, quality, safety scale, animation toggle, and reskin controls
-- Build a unified preset-selection workflow that combines built-ins, explicit file browse, and the app-data preset library. Leverage `ensure_example_presets()` (called internally by the caption package's data-dir helpers) to seed bundled example preset files (`preset.json`, `word_highlight.json`) into `get_data_dir()/caption/presets/` on first access so the library is not empty on initial launch.
-- Expose the full `PresetConfig` style surface in structured groups (font, colors, outline, shadow, blur, line spacing, max width, padding, alignment, margins, wrap style, animation type and params) rather than limiting the tab to preset-only controls
-- Expose the built-in animation registry types (`fade`, `slide_up`, `scale_settle`, `blur_settle`, `word_reveal`) plus their default parameter surfaces so users can edit animation behavior without leaving the GUI
-- Add preset import/export and "open preset folder" actions backed by the app-data directory
-- Add a lightweight in-tab preset preview for style validation before full render. v0.6.0 uses a static sample-text preview inside the tab; full motion preview remains the responsibility of an actual render.
-- Ensure file pickers can browse both the filesystem and compatible subtitle assets from `SessionContext`
-- Create/update tests for preset-source resolution, settings round-trip, and full-surface preset serialization
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
-
-**Files:**
-- Create `src/audio_visualizer/ui/tabs/captionAnimateTab.py`
-- Modify `src/audio_visualizer/ui/settingsSchema.py`
-- Modify `src/audio_visualizer/ui/sessionContext.py`
-- Create `tests/test_ui_caption_tab.py`
-
-**Success criteria:** The Caption Animate tab supports the full caption-style surface and all approved preset-source paths without depending on cwd-relative discovery.
-
-### 5.2: Implement cancellable caption rendering
-
-Caption rendering is synchronous today, but the underlying FFmpeg boundary makes true in-process cancel support achievable for Stage Three.
+Create the correction database used for correction tracking, prompt suggestions, and training export.
 
 **Tasks:**
-- Create a caption-render Qt worker that owns progress/event bridging, process handle retention, cancel-state updates, and output registration
-- Modify the caption render stack so the worker can terminate the active FFmpeg subprocess cleanly on user cancel
-- Preserve stage/progress events and completion/error payloads from the caption package through the worker bridge
-- Ensure cancellation cleans up partial outputs and resets tab/job-shell state correctly
-- Register finished caption renders as `SessionAsset` entries with alpha, resolution, duration, and quality metadata
-- Create/update tests for render-worker lifecycle, progress forwarding, cancel behavior, and output registration
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. Create `core/correctionDb.py` with a `CorrectionDatabase` class.
+2. Use SQLite WAL mode and a single-writer pattern.
+3. Create tables for:
+   - `corrections` with fields for source media path, time range, original text, corrected text, speaker label, model name, LoRA name, confidence, `bundle_entry_id`, and created time,
+   - `prompt_terms`,
+   - `replacement_rules`.
+4. Store the database at `app_paths.data_dir() / "corrections.db"`.
+5. Expose methods for recording corrections, querying corrections, managing prompt terms, managing replacement rules, and exporting training pairs.
+6. Keep writes on committed action boundaries, not on every keystroke.
 
 **Files:**
-- Create `src/audio_visualizer/ui/workers/captionRenderWorker.py`
-- Modify `src/audio_visualizer/caption/captionApi.py`
-- Modify `src/audio_visualizer/caption/rendering/ffmpegRenderer.py`
-- Modify `src/audio_visualizer/ui/tabs/captionAnimateTab.py`
-- Create `tests/test_caption_render_worker.py`
+- `src/audio_visualizer/core/correctionDb.py`
 
-**Success criteria:** Caption Animate renders can be started, monitored, canceled, and reused downstream as metadata-rich overlay assets.
+**Success criteria:** The correction database is created automatically, supports the required query and write operations, preserves bundle linkage where available, and is safe for the app's expected read/write pattern.
 
-### 5.3: Add audio-reactive caption support
+**Close-out:** Add or update tests for schema creation and CRUD behavior, run the relevant tests and `pytest tests/ -v` when shared correction-tracking behavior changed, update `.agents/docs/architecture/` docs if persistence architecture changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-Audio-reactive captions are the most distinctive Caption Animate feature in Stage Three and need both a shared analysis bundle and render-pipeline support for passing reactive context into animations.
+### 5.2: SRT Edit Correction Recording Integration
+
+Automatically record corrections when users edit bundle-backed subtitle text.
 
 **Tasks:**
-- Add audio-source selection to the caption tab, using either a directly chosen file or a `SessionContext` asset role
-- Build a shared audio-analysis bundle with smoothed amplitude, emphasis/peak markers, and optional chroma summaries using the existing audio-analysis stack. **Important:** `AudioData.analyze_audio()` is synchronous with per-frame librosa chroma computation and has no progress reporting infrastructure. Audio analysis must run on a background thread through the worker bridge to avoid UI freezes on long audio files, and should forward progress updates so the tab can show analysis status before the render begins.
-- Reuse the `SessionContext` analysis cache so caption re-renders do not recompute audio analysis unnecessarily
-- Extend the caption render pipeline so `event_context` or equivalent per-event reactive data reaches the animation layer. Note that `SubtitleFile.apply_animation()` currently does **not** pass `event_context` to animations — the render pipeline must be extended so audio-reactive analysis data flows through `apply_to_event()` and into `generate_ass_override(event_context)` for reactive animations to function.
-- Ship a bounded preset family such as `pulse`, `beat_pop`, and `emphasis_glow` instead of a freeform animation graph
-- Keep reactive motion bounded and readability-safe by default
-- Create/update tests for audio-analysis reuse, reactive-preset mapping, and render-pipeline event-context flow
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. In `SrtEditTab`, detect when the loaded document originated from a bundle with provenance fields.
+2. On committed text edits, compare the edited text to `original_text`.
+3. Record a correction row only when the text differs and the edit is a forward user action, not an undo/redo replay.
+4. Do not record corrections for plain SRT imports that lack provenance.
+5. Auto-populate prompt terms when a correction introduces a new candidate domain term or proper noun.
+6. Ensure both table editing and sidebar editing flow through the same committed-action recording path.
 
 **Files:**
-- Modify `src/audio_visualizer/ui/tabs/captionAnimateTab.py`
-- Modify `src/audio_visualizer/ui/sessionContext.py`
-- Modify `src/audio_visualizer/caption/core/subtitle.py`
-- Modify `src/audio_visualizer/caption/animations/baseAnimation.py`
-- Create `src/audio_visualizer/caption/core/audioReactive.py`
-- Create `tests/test_caption_audio_reactive.py`
+- `src/audio_visualizer/ui/tabs/srtEditTab.py`
+- `src/audio_visualizer/core/correctionDb.py`
 
-**Success criteria:** Caption Animate can render bounded audio-reactive caption presets using shared audio analysis, and the render pipeline now has a real path for per-event reactive context.
+**Success criteria:** Bundle-backed edits create useful correction records without duplicate rows, plain subtitle imports do not pollute the correction DB, and all committed edit paths share one recording rule.
 
-### 5.4: Phase 5 Code Review
+**Close-out:** Add or update tests for correction-recording triggers and undo/redo behavior, run the relevant tests and `pytest tests/ -v` when shared SRT Edit behavior changed, update `.agents/docs/architecture/` docs if correction-recording contracts changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-- Review the changes and ensure the phase is entirely implemented
-- Review code for deprecated code or dead code
-- Review tests to ensure they are well-structured
-- Verify preset management, cancel behavior, and audio-reactive rendering all work from the same tab state and asset model
+### 5.3: Prompt and Dictionary Management UI
 
-**Phase 5 Changelog:**
-- Added a full-surface Caption Animate tab with built-in, file-based, and app-data preset workflows
-- Implemented cancellable caption rendering around the FFmpeg process boundary
-- Added shared-analysis-driven audio-reactive caption presets
+Build the first real Advanced-tab UI sections.
+
+**Tasks:**
+1. Add a "Prompt Terms" management section to `AdvancedTab`.
+2. Allow add, edit, remove, filter, and export-to-prompt actions for prompt terms.
+3. Add a "Replacement Rules" management section with add, edit, remove, filter, and export-to-dictionary actions.
+4. Add per-speaker filtering using distinct speaker labels from the database.
+
+**Files:**
+- `src/audio_visualizer/ui/tabs/advancedTab.py`
+- `src/audio_visualizer/core/correctionDb.py`
+
+**Success criteria:** Users can inspect, edit, filter, and export both prompt terms and replacement rules directly from the Advanced tab.
+
+**Close-out:** Add or update tests for Advanced-tab prompt and replacement-rule management where practical, run the relevant tests and `pytest tests/ -v` when shared Advanced-tab behavior changed, update `.agents/docs/architecture/` docs if Advanced-tab structure changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
+
+### 5.4: Phase 5 Review
+
+**Tasks:**
+1. Review the DB schema and SRT Edit integration together so provenance, write timing, and exported prompt data remain aligned.
+2. Remove any duplicate or bypass recording logic introduced during implementation.
+3. Verify the new database-backed UI is covered by tests at the correct abstraction level.
+4. Commit and push any cleanup changes from this sub-phase.
+
+**Files:**
+- Phase 5 implementation files
+- Phase 5 tests
+
+**Success criteria:** Phase 5 leaves one clean correction-data path from bundle-backed edits into the Advanced-tab management UI.
+
+### 5.5: Phase 5 Changelog
+
+**Tasks:**
+1. Summarize the correction DB, SRT Edit recording, and prompt-management capabilities added in Phase 5.
+2. Note any schema or provenance assumptions later LoRA work must preserve.
+3. Commit and push any documentation updates from this sub-phase.
+
+**Files:**
+- Phase 5 implementation notes
+
+**Success criteria:** The next Advanced-tab phase can treat correction tracking as established infrastructure.

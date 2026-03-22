@@ -1,138 +1,109 @@
-# Phase 4: Build the SRT Edit Tab
+# Phase 4: Render Composition — Real-Time GPU Playback
 
-**Parent plan:** [PLAN_3.md](../PLAN_3.md)
+[Back to Plan Index](../v_0_7_0_PLAN.md)
 
-This phase file is extracted from the Stage Three implementation plan. Shared target-state details, contracts, and cross-phase rules remain defined in [PLAN_3.md](../PLAN_3.md).
+Follow the shared implementation rules in the main plan index. This file contains the detailed execution steps for Phase 4.
 
-### 4.1: Create the editable subtitle document model and round-trip I/O
+Implement the real-time playback engine, transport controls, timeline scrubbing, and waveform display.
 
-SRT Edit needs its own stable editing model and round-trip layer before the waveform/editor UI is added, because the integrated `audio_visualizer.srt` package does not currently expose a general editable parser model for this use case.
+### 4.1: Timeline Scrubbing
 
-**Tasks:**
-- Create a tab-local subtitle document model that tracks ordered blocks, text, timing, speaker labels, dirty state, and source metadata
-- Implement `.srt` load/save round-tripping into that model, using `pysubs2` mapping or equivalent tab-local parsing logic as the underlying parser layer
-- Preserve enough information for safe re-save without collapsing the editing model into the shared `audio_visualizer.srt` public API
-- Add model-level operations for add/remove/split/merge and timestamp normalization
-- Create/update tests for parser round-trip fidelity, timestamp normalization, split/merge behavior, and save output correctness
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
-
-**Files:**
-- Create `src/audio_visualizer/ui/tabs/srtEditTab.py`
-- Create `src/audio_visualizer/ui/tabs/srtEdit/__init__.py`
-- Create `src/audio_visualizer/ui/tabs/srtEdit/document.py`
-- Create `src/audio_visualizer/ui/tabs/srtEdit/parser.py`
-- Create `tests/test_srt_edit_model.py`
-
-**Success criteria:** The app can load an existing SRT into a stable editable model, modify it, and write it back without relying on ad hoc widget state as the source of truth.
-
-### 4.2: Build the waveform, playback, and table-editing foundation
-
-With the document model in place, the next milestone is an editor that can display waveform context, synchronize playback, and expose precise table-based editing before the drag UI is layered on top.
+Enable continuous playhead scrubbing on the timeline.
 
 **Tasks:**
-- Build the waveform view on `pyqtgraph` using downsampling, clip-to-view, region overlays, and a playback cursor
-- Use `PlotWidget`/`PlotItem` with `setDownsampling(auto=True, mode='peak')` and `setClipToView(True)` so large audio files remain responsive
-- Represent subtitle timing regions with pyqtgraph items that support draggable boundaries and selection highlighting; include a distinct playback cursor line that can also support click-to-seek
-- Add a split layout with waveform on top and an editable subtitle table below
-- Integrate `QMediaPlayer` and `QAudioOutput` for playback, seeking, cursor updates, and selection-follow behavior
-- Support selecting a subtitle row from the table and highlighting the corresponding waveform region
-- Load waveform/analysis data through the shared `SessionContext` analysis cache when possible; waveform generation for long files should happen in a background worker rather than blocking the UI thread
-- Create/update tests for widget construction, selection sync, playback-position updates, and large-file waveform data handling
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. Detect mouse press near the playhead line in `TimelineWidget`.
+2. Track drag movement and update `playhead_ms` continuously.
+3. Emit `playhead_changed` during the drag so preview updates stay synchronized.
+4. Change the cursor appropriately while scrubbing.
 
 **Files:**
-- Modify `src/audio_visualizer/ui/tabs/srtEditTab.py`
-- Create `src/audio_visualizer/ui/tabs/srtEdit/waveformView.py`
-- Create `src/audio_visualizer/ui/tabs/srtEdit/tableModel.py`
-- Create `tests/test_ui_srt_edit_tab.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/timelineWidget.py`
 
-**Success criteria:** Users can load an SRT and its audio source, see subtitle timing against a waveform, play/seek audio, and edit timestamps/text numerically in a synchronized editor.
+**Success criteria:** Users can drag the playhead smoothly, the preview seeks accordingly, and normal timeline clicks still behave correctly.
 
-### 4.3: Add full editing interactions and undo/redo support
+**Close-out:** Add or update tests for scrub drag behavior and playhead updates, run the relevant tests and `pytest tests/ -v` when shared composition timeline behavior changed, update `.agents/docs/architecture/` docs if timeline interaction changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-After the waveform and table are stable, add the direct-manipulation editing layer and make every destructive change safely undoable.
+### 4.2: Audio Waveform on the Timeline
+
+Display low-resolution waveform envelopes for audio tracks.
 
 **Tasks:**
-- Add draggable waveform-region handles for adjusting subtitle start/end times visually
-- Implement `QUndoCommand` subclasses for move-region, edit-timestamp, edit-text, add/remove, and split/merge operations
-- Initialize the SRT Edit undo stack with a limit of 200 (high limit because subtitle editing produces many small changes)
-- Push drag commands on mouse release only, and coalesce text/numeric edits with `mergeWith()` to avoid noisy undo history
-- Clear the SRT Edit undo stack when a new subtitle document is loaded
-- Wire tab-local undo/redo actions into the shared Edit menu through `BaseTab`
-- Create/update tests for command apply/revert behavior, merge/coalesce logic, and stack-reset behavior
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. Add a waveform utility that computes an RMS envelope from source media using PyAV.
+2. Cache envelopes per source path so redraws and scrolls stay cheap.
+3. Render the envelope into audio track items using `QPainterPath`.
+4. Scale drawing to both the track geometry and the currently visible timeline window.
 
 **Files:**
-- Modify `src/audio_visualizer/ui/tabs/srtEditTab.py`
-- Create `src/audio_visualizer/ui/tabs/srtEdit/commands.py`
-- Create `tests/test_ui_undo.py`
-- Create or modify `tests/test_ui_srt_edit_tab.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/timelineWidget.py`
 
-**Success criteria:** SRT Edit supports both numeric and drag-based timing changes, and every editor action can be undone/redone through a tab-local `QUndoStack`.
+**Success criteria:** Audio tracks show a usable waveform without degrading normal timeline performance.
 
-### 4.4: Add the subtitle QA panel and named lint profiles
+**Close-out:** Add or update tests for waveform caching and painting helpers where practical, run the relevant tests and `pytest tests/ -v` when shared composition timeline behavior changed, update `.agents/docs/architecture/` docs if waveform behavior changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-Subtitle QA belongs in the editor because that is where the editable source of truth, undo stack, and waveform context already live.
+### 4.3: GPU-Composited Playback Engine
+
+Build the real-time compositor using `QOpenGLWidget`, PyAV decode, and `sounddevice`.
 
 **Tasks:**
-- Implement lint checks for readability, timing integrity, text quality, speaker consistency, and render safety
-- Seed the default lint profile from `ResolvedConfig.formatting` so SRT Gen and SRT Edit agree on baseline thresholds
-- Add named lint profiles such as `pipeline_default`, `accessible_general`, and `short_form_social`
-- Ensure `pipeline_default` explicitly incorporates `max_chars`, `max_lines`, `target_cps`, `min_dur`, `max_dur`, `min_gap`, and `pad` from the current formatting defaults instead of hard-coding a second independent rule set
-- Show inline severity hints in the table and a dedicated QA panel with click-to-jump navigation
-- Make every machine-fix action undoable through the shared SRT Edit undo stack
-- Create/update tests for lint rules, profile overrides, issue navigation, and machine-fix undo behavior
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. Create `ui/tabs/renderComposition/playbackEngine.py`.
+2. Implement `CompositorWidget(QOpenGLWidget)` with texture management and `QOpenGLTextureBlitter`-based layer compositing.
+3. Implement per-video-layer decode workers that decode frames with PyAV and push bounded frame queues.
+4. Implement audio decode, mixing, and `sounddevice` playback using an audio-master clock.
+5. Drive video presentation from the audio clock so late frames are dropped and early frames are repeated.
+6. Implement seek/flush behavior for both decode and audio playback.
+7. Gate runtime initialization through `core/capabilities.py` and fall back to the existing static preview workflow if OpenGL context creation or audio-device startup fails.
+8. Structure the playback engine so tests can instantiate it without a physical audio device, for example through a dummy backend, injectable audio output, or a no-device fallback mode.
 
 **Files:**
-- Modify `src/audio_visualizer/ui/tabs/srtEditTab.py`
-- Create `src/audio_visualizer/ui/tabs/srtEdit/lint.py`
-- Create `tests/test_srt_edit_lint.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/playbackEngine.py`
+- `src/audio_visualizer/core/capabilities.py`
 
-**Success criteria:** SRT Edit can highlight subtitle quality problems inline and through a QA panel, using profile-driven thresholds that remain consistent with the transcription pipeline defaults.
+**Success criteria:** Multi-layer preview playback runs with synchronized audio and video on supported machines, seeking works, z-order and alpha blending are correct, and the tab stays usable with a graceful fallback when required runtime capabilities are unavailable.
 
-### 4.5: Add the auto-resync toolkit
+**Close-out:** Add or update tests for capability gating, playback-engine lifecycle, and no-device fallback behavior where practical, run the relevant tests and `pytest tests/ -v` when shared composition or startup behavior changed, update `.agents/docs/architecture/` docs if playback architecture changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-Resync operations are a major differentiator for the editor and should be implemented after the waveform, document model, and undo system are all stable.
+### 4.4: Transport Controls
+
+Wire the new playback engine into the Render Composition tab.
 
 **Tasks:**
-- Implement batch timing tools for global shift, shift from cursor onward, two-point stretch, and FPS-drift correction
-- Add preview-diff flows so users can review timing changes before applying them
-- Integrate silence-based snapping using `detect_silences()` from `srt.io.audioHelpers` and `apply_silence_alignment()` from `srt.core.subtitleGeneration`. These helpers are **not exported** from `srt.__init__.py`, so SRT Edit must import them directly from the internal modules (e.g., `from audio_visualizer.srt.io.audioHelpers import detect_silences`). If a cleaner public API boundary is preferred, add the needed symbols to `srt.__init__.py`'s `_EXPORTS` and `src/audio_visualizer/srt/__init__.py` to the files list for this task.
-- Reapply word-level or segment timing from generated JSON bundles when compatible sidecars exist in `SessionContext`. Note that JSON bundles only include word-level timing when the transcription was run with `word_level=True`; when word data is absent, the resync UI should clearly indicate reduced resync quality and fall back to segment-level timing only.
-- Handle speaker-aware resync boundaries when diarization labels are present. Note that `SubtitleBlock.speaker` is only populated in `PipelineMode.TRANSCRIPT` mode — general and shorts-mode transcriptions will not have speaker data. The UI should degrade gracefully when speaker labels are absent rather than offering speaker-aware operations that cannot function.
-- Scope resync operations to either the current selection or the full document
-- Apply each resync operation as a single undoable command or macro
-- Create/update tests for resync math, preview generation, selection scoping, silence snapping, JSON-bundle timing reuse, missing word-level data fallback, and absent speaker-label handling
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. Add transport controls for Play/Pause, Stop, Jump to Start, and Jump to End.
+2. Replace or augment the existing preview area with the compositor widget.
+3. Bind Space to Play/Pause.
+4. Keep the paused state seekable so the playhead drives a static compositor frame.
+5. Connect timeline scrub events to playback-engine seek.
+6. Feed playback position updates back into the timeline without creating feedback loops.
 
 **Files:**
-- Modify `src/audio_visualizer/ui/tabs/srtEditTab.py`
-- Create `src/audio_visualizer/ui/tabs/srtEdit/resync.py`
-- Modify `src/audio_visualizer/ui/sessionContext.py`
-- Create `tests/test_srt_edit_resync.py`
+- `src/audio_visualizer/ui/tabs/renderCompositionTab.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/playbackEngine.py`
 
-**Success criteria:** SRT Edit includes previewable, undoable batch retiming tools that can reuse silence data and word/segment sidecars from earlier transcription work when available.
+**Success criteria:** Transport controls work, playback updates the timeline, paused scrubbing shows the correct frame, and seek interactions do not create control-loop glitches.
 
-### 4.6: Phase 4 Code Review
+**Close-out:** Add or update tests for transport actions and playhead synchronization where practical, run the relevant tests and `pytest tests/ -v` when shared composition UI changed, update `.agents/docs/architecture/` docs if playback control flow changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-- Review the changes and ensure the phase is entirely implemented
-- Review code for deprecated code or dead code
-- Review tests to ensure they are well-structured
-- Verify round-trip editing, waveform interaction, QA checks, and resync tools all operate against the same document model
+### 4.5: Phase 4 Review
 
-**Phase 4 Changelog:**
-- Added a tab-local subtitle document model and round-trip I/O for SRT editing
-- Built a waveform-plus-table editor with playback sync
-- Added drag editing and full undo/redo support
-- Added subtitle QA/lint tooling and batch auto-resync operations
+**Tasks:**
+1. Review scrubbing, waveform display, playback fallback logic, and transport controls as one integrated preview workflow.
+2. Remove temporary preview glue or dead code paths replaced by the new engine.
+3. Verify test coverage reflects the fallback-first runtime model and not only the fully capable machine path.
+4. Commit and push any cleanup changes from this sub-phase.
+
+**Files:**
+- Phase 4 implementation files
+- Phase 4 tests
+
+**Success criteria:** Render Composition playback is robust on capable systems and still safe on systems lacking OpenGL or a usable audio device.
+
+### 4.6: Phase 4 Changelog
+
+**Tasks:**
+1. Summarize scrubbing, waveform, playback-engine, and transport-control changes delivered in Phase 4.
+2. Note any host capability assumptions or test harness requirements future work must preserve.
+3. Commit and push any documentation updates from this sub-phase.
+
+**Files:**
+- Phase 4 implementation notes
+
+**Success criteria:** Future composition work can treat the real-time playback engine and its fallback rules as settled infrastructure.

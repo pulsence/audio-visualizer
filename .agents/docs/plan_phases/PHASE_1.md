@@ -1,124 +1,131 @@
-# Phase 1: Foundation, Dependency Lane, and MainWindow Decomposition
+# Phase 1: Cross-Cutting Foundations
 
-**Parent plan:** [PLAN_3.md](../PLAN_3.md)
+[Back to Plan Index](../v_0_7_0_PLAN.md)
 
-This phase file is extracted from the Stage Three implementation plan. Shared target-state details, contracts, and cross-phase rules remain defined in [PLAN_3.md](../PLAN_3.md).
+Follow the shared implementation rules in the main plan index. This file contains the detailed execution steps for Phase 1.
 
-### 1.1: Update the GUI and test dependency lane
+Foundation work required before later feature phases can ship. This phase establishes the bundle contract, persistence/versioning rules for the coordinate break, dependency packaging expectations, and the Advanced tab shell slot.
 
-Move the host app onto the validated waveform-compatible Qt stack and add the UI-test tooling needed for the new tab architecture.
+### 1.1: Bundle Schema Contract
 
-**Tasks:**
-- Update `pyproject.toml` to move the host GUI stack from `PySide6==6.9.1` to `PySide6==6.10.2`, `PySide6_Addons==6.10.2`, and `PySide6_Essentials==6.10.2`
-- Add `pyqtgraph==0.14.0` as the approved waveform dependency for SRT Edit
-- Add `pytest-qt` to the `[dev]` extra for widget-level tests
-- Verify editable install and dependency resolution in the project `.venv`
-- Run a repo-level smoke pass for `pyqtgraph`, QtMultimedia, and the existing application entry point on the upgraded Qt stack
-- Create/update tests for new features
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
-
-**Files:**
-- Modify `pyproject.toml`
-- Potentially modify `readme.md` if dependency notes or setup instructions need adjustment
-- Create or modify dependency/tooling coverage tests under `tests/`
-
-**Success criteria:** The project installs cleanly on the validated `PySide6==6.10.2` + `pyqtgraph==0.14.0` lane, existing non-UI tests still pass, and the repo has the tooling needed for Qt widget tests.
-
-### 1.2: Create shared tab, job, and session infrastructure
-
-Build the shared infrastructure that every tab will rely on so Stage Three does not re-implement job control, settings, undo wiring, or cross-tab file access in five different places.
+Establish the canonical word-level contract shared by SRT Gen, SRT Edit, Caption Animator, and later correction-tracking work.
 
 **Tasks:**
-- Create a `ui/tabs/` package for tab classes and shared tab helpers
-- Add a `BaseTab` abstraction with the fixed Stage Three contract from the "Shared tab contract" section above: `tab_id`, `tab_title`, `validate_settings()`, `collect_settings()`, `apply_settings()`, `set_session_context()`, `set_global_busy()`, and optional `QUndoStack` helpers
-- Create `SessionAsset` and `SessionContext` models for cross-tab asset registration, browsing, metadata updates, and removal using the required fields and categories defined in the "SessionContext contract" section above
-- Add `SessionContext` signals for `asset_added`, `asset_updated`, `asset_removed`, and analysis-cache invalidation events so tabs do not poll
-- Add a lightweight derived-analysis cache to `SessionContext` keyed by source asset plus analysis settings so waveform data, silence intervals, and reactive-caption analysis can be reused
-- Create a shared Qt bridge that subscribes to `AppEventEmitter` and forwards progress, stage, log, and completion data into the shared worker signal vocabulary described in the "Shared worker contract" section above
-- Add shared worker/job-state helpers so tabs expose a consistent signal surface to `MainWindow`, `JobStatusWidget`, and tab-local progress UIs
-- Add a reusable session-asset picker/helper widget or helper API so all tabs can surface the same "session assets first, filesystem second" selection flow
-- Create/update tests for base-tab lifecycle, session-asset registration, asset updates/removal, and analysis-cache invalidation
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. Add `bundle_version: int` to bundle output in `write_json_bundle()` in `srt/io/outputWriters.py`. Treat the current writer output as v1 and the new contract as v2.
+2. Define the v2 bundle schema so it is explicit and stable:
+   - subtitle entries have stable `id` fields,
+   - word entries use `text` instead of `word`,
+   - each word carries a `subtitle_id` back-reference,
+   - subtitle entries preserve `words`,
+   - the bundle also exposes a flat top-level `words` convenience list for consumers like resync helpers,
+   - provenance fields are stored where available: `original_text`, `source_media_path`, `model_name`, `device`, `compute_type`, `speaker_label`, `confidence`,
+   - alignment fields are reserved for bundle-from-SRT output: `alignment_status`, `alignment_confidence`,
+   - markdown source text is stored verbatim in text fields.
+3. Update `write_json_bundle()` to emit v2 by default and to write the normalized field names even when the source objects still come from faster-whisper.
+4. Create `read_json_bundle()` in `src/audio_visualizer/srt/io/bundleReader.py` that accepts both v1 and v2 bundles and normalizes them into one in-memory contract that downstream code can trust.
+5. Update `src/audio_visualizer/srt/models.py` so `WordItem` supports optional `id` and `subtitle_id` fields.
+6. Update `ui/tabs/srtEdit/resync.py` so `reapply_word_timing()` consumes the normalized loader output instead of assuming a raw dict with a top-level `words[]` payload.
+7. Extend `SubtitleEntry` in `ui/tabs/srtEdit/document.py` with `words: list[WordItem]` plus provenance fields required for later correction tracking and bundle round-tripping.
+8. Export `read_json_bundle` from `src/audio_visualizer/srt/io/__init__.py` so every consumer uses the shared loader.
 
 **Files:**
-- Create `src/audio_visualizer/ui/tabs/__init__.py`
-- Create `src/audio_visualizer/ui/tabs/baseTab.py`
-- Create `src/audio_visualizer/ui/sessionContext.py`
-- Create `src/audio_visualizer/ui/workerBridge.py`
-- Create `src/audio_visualizer/ui/workers/__init__.py`
-- Modify `src/audio_visualizer/ui/__init__.py`
-- Create `tests/test_ui_base_tab.py`
-- Create `tests/test_ui_session_context.py`
-- Create `tests/test_ui_workers.py`
+- `src/audio_visualizer/srt/io/outputWriters.py`
+- `src/audio_visualizer/srt/io/bundleReader.py`
+- `src/audio_visualizer/srt/io/__init__.py`
+- `src/audio_visualizer/srt/models.py`
+- `src/audio_visualizer/ui/tabs/srtEdit/resync.py`
+- `src/audio_visualizer/ui/tabs/srtEdit/document.py`
 
-**Success criteria:** Tabs can share a single `SessionContext`, register outputs as first-class assets, opt into undo support, and forward `AppEventEmitter` activity into Qt widgets without per-tab ad hoc glue code.
+**Success criteria:** `write_json_bundle()` emits v2 bundles by default, `read_json_bundle()` normalizes both v1 and v2 into one consistent structure, word-level consumers stop depending on raw bundle shape, and later phases can build on stable subtitle and word identifiers.
 
-### 1.3: Replace `MainWindow` with a thin multi-tab shell
+**Close-out:** Add or update tests for bundle v1/v2 normalization and SRT Edit word hydration, run the relevant tests and `pytest tests/ -v` when shared SRT flows changed, update `.agents/docs/architecture/` docs if contracts changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-Convert the monolithic `MainWindow` into a navigation shell built around `QStackedWidget` and custom navigation, while preserving the existing render/thread ownership and top-level menu behavior.
+### 1.2: Settings Schema and Recipe Versioning
+
+Prepare the persistence layer for the center-origin coordinate break and the new Advanced tab.
 
 **Tasks:**
-- Refactor `MainWindow` to own a `QStackedWidget` plus a custom navigation widget built on `QListWidget` or an equivalent Qt-native sidebar control
-- Move shared resources into the shell: `render_thread_pool`, `_background_thread_pool`, `SessionContext`, global busy state, and menu wiring
-- Add a persistent job-status area that remains visible across tab switches and shows job type, source tab, progress, status text, and cancel action
-- Add tab-level busy indicators/badges so users can see which tab owns active work even when they switch away
-- Block second-job startup across tabs while the shared render pool is busy, and surface the reason clearly in the UI
-- Update Edit-menu Undo/Redo actions to bind to the active tab's `QUndoStack` when one exists and disable otherwise
-- Change render-complete behavior from immediate modal interruption to a completion notification with explicit Preview/Open actions that can launch `RenderDialog`
-- Preserve Help/update-check functionality in the thinner shell
-- Create/update widget tests for shell navigation, active-tab switching, undo-action rebinding, and shared busy-state handling
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. Bump the settings schema version in `ui/settingsSchema.py`.
+2. Add explicit rejection logic for composition payloads created before the new coordinate system. Do not silently load old top-left-origin data.
+3. Make the rejection path user-facing and clear in both auto-load and manual-load flows.
+4. Add `"advanced"` to the tab key set so settings persistence now expects 7 tabs.
+5. Add default settings slots for the Advanced tab.
+6. Update `workflowRecipes.py` so recipes also understand the new tab key and reject old composition payloads the same way settings does.
+7. Add `composition_schema_version` to `CompositionModel.to_dict()` and reject missing or old versions in `from_dict()`.
 
 **Files:**
-- Modify `src/audio_visualizer/ui/mainWindow.py`
-- Modify `src/audio_visualizer/ui/renderDialog.py`
-- Create `src/audio_visualizer/ui/navigationSidebar.py`
-- Create `src/audio_visualizer/ui/jobStatusWidget.py`
-- Create `tests/test_ui_main_window.py`
+- `src/audio_visualizer/ui/settingsSchema.py`
+- `src/audio_visualizer/ui/workflowRecipes.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/model.py`
 
-**Success criteria:** `MainWindow` becomes a thin shell that hosts tab widgets, shared pools, `SessionContext`, and top-level menu/status behavior. The app supports tab switching without losing visibility into active jobs or undo/redo state.
+**Success criteria:** Pre-v0.7.0 composition payloads are rejected with a clear message, settings and recipes both persist the new 7-tab layout, and composition data cannot silently load with incorrect center-origin math.
 
-### 1.4: Add versioned settings and project-schema foundations
+**Close-out:** Add or update tests for settings-schema bumps, recipe rejection, and composition-schema version gating, run the relevant tests and `pytest tests/ -v` when shared UI persistence changed, update `.agents/docs/architecture/` docs if persistence contracts changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-Stage Three expands persistence from one audio-visualizer screen into a multi-tab application, so the settings format must become versioned, migratable, and capable of serializing tab state plus session assets.
+### 1.3: Dependency Additions, Capability Gating, and Release Build Notes
+
+Add new dependencies and make sure missing runtime capabilities degrade cleanly instead of crashing.
 
 **Tasks:**
-- Create a versioned app/project settings schema that stores per-tab settings, shared UI state, and serialized `SessionContext` asset metadata
-- Use the fixed Stage Three schema shape from the "App autosave / project schema" section above with `version`, `ui`, `tabs`, and `session` top-level sections
-- Implement migration logic from the old Audio Visualizer-only `last_settings.json` shape into the new multi-tab schema with silent defaults
-- Map the old `general`, `visualizer`, `specific`, and `ui` sections into `tabs.audio_visualizer` during migration instead of preserving the old top-level structure
-- Update project save/load so saved project files include all tab settings plus session assets, not just the original visualizer settings
-- Ensure auto-save on close and auto-load on startup use the new schema through `get_config_dir()`
-- Keep machine-local ephemeral UI state out of the persisted data unless intentionally required. Do not store transient progress text, waveform zoom, current playback position, active selection rows, or temporary output paths created only for cancellation/worker internals.
-- Create/update tests for schema versioning, backward compatibility, save/load round-trips, and missing-key defaults
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. Add `PyOpenGL` and `sounddevice` to the base dependencies in `pyproject.toml` because real-time playback depends on them.
+2. Add `torch`, `transformers`, `peft`, and `ctranslate2` under an `[advanced]` extra for source installs.
+3. Document the official desktop build path so the release artifact is built with the advanced stack enabled even if source installs use extras.
+4. Create `core/capabilities.py` with cached, lazy capability checks such as `has_opengl()`, `has_sounddevice()`, and `has_training_stack()`.
+5. Update runtime call sites to use those capability checks and surface a clear user-facing explanation when playback or training features are unavailable.
+6. Audit the in-repo release/build path. If a build script or spec file exists, update it so the packaged app bundles the playback and training dependencies. If the release flow is managed outside this repo, add an explicit release note in the repo docs so v0.7.0 cannot be packaged without those dependencies.
 
 **Files:**
-- Create `src/audio_visualizer/ui/settingsSchema.py`
-- Modify `src/audio_visualizer/ui/mainWindow.py`
-- Modify `src/audio_visualizer/app_paths.py` if helper paths are needed for new persistence artifacts
-- Create `tests/test_ui_settings_schema.py`
+- `pyproject.toml`
+- `readme.md`
+- `src/audio_visualizer/core/capabilities.py`
 
-**Success criteria:** Old settings files still load, new app/project saves round-trip all Stage Three state cleanly, and the schema has an explicit version/migration path for future releases.
+**Success criteria:** Base installs can run the app with playback dependencies, advanced installs can enable training dependencies, runtime failures are converted into diagnostics instead of crashes, and the repo documents how the official desktop build must include the advanced stack.
 
-### 1.5: Phase 1 Code Review
+**Close-out:** Add or update tests for capability gating and missing-dependency fallbacks where practical, run the relevant tests and `pytest tests/ -v` when startup or shared UI flows changed, update `.agents/docs/architecture/` docs if runtime capability behavior changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-- Review the changes and ensure the phase is entirely implemented
-- Review code for deprecated code or dead code
-- Review tests to ensure they are well-structured
-- Verify the new dependency lane is consistent across `pyproject.toml` and the project environment
-- Verify the new shell no longer depends on the old single-layout assumptions in `MainWindow`
+### 1.4: Advanced Tab Shell Registration
 
-**Phase 1 Changelog:**
-- Upgraded the host GUI stack to the validated Qt/waveform dependency lane
-- Added shared `BaseTab`, `SessionContext`, analysis-cache, and worker-bridge infrastructure
-- Replaced the monolithic `MainWindow` layout with a thin multi-tab shell
-- Added versioned settings/project-schema foundations for the Stage Three app model
+Register the Advanced tab in the application shell so later phases can implement its content.
+
+**Tasks:**
+1. Create a placeholder `AdvancedTab` class in `ui/tabs/advancedTab.py` extending `BaseTab`.
+2. Register `"advanced"` in `MainWindow._lazy_tab_defs`.
+3. Add the Advanced tab to any tab-instantiation path that still assumes 6 tabs.
+4. Add the Advanced tab as the last sidebar entry in `NavigationSidebar`.
+5. Update tests that currently assert exactly 6 tabs so they expect 7.
+
+**Files:**
+- `src/audio_visualizer/ui/tabs/advancedTab.py`
+- `src/audio_visualizer/ui/mainWindow.py`
+- `tests/`
+
+**Success criteria:** The app launches with 7 sidebar entries, the Advanced tab lazy-loads successfully, and the shell test suite no longer assumes a 6-tab application.
+
+**Close-out:** Add or update tests for tab registration and lazy loading, run the relevant tests and `pytest tests/ -v` when shared UI shell behavior changed, update `.agents/docs/architecture/` docs if shell structure changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
+
+### 1.5: Phase 1 Review
+
+**Tasks:**
+1. Review all Phase 1 foundation changes and verify there are no gaps in the bundle, settings, dependency, or shell contracts.
+2. Remove dead code, duplicate compatibility logic, or one-off schema handling that Phase 1 made obsolete.
+3. Verify tests are structured around the new shared contracts instead of around temporary implementation details.
+4. Commit and push any cleanup changes from this sub-phase.
+
+**Files:**
+- Phase 1 implementation files
+- Phase 1 tests
+
+**Success criteria:** Phase 1 leaves one clear source of truth for bundle reading, persistence gating, dependency detection, and Advanced-tab shell registration.
+
+### 1.6: Phase 1 Changelog
+
+**Tasks:**
+1. Summarize the user-visible and developer-visible changes delivered in Phase 1.
+2. Call out the breaking persistence change and the new bundle-version contract so later phases do not re-open those decisions.
+3. Commit and push any documentation updates from this sub-phase.
+
+**Files:**
+- Phase 1 implementation notes
+- Any release-prep notes or TODO updates touched in this sub-phase
+
+**Success criteria:** The rest of the plan can treat bundle v2, 7-tab persistence, and dependency gating as settled foundations.

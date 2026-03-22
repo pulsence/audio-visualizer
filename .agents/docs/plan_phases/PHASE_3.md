@@ -1,91 +1,155 @@
-# Phase 3: Build the SRT Gen Tab
+# Phase 3: Render Composition — Coordinates, Layout, and Audio
 
-**Parent plan:** [PLAN_3.md](../PLAN_3.md)
+[Back to Plan Index](../v_0_7_0_PLAN.md)
 
-This phase file is extracted from the Stage Three implementation plan. Shared target-state details, contracts, and cross-phase rules remain defined in [PLAN_3.md](../PLAN_3.md).
+Follow the shared implementation rules in the main plan index. This file contains the detailed execution steps for Phase 3.
 
-### 3.1: Create the SRT Gen UI and settings model
+Implement the coordinate-system break plus the layout, audio, and layer-management changes that do not require the new real-time playback engine.
 
-Implement the transcription tab as a preset-driven, batch-capable UI with a clean default surface and a full advanced feature set behind structured grouping.
+### 3.1: Center-Origin Coordinate System
 
-**Tasks:**
-- Create `SrtGenTab` with batch input-file selection, queue display, primary output controls, and advanced panels for correction/script inputs, side outputs, diarization, and diagnostics
-- Use a preset-driven form with collapsible Advanced sections so common workflows stay simple while the full `audio_visualizer.srt` surface remains available
-- Add explicit model controls with a "Load Model" action plus load-on-demand fallback when starting a transcription
-- Expose the full `ResolvedConfig` settings surface organized into structured groups: **Model** (model_name, device, strict_cuda), **Formatting** (max_chars, max_lines, target_cps, min_dur, max_dur, allow_commas, allow_medium, prefer_punct_splits, min_gap, pad), **Transcription** (vad_filter, condition_on_previous_text, no_speech_threshold, log_prob_threshold, compression_ratio_threshold, initial_prompt), **Silence** (silence_min_dur, silence_threshold_db), **Prompt/alignment** (initial_prompt text/file, correction_srt, script_path), **Output** (output_path, fmt, word_level, mode, language, word_output_path), **Side outputs** (transcript_path, segments_path, json_bundle_path), and **Advanced/diagnostics** (diarize, hf_token, keep_wav, dry_run). Common settings (model, format, mode, output path) belong in the default view; the rest go into collapsible advanced groups.
-- Default word-level output on, or clearly warn when it is disabled, because later resync quality depends on it
-- Add config-file import/browse and "open config folder" actions backed by `get_srt_config_dir()`, which also triggers `ensure_example_configs()` seeding on first access. Support loading saved JSON config files from the app-data config library alongside the in-memory `PRESETS` dropdown.
-- Add file-picker integration that can browse both filesystem inputs and relevant assets from `SessionContext`
-- Create/update tests for settings collection/application, preset application, queue serialization, and advanced-option validation
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
-
-**Files:**
-- Create `src/audio_visualizer/ui/tabs/srtGenTab.py`
-- Modify `src/audio_visualizer/ui/settingsSchema.py`
-- Modify `src/audio_visualizer/ui/sessionContext.py`
-- Create `tests/test_ui_srt_gen_tab.py`
-
-**Success criteria:** The SRT Gen tab supports queued inputs, a usable default form, and the full advanced transcription feature surface without overwhelming the common path.
-
-### 3.2: Implement cancellable batch transcription orchestration
-
-Batch transcription must be cancelable even though the current `audio_visualizer.srt` API is synchronous, so the tab needs both queue-level orchestration and a killable per-file execution boundary.
+Switch Render Composition from top-left origin to center origin.
 
 **Tasks:**
-- Create a Qt worker for SRT Gen that owns queue sequencing, progress forwarding, and cancel-state transitions
-- Implement a child-process transcription runner that streams structured JSONL events to the parent and allows soft-cancel plus hard-kill fallback
-- Add parent-owned temporary-workspace management and cleanup after normal completion, cancellation, or forced termination
-- Add cooperative cancellation checks between files and between major pipeline stages where the in-process code can reasonably surface them
-- Preserve event payloads from `audio_visualizer.srt` through the worker bridge so the tab can show stage/progress/model status accurately
-- Reuse the loaded `ModelManager` instance across batch queue items to avoid reloading the model between files. Note that `ModelManager` caches only one model at a time — switching model names unloads the previous model before loading the new one, so the batch worker should hold a consistent model reference for the duration of a queue run and the GUI should not imply multi-model residency.
-- Ensure batch cancel stops before the next file, and file-level cancel terminates the child process when needed
-- Create/update tests for queue orchestration, event relay, soft cancel, hard-kill fallback, and cleanup behavior
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. Add `center_x` and `center_y` user-facing position properties to `CompositionLayer`.
+2. Convert center-origin coordinates to FFmpeg top-left coordinates using:
+   - `ffmpeg_x = (output_width / 2) + center_x - (layer_width / 2)`
+   - `ffmpeg_y = (output_height / 2) + center_y - (layer_height / 2)`
+3. Update `to_dict()` and `from_dict()` to serialize the new coordinate model together with `composition_schema_version`.
+4. Update `filterGraph.py` overlay placement to use the center-origin conversion.
+5. Update layout presets in `presets.py` so `(0, 0)` means perfectly centered.
+6. Update Render Composition UI controls so the X/Y fields display center-origin values.
+7. Audit any preview-hit-testing or drag logic that still assumes top-left-origin values and update it to use the new user-facing coordinates.
 
 **Files:**
-- Create `src/audio_visualizer/ui/workers/srtGenWorker.py`
-- Create `src/audio_visualizer/ui/workers/srtTranscribeChild.py`
-- Modify `src/audio_visualizer/srt/srtApi.py`
-- Modify `src/audio_visualizer/srt/core/pipeline.py`
-- Modify `src/audio_visualizer/srt/core/whisperWrapper.py`
-- Create `tests/test_srt_gen_worker.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/model.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/filterGraph.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/presets.py`
+- `src/audio_visualizer/ui/tabs/renderCompositionTab.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/timelineWidget.py`
 
-**Success criteria:** SRT Gen jobs can be started, monitored, and canceled from the UI. Batch jobs stop cleanly, per-file work can be forcibly terminated when necessary, and temporary artifacts are cleaned up predictably.
+**Success criteria:** A layer at `(0, 0)` is centered, presets place layers correctly under the new coordinate model, and old composition payloads are rejected instead of being silently mispositioned.
 
-### 3.3: Register transcription outputs and sidecars for downstream tabs
+**Close-out:** Add or update tests for center-origin serialization, preset placement, and FFmpeg coordinate math, run the relevant tests and `pytest tests/ -v` when shared composition behavior changed, update `.agents/docs/architecture/` docs if composition contracts changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-SRT Gen is the first cross-tab producer in the new workflow, so it must publish its outputs in a way that SRT Edit, Caption Animate, and Composition can reuse without manual re-entry.
+### 3.2: Settings Panel Layout Fix
+
+Fix label and control alignment in the visual and audio settings panels.
 
 **Tasks:**
-- Register generated subtitle files, JSON bundles, transcript outputs, segment sidecars, and optional word-output files as `SessionAsset` entries with source metadata
-- Capture enough metadata to distinguish primary subtitle outputs from diagnostic sidecars
-- Add tab actions to send generated outputs directly into SRT Edit and Caption Animate selection flows
-- Ensure project save/load restores queued inputs, tab settings, and generated output references correctly
-- Create/update tests for asset registration, downstream handoff metadata, and project-state restoration
-- Run tests: `pytest tests/ -v`
-- Update `.agents/docs/` architecture documentation as needed
-- Commit following `COMMIT_MESSAGE.md` format and then push
+1. Rebuild the visual position-and-size controls with a compact `QGridLayout`.
+2. Use the row layout:
+   - Row 0: X and Y,
+   - Row 1: W, H, Lock Ratio,
+   - Row 2: Z, Original Size, Fit to Output.
+3. Rebuild the audio settings area with a `QFormLayout`.
+4. Keep the audio controls grouped as Name, Source, Start, Duration plus Full Length, Volume, and Mute.
 
 **Files:**
-- Modify `src/audio_visualizer/ui/tabs/srtGenTab.py`
-- Modify `src/audio_visualizer/ui/sessionContext.py`
-- Modify `src/audio_visualizer/ui/settingsSchema.py`
-- Create or modify `tests/test_ui_srt_gen_tab.py`
+- `src/audio_visualizer/ui/tabs/renderCompositionTab.py`
 
-**Success criteria:** SRT Gen outputs become reusable session assets, including the JSON bundles needed for later resync work, and downstream tabs can consume them without the user re-browsing the filesystem.
+**Success criteria:** Visual and audio controls are aligned, compact, and readable without the current large label/input gaps.
 
-### 3.4: Phase 3 Code Review
+**Close-out:** Add or update UI tests for the new control layout where practical, run the relevant tests and `pytest tests/ -v` when shared composition UI changed, update `.agents/docs/architecture/` docs if UI structure changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
 
-- Review the changes and ensure the phase is entirely implemented
-- Review code for deprecated code or dead code
-- Review tests to ensure they are well-structured
-- Verify batch orchestration, cancel behavior, and session-asset publication all work together
+### 3.3: Audio Volume and Mute Controls
 
-**Phase 3 Changelog:**
-- Added a batch-capable SRT Gen tab with a full advanced settings surface
-- Implemented cancellable transcription orchestration around the synchronous SRT pipeline
-- Registered transcription outputs and sidecars in `SessionContext` for downstream reuse
+Add volume and mute controls to composition audio layers.
+
+**Tasks:**
+1. Add `volume: float` and `muted: bool` to `CompositionAudioLayer`.
+2. Persist the new audio-layer fields in `to_dict()` and `from_dict()`.
+3. Add a volume slider and mute toggle in the audio-layer settings panel.
+4. Add a mute toggle on timeline audio items and visually dim muted tracks.
+5. Update `filterGraph.py` so audio layers apply a `volume=` filter when active and are omitted from the audio mix when muted.
+6. Add undo commands for volume changes and mute toggles.
+
+**Files:**
+- `src/audio_visualizer/ui/tabs/renderComposition/model.py`
+- `src/audio_visualizer/ui/tabs/renderCompositionTab.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/timelineWidget.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/filterGraph.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/commands.py`
+
+**Success criteria:** Volume changes affect rendered output, mute can be toggled from both settings and timeline UI, muted tracks are visually distinct, and undo/redo covers both operations.
+
+**Close-out:** Add or update tests for audio-layer persistence, mute handling, volume filters, and undo behavior, run the relevant tests and `pytest tests/ -v` when shared composition behavior changed, update `.agents/docs/architecture/` docs if audio-layer behavior changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
+
+### 3.4: Visual Asset Resize Controls
+
+Add ratio lock and quick-resize helpers for visual layers.
+
+**Tasks:**
+1. Add a default-on "Lock Ratio" checkbox for visual resizing.
+2. Add an "Original Size" action that restores source-media dimensions.
+3. Add a "Fit to Output" action that scales to the output size while respecting ratio lock when enabled.
+4. Reuse existing undoable size-change commands where possible instead of introducing parallel state paths.
+
+**Files:**
+- `src/audio_visualizer/ui/tabs/renderCompositionTab.py`
+
+**Success criteria:** Users can resize visual layers proportionally, restore source size, and fit a layer to the output area with correct undo support.
+
+**Close-out:** Add or update tests for ratio locking and resize helpers where practical, run the relevant tests and `pytest tests/ -v` when shared composition UI changed, update `.agents/docs/architecture/` docs if resize behavior changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
+
+### 3.5: Track Ordering on the Timeline
+
+Sort track rows so the timeline reflects the intended stacking order.
+
+**Tasks:**
+1. Sort visual tracks by Z order descending so the highest Z appears at the top.
+2. Display audio tracks below visual tracks in audio-layer list order.
+3. Update drag-reorder behavior so the rendered ordering invariant is preserved after user interaction.
+
+**Files:**
+- `src/audio_visualizer/ui/tabs/renderComposition/timelineWidget.py`
+
+**Success criteria:** The timeline consistently shows highest-Z visual layers first and audio layers below them without letting drag interactions break that rule.
+
+**Close-out:** Add or update tests for track ordering and drag behavior, run the relevant tests and `pytest tests/ -v` when shared composition timeline behavior changed, update `.agents/docs/architecture/` docs if timeline ordering changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
+
+### 3.6: Video-with-Audio Dual Track Insertion
+
+Automatically create linked visual and audio layers when a source video contains audio.
+
+**Tasks:**
+1. Extend `_probe_media_dimensions()` so it also reports whether a source file has one or more audio streams.
+2. When a video with audio is added, create both a `CompositionLayer` and a `CompositionAudioLayer`.
+3. Add `linked_layer_id` to both model types and persist it.
+4. On delete of either linked layer, show a three-way confirmation dialog: Delete both, Delete only this, Cancel.
+5. Add undo support for linked layer creation and linked delete actions.
+
+**Files:**
+- `src/audio_visualizer/ui/tabs/renderCompositionTab.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/model.py`
+- `src/audio_visualizer/ui/tabs/renderComposition/commands.py`
+
+**Success criteria:** Adding a video with audio creates linked visual and audio tracks automatically, deletion prompts behave correctly, and linked state survives persistence and undo/redo.
+
+**Close-out:** Add or update tests for linked-layer creation, persistence, and delete behavior, run the relevant tests and `pytest tests/ -v` when shared composition ingest behavior changed, update `.agents/docs/architecture/` docs if media-ingest behavior changed, then `git add`, commit with the required `COMMIT_MESSAGE.md` format, and `git push`.
+
+### 3.7: Phase 3 Review
+
+**Tasks:**
+1. Review coordinate, audio-layer, layout, and linked-layer changes together to verify there are no conflicting assumptions.
+2. Remove any leftover top-left-origin logic or dead UI paths replaced by the new controls.
+3. Verify tests cover persistence, filter-graph output, and user interaction paths touched in this phase.
+4. Commit and push any cleanup changes from this sub-phase.
+
+**Files:**
+- Phase 3 implementation files
+- Phase 3 tests
+
+**Success criteria:** Phase 3 leaves Render Composition internally consistent before the real-time playback engine is introduced.
+
+### 3.8: Phase 3 Changelog
+
+**Tasks:**
+1. Summarize the coordinate-system break, audio controls, layout fixes, and linked-layer behavior added in Phase 3.
+2. Note any UX or serialization assumptions that Phase 4 must preserve.
+3. Commit and push any documentation updates from this sub-phase.
+
+**Files:**
+- Phase 3 implementation notes
+
+**Success criteria:** The next Render Composition phase can build on stable coordinate, layout, and media-layer behavior.
