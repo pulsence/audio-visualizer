@@ -86,3 +86,46 @@ Make markdown round-trip correctly through the bundle path and configurable thro
 - Phase 8 implementation notes
 
 **Success criteria:** Later caption work can rely on markdown being preserved as source text all the way out of SRT Edit.
+
+---
+
+## Phase 8 Completion Summary
+
+All sub-phases (8.1 through 8.5) are complete.
+
+### Changes Delivered
+
+**8.1 — Markdown Syntax Highlighting:**
+- Created `markdownHighlighter.py` with `MarkdownHighlighter` (QSyntaxHighlighter) supporting `**bold**`, `*italic*`, `==highlight==`.
+- Applied to in-table `MultilineTextDelegate` editor and sidebar segment editor.
+- Delimiter characters rendered in subdued colour; content gets full visual treatment.
+- Bold detection takes priority over italic to avoid false matches on `**` delimiters.
+
+**8.2 — Controls Layout Restructure:**
+- Moved all playback, edit, save/export, and resync controls into the right sidebar.
+- Sidebar organized into QGroupBox sections: Segment Text, Playback, Edit, Save/Export, Resync, QA/Lint.
+- Added sidebar `QPlainTextEdit` for selected segment text with `MarkdownHighlighter` attached.
+- Bidirectional sync: selecting a table row loads the text; editing in the sidebar pushes undo commands back to the document and table.
+- Removed old bottom toolbars (`_resync_toolbar`, `controls_layout`) and unused imports.
+
+**8.3 — Markdown Preservation in Bundle I/O and SRT Export:**
+- Verified bundle v2 save/load preserves markdown text exactly (including `original_text` field).
+- Added `strip_markdown()` helper in `parser.py` for plain-text export.
+- `write_srt_file` and `document.save_srt` accept `strip_md` parameter.
+- Export dialog asks user whether to strip or preserve markdown markers.
+- Markdown-to-ASS conversion is deferred to Caption Animator (not pre-rendered into bundle storage).
+
+**8.4 — Review:**
+- Removed dead toolbar code and unused imports.
+- Verified all 1219 tests pass with zero failures.
+
+### Key Design Rule
+**Markdown stays as source text until Caption Animator render time.** The SRT Edit tab stores `**bold**`, `*italic*`, and `==highlight==` as literal markdown in the document and bundle. The highlighter provides visual feedback only. Stripping happens exclusively at the SRT/VTT export boundary when the user requests it. Caption Animator is responsible for converting markdown to ASS styling at render time.
+
+### Test Coverage
+70 tests in `test_ui_srt_edit_tab.py` covering:
+- Markdown highlighting (bold, italic, highlight, mixed, nested, delegate integration)
+- Sidebar editor sync (selection, text changes, undo, grouped controls)
+- Markdown stripping (all patterns, mixed, nested, empty string)
+- Bundle round-trip (markdown preserved in text and original_text)
+- SRT export (with strip, without strip, document-level save_srt)
