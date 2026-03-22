@@ -46,6 +46,8 @@ def _ensure_animations_loaded() -> None:
         pulseAnimation,
         beatPopAnimation,
         emphasisGlowAnimation,
+        wordHighlightAnimation,
+        typewriterAnimation,
     )
 
     _loaded = True
@@ -114,6 +116,8 @@ _CLASS_TO_MODULE = {
     "PulseAnimation": "pulseAnimation",
     "BeatPopAnimation": "beatPopAnimation",
     "EmphasisGlowAnimation": "emphasisGlowAnimation",
+    "WordHighlightAnimation": "wordHighlightAnimation",
+    "TypewriterAnimation": "typewriterAnimation",
 }
 
 
@@ -141,6 +145,8 @@ __all__ = [
     "PulseAnimation",
     "BeatPopAnimation",
     "EmphasisGlowAnimation",
+    "WordHighlightAnimation",
+    "TypewriterAnimation",
 ]
 
 

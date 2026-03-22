@@ -56,6 +56,7 @@ class TestCaptionAnimateTabSettings:
             "animation",
             "input_audio_path",
             "mux_audio",
+            "export_overlay",
             "audio_reactive",
         }
         assert set(settings.keys()) == expected_keys
@@ -385,6 +386,7 @@ class TestCaptionAnimateOutputs:
         ctx = WorkspaceContext()
         tab.set_workspace_context(ctx)
         tab._subtitle_edit.setText(str(tmp_path / "sample.srt"))
+        tab._export_overlay_cb.setChecked(True)  # Enable overlay export
 
         delivery = tmp_path / "sample_caption.mp4"
         overlay = tmp_path / "sample_caption_overlay.mov"
@@ -791,6 +793,172 @@ class TestCaptionAnimateRenderPreview:
         tab = CaptionAnimateTab()
         tab.set_global_busy(True, owner_tab_id="caption_animate")
         assert tab._preview_render_btn.isEnabled() is True
+
+
+class TestCaptionAnimateTabBundleInput:
+    """Phase 10.1: Bundle file input support."""
+
+    def test_validate_json_extension_passes(self):
+        tab = CaptionAnimateTab()
+        tab._subtitle_edit.setText("/tmp/test.json")
+        valid, msg = tab.validate_settings()
+        assert valid is True
+
+    def test_subtitle_filter_includes_json(self):
+        from audio_visualizer.ui.tabs.captionAnimateTab import _SUBTITLE_FILTERS
+        assert "*.json" in _SUBTITLE_FILTERS
+
+    def test_word_timing_indicator_bundle(self):
+        tab = CaptionAnimateTab()
+        tab._update_word_timing_indicator(Path("/tmp/test.json"))
+        # Check that label text was set (isVisible won't work without showing)
+        assert "precise" in tab._word_timing_label.text().lower()
+
+    def test_word_timing_indicator_srt(self):
+        tab = CaptionAnimateTab()
+        tab._update_word_timing_indicator(Path("/tmp/test.srt"))
+        assert "estimated" in tab._word_timing_label.text().lower()
+
+
+class TestCaptionAnimateOutputConsolidation:
+    """Phase 10.5: Render output consolidation."""
+
+    def test_export_overlay_default_off(self):
+        tab = CaptionAnimateTab()
+        assert tab._export_overlay_cb.isChecked() is False
+
+    def test_export_overlay_in_settings(self):
+        tab = CaptionAnimateTab()
+        tab._export_overlay_cb.setChecked(True)
+        settings = tab.collect_settings()
+        assert settings["export_overlay"] is True
+
+    def test_export_overlay_roundtrip(self):
+        tab = CaptionAnimateTab()
+        tab.apply_settings({"export_overlay": True})
+        assert tab._export_overlay_cb.isChecked() is True
+
+    def test_mp4_registered_as_primary_asset(self, tmp_path):
+        tab = CaptionAnimateTab()
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
+        tab._subtitle_edit.setText(str(tmp_path / "sample.srt"))
+        tab._export_overlay_cb.setChecked(False)
+
+        delivery = tmp_path / "sample_caption.mp4"
+        delivery.write_bytes(b"delivery")
+
+        tab._on_render_completed({
+            "output_path": str(delivery),
+            "delivery_path": str(delivery),
+            "overlay_path": "",
+            "width": 1920,
+            "height": 200,
+            "duration_ms": 5000,
+            "quality": "small",
+        })
+
+        assets = ctx.list_assets(category="video")
+        assert len(assets) == 1
+        assert assets[0].path == delivery
+        assert assets[0].metadata.get("delivery") is True
+
+    def test_overlay_registered_when_export_checked(self, tmp_path):
+        tab = CaptionAnimateTab()
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
+        tab._subtitle_edit.setText(str(tmp_path / "sample.srt"))
+        tab._export_overlay_cb.setChecked(True)
+
+        delivery = tmp_path / "sample_caption.mp4"
+        overlay = tmp_path / "sample_caption_overlay.mov"
+        delivery.write_bytes(b"delivery")
+        overlay.write_bytes(b"overlay")
+
+        tab._on_render_completed({
+            "output_path": str(delivery),
+            "delivery_path": str(delivery),
+            "overlay_path": str(overlay),
+            "width": 1920,
+            "height": 200,
+            "duration_ms": 5000,
+            "quality": "large",
+            "overlay_has_alpha": True,
+        })
+
+        assets = ctx.list_assets(category="video")
+        assert len(assets) == 2
+        overlay_asset = next(a for a in assets if a.path == overlay)
+        assert overlay_asset.metadata.get("advanced_overlay") is True
+
+
+class TestCaptionAnimateRenderQueue:
+    """Phase 10.6: Render queue status indicator."""
+
+    def test_queue_status_initial(self):
+        tab = CaptionAnimateTab()
+        assert "idle" in tab._queue_status_label.text().lower()
+
+    def test_queue_status_busy(self):
+        tab = CaptionAnimateTab()
+        tab.set_global_busy(True, owner_tab_id="audio_visualizer")
+        assert "busy" in tab._queue_status_label.text().lower()
+        assert "audio_visualizer" in tab._queue_status_label.text()
+
+    def test_queue_status_idle_after_busy(self):
+        tab = CaptionAnimateTab()
+        tab.set_global_busy(True, owner_tab_id="audio_visualizer")
+        tab.set_global_busy(False, owner_tab_id="audio_visualizer")
+        assert "idle" in tab._queue_status_label.text().lower()
+
+    def test_queue_status_on_render_completed(self, tmp_path):
+        tab = CaptionAnimateTab()
+        ctx = WorkspaceContext()
+        tab.set_workspace_context(ctx)
+        delivery = tmp_path / "test.mp4"
+        delivery.write_bytes(b"data")
+        tab._queue_status_label.setText("Render queue: busy (caption_animate)")
+        tab._on_render_completed({
+            "output_path": str(delivery),
+            "delivery_path": str(delivery),
+            "width": 1920,
+            "height": 200,
+            "duration_ms": 5000,
+            "quality": "small",
+        })
+        assert "idle" in tab._queue_status_label.text().lower()
+
+
+class TestCaptionAnimateNewAnimations:
+    """Phase 10.3/10.4: New animation types visible in combo."""
+
+    def test_word_highlight_in_combo(self):
+        tab = CaptionAnimateTab()
+        items = [
+            tab._animation_type_combo.itemText(i)
+            for i in range(tab._animation_type_combo.count())
+        ]
+        assert "word_highlight" in items
+
+    def test_typewriter_in_combo(self):
+        tab = CaptionAnimateTab()
+        items = [
+            tab._animation_type_combo.itemText(i)
+            for i in range(tab._animation_type_combo.count())
+        ]
+        assert "typewriter" in items
+
+    def test_word_highlight_creates_controls(self):
+        tab = CaptionAnimateTab()
+        tab._animation_type_combo.setCurrentText("word_highlight")
+        assert "mode" in tab._anim_param_controls
+        assert "highlight_color" in tab._anim_param_controls
+
+    def test_typewriter_creates_controls(self):
+        tab = CaptionAnimateTab()
+        tab._animation_type_combo.setCurrentText("typewriter")
+        assert "cursor_char" in tab._anim_param_controls
+        assert "cursor_blink_ms" in tab._anim_param_controls
 
 
 class TestCaptionAnimatePreviewTempCleanup:

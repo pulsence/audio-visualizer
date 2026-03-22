@@ -71,6 +71,10 @@ class WordRevealAnimation(BaseAnimation):
         """
         Convert plain text into ASS karaoke segments using \\k tags.
 
+        Strips any existing ASS override tags before tokenization so that
+        markdown-converted styling (e.g. {\\b1}bold{\\b0}) does not break
+        word splitting.  Highlight markers (==word==) are also removed.
+
         Args:
             plain_text: The subtitle text to convert
             event_duration_ms: Duration of the subtitle event in milliseconds
@@ -78,7 +82,12 @@ class WordRevealAnimation(BaseAnimation):
         Returns:
             ASS-formatted text with \\k tags for each word
         """
-        tokens = self._tokenize_with_newlines(plain_text)
+        from ..core.markdownToAss import strip_ass_overrides, strip_highlight_markers
+
+        clean_text = strip_ass_overrides(plain_text)
+        clean_text = strip_highlight_markers(clean_text)
+
+        tokens = self._tokenize_with_newlines(clean_text)
         if not tokens:
             return plain_text
 

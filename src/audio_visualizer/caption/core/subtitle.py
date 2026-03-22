@@ -2,11 +2,11 @@
 Subtitle file wrapper.
 
 This module provides a high-level wrapper around pysubs2 for working with
-subtitle files.
+subtitle files.  Supports loading from .srt, .ass, and JSON bundle files.
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import pysubs2
 
@@ -29,6 +29,10 @@ class SubtitleFile:
         # Load subtitle file
         sub = SubtitleFile.load(Path("input.srt"))
 
+        # Load from bundle with word-level timing
+        sub = SubtitleFile.load_bundle(Path("transcript.json"))
+        print(sub.has_word_timing)  # True
+
         # Apply style
         preset = PresetConfig.from_dict({...})
         style = StyleBuilder(preset).build()
@@ -49,10 +53,23 @@ class SubtitleFile:
 
         Args:
             subs: Loaded pysubs2 SSAFile
-            source_format: Original format ("srt", "ass", etc.)
+            source_format: Original format ("srt", "ass", "bundle", etc.)
         """
         self.subs = subs
         self.source_format = source_format
+
+        # Word-level timing from bundle files.  Each entry maps an event
+        # index to a list of dicts: [{"start": float, "end": float, "text": str}, ...]
+        self._word_timing: Dict[int, List[Dict[str, Any]]] = {}
+
+    @property
+    def has_word_timing(self) -> bool:
+        """Return True if precise word-level timing data is available."""
+        return bool(self._word_timing)
+
+    def get_word_timing(self, event_index: int) -> Optional[List[Dict[str, Any]]]:
+        """Return word timing for a specific event, or None."""
+        return self._word_timing.get(event_index)
 
     @classmethod
     def load(cls, path: Path) -> "SubtitleFile":
@@ -60,7 +77,7 @@ class SubtitleFile:
         Load subtitle file from path.
 
         Args:
-            path: Path to subtitle file (.srt or .ass)
+            path: Path to subtitle file (.srt, .ass, or .json bundle)
 
         Returns:
             SubtitleFile instance
@@ -70,11 +87,78 @@ class SubtitleFile:
         """
         ext = path.suffix.lower().lstrip(".")
 
+        if ext == "json":
+            return cls.load_bundle(path)
+
         if ext not in ("srt", "ass"):
-            raise ValueError(f"Unsupported subtitle format: {ext}. Use .srt or .ass")
+            raise ValueError(f"Unsupported subtitle format: {ext}. Use .srt, .ass, or .json bundle")
 
         subs = pysubs2.load(str(path))
         return cls(subs, source_format=ext)
+
+    @classmethod
+    def load_bundle(cls, path: Path) -> "SubtitleFile":
+        """Load a JSON bundle file and convert to subtitle events.
+
+        Uses ``read_json_bundle()`` from the SRT IO package as the
+        sole entry point for bundle reading.  Word-level timing is
+        extracted and stored so that word-aware animations can use
+        precise timestamps instead of estimation.
+
+        Args:
+            path: Path to a ``.json`` bundle file.
+
+        Returns:
+            SubtitleFile with ``source_format="bundle"`` and
+            ``has_word_timing`` set to True when word data exists.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            ValueError: If the file is not a valid JSON bundle.
+        """
+        from audio_visualizer.srt.io.bundleReader import read_json_bundle
+
+        bundle = read_json_bundle(path)
+
+        subs = pysubs2.SSAFile()
+        word_timing: Dict[int, List[Dict[str, Any]]] = {}
+
+        for idx, sub_entry in enumerate(bundle.get("subtitles", [])):
+            start_sec = float(sub_entry.get("start", 0))
+            end_sec = float(sub_entry.get("end", 0))
+            text = sub_entry.get("text", "")
+
+            event = pysubs2.SSAEvent(
+                start=int(start_sec * 1000),
+                end=int(end_sec * 1000),
+                text=text,
+            )
+            subs.events.append(event)
+
+            # Extract word-level timing if present
+            words = sub_entry.get("words", [])
+            if words:
+                wt_list: List[Dict[str, Any]] = []
+                for w in words:
+                    # WordItem objects have .start, .end, .text attributes
+                    if hasattr(w, "start"):
+                        wt_list.append({
+                            "start": float(w.start),
+                            "end": float(w.end),
+                            "text": getattr(w, "text", ""),
+                        })
+                    elif isinstance(w, dict):
+                        wt_list.append({
+                            "start": float(w.get("start", 0)),
+                            "end": float(w.get("end", 0)),
+                            "text": w.get("text", ""),
+                        })
+                if wt_list:
+                    word_timing[idx] = wt_list
+
+        instance = cls(subs, source_format="bundle")
+        instance._word_timing = word_timing
+        return instance
 
     def apply_style(
         self,

@@ -123,9 +123,9 @@ def render_subtitle(
     try:
         # Validate input
         ext = input_path.suffix.lower().lstrip(".")
-        if ext not in ("srt", "ass"):
+        if ext not in ("srt", "ass", "json"):
             return RenderResult(
-                success=False, error=f"Unsupported format: {ext}. Use .srt or .ass"
+                success=False, error=f"Unsupported format: {ext}. Use .srt, .ass, or .json"
             )
 
         if not input_path.exists():
@@ -143,9 +143,23 @@ def render_subtitle(
 
         progress.step(f"Loading: {input_path.name}")
 
-        # Load subtitle
+        # Load subtitle (SubtitleFile.load handles .json bundles)
         subtitle = SubtitleFile.load(input_path)
-        progress.step(f"Loaded {len(subtitle.subs.events)} subtitle events")
+        if subtitle.has_word_timing:
+            progress.step(
+                f"Loaded {len(subtitle.subs.events)} subtitle events "
+                f"with precise word timing from bundle"
+            )
+        else:
+            progress.step(f"Loaded {len(subtitle.subs.events)} subtitle events")
+
+        # Apply markdown-to-ASS conversion if any events contain markdown
+        from .core.markdownToAss import markdown_to_ass
+        for event in subtitle.subs.events:
+            if hasattr(event, "text") and event.text:
+                converted = markdown_to_ass(event.text)
+                if converted != event.text:
+                    event.text = converted
 
         # Determine if we should apply animation
         apply_animation = config.apply_animation

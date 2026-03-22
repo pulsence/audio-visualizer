@@ -558,6 +558,20 @@ class MainWindow(QMainWindow):
         """Return whether the shared job pool is busy."""
         return self._global_busy
 
+    def render_queue_info(self) -> dict:
+        """Return render queue status for cross-tab visibility.
+
+        Returns a dict with:
+        - ``busy``: bool — whether a job is currently running
+        - ``owner_tab_id``: str | None — the tab that owns the active job
+        - ``idle``: bool — convenience inverse of busy
+        """
+        return {
+            "busy": self._global_busy,
+            "owner_tab_id": self._busy_owner_tab_id,
+            "idle": not self._global_busy,
+        }
+
     def try_start_job(self, owner_tab_id: str) -> bool:
         """Attempt to start a job. Returns False if pool is busy."""
         if self._global_busy:

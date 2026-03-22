@@ -53,9 +53,10 @@ from audio_visualizer.ui.workers.captionRenderWorker import (
 logger = logging.getLogger(__name__)
 
 _SUBTITLE_FILTERS = (
-    "Subtitle files (*.srt *.ass);;"
+    "Subtitle files (*.srt *.ass *.json);;"
     "SRT files (*.srt);;"
     "ASS files (*.ass);;"
+    "JSON bundle files (*.json);;"
     "All files (*)"
 )
 
@@ -163,12 +164,20 @@ class CaptionAnimateTab(BaseTab):
         sub_row = QHBoxLayout()
         sub_row.addWidget(QLabel("Subtitle file:"))
         self._subtitle_edit = QLineEdit()
-        self._subtitle_edit.setPlaceholderText("Select a .srt or .ass file")
+        self._subtitle_edit.setPlaceholderText("Select a .srt, .ass, or .json bundle file")
         sub_row.addWidget(self._subtitle_edit)
         self._subtitle_browse_btn = QPushButton("Browse...")
         self._subtitle_browse_btn.clicked.connect(self._browse_subtitle)
         sub_row.addWidget(self._subtitle_browse_btn)
         layout.addLayout(sub_row)
+
+        # Word timing quality indicator
+        timing_row = QHBoxLayout()
+        self._word_timing_label = QLabel("")
+        self._word_timing_label.setVisible(False)
+        timing_row.addWidget(self._word_timing_label)
+        timing_row.addStretch()
+        layout.addLayout(timing_row)
 
         # Session subtitle assets combo
         session_sub_row = QHBoxLayout()
@@ -640,6 +649,15 @@ class CaptionAnimateTab(BaseTab):
         self._mux_audio_cb = QCheckBox("Mux audio into output")
         self._mux_audio_cb.setChecked(False)
         options_row.addWidget(self._mux_audio_cb)
+
+        self._export_overlay_cb = QCheckBox("Export transparent overlay (advanced)")
+        self._export_overlay_cb.setChecked(False)
+        self._export_overlay_cb.setToolTip(
+            "When enabled, an additional transparent overlay video is rendered "
+            "alongside the primary MP4. Useful as an advanced composition helper."
+        )
+        options_row.addWidget(self._export_overlay_cb)
+
         options_row.addStretch()
         layout.addLayout(options_row)
 
@@ -660,6 +678,11 @@ class CaptionAnimateTab(BaseTab):
 
         self._status_label = QLabel("Ready")
         layout.addWidget(self._status_label)
+
+        # Shared render queue status (10.6)
+        self._queue_status_label = QLabel("Render queue: idle")
+        self._queue_status_label.setStyleSheet("color: #888;")
+        layout.addWidget(self._queue_status_label)
 
         group.setLayout(layout)
         return group
@@ -971,6 +994,25 @@ class CaptionAnimateTab(BaseTab):
         )
         if path is not None:
             self._subtitle_edit.setText(str(path))
+            self._update_word_timing_indicator(path)
+
+    def _update_word_timing_indicator(self, path: Path | str) -> None:
+        """Show word-timing quality label for the selected subtitle file."""
+        p = Path(path) if not isinstance(path, Path) else path
+        if p.suffix.lower() == ".json":
+            self._word_timing_label.setText(
+                "Bundle loaded — precise word timing available for word-aware animations"
+            )
+            self._word_timing_label.setStyleSheet("color: #4CAF50;")
+            self._word_timing_label.setVisible(True)
+        elif p.suffix.lower() in (".srt", ".ass"):
+            self._word_timing_label.setText(
+                "Plain subtitle — word-aware animations will use estimated timing"
+            )
+            self._word_timing_label.setStyleSheet("color: #FFA726;")
+            self._word_timing_label.setVisible(True)
+        else:
+            self._word_timing_label.setVisible(False)
 
     def _browse_output_dir(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
@@ -1307,7 +1349,12 @@ class CaptionAnimateTab(BaseTab):
         )
 
         delivery_path = out_parent / f"{subtitle_path.stem}_caption.mp4"
-        overlay_path = out_parent / f"{subtitle_path.stem}_caption_overlay.mov"
+        export_overlay = self._export_overlay_cb.isChecked()
+        overlay_path = (
+            out_parent / f"{subtitle_path.stem}_caption_overlay.mov"
+            if export_overlay
+            else delivery_path.with_suffix(".mov")  # temp path for intermediate
+        )
 
         # Build render config — use the preset name from builtin if selected
         preset_name = self._current_preset_name()
@@ -1357,6 +1404,8 @@ class CaptionAnimateTab(BaseTab):
         self._cancel_btn.setEnabled(True)
         self._progress_bar.setValue(0)
         self._status_label.setText("Starting caption render...")
+        self._queue_status_label.setText(f"Render queue: busy ({self.tab_id})")
+        self._queue_status_label.setStyleSheet("color: #FFA726;")
 
         # Show in global progress
         mw = self._safe_main_window()
@@ -1411,6 +1460,8 @@ class CaptionAnimateTab(BaseTab):
         self._start_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
         self._progress_bar.setValue(100)
+        self._queue_status_label.setText("Render queue: idle")
+        self._queue_status_label.setStyleSheet("color: #888;")
 
         output_path = data.get("output_path", "")
         delivery_path = data.get("delivery_path", output_path)
@@ -1460,8 +1511,9 @@ class CaptionAnimateTab(BaseTab):
                 )
             )
 
-        # Register the composition-facing overlay intermediate separately.
-        if overlay_path and Path(overlay_path).exists():
+        # Register the composition-facing overlay only when explicitly requested.
+        export_overlay = self._export_overlay_cb.isChecked()
+        if export_overlay and overlay_path and Path(overlay_path).exists():
             self.register_output_asset(
                 SessionAsset(
                     id=str(uuid.uuid4()),
@@ -1483,10 +1535,18 @@ class CaptionAnimateTab(BaseTab):
                         "render_quality": quality,
                         "alpha_expected": alpha_expected,
                         "delivery_path": delivery_path,
+                        "advanced_overlay": True,
                         "fps": self._fps_combo.currentText(),
                     },
                 )
             )
+        elif not export_overlay and overlay_path and Path(overlay_path).exists():
+            # Clean up intermediate overlay when not exporting
+            if str(overlay_path) != str(delivery_path):
+                try:
+                    Path(overlay_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
         logger.info("Caption render completed: %s", delivery_path)
 
@@ -1498,6 +1558,8 @@ class CaptionAnimateTab(BaseTab):
         self._is_preview_render = False
         self._cancel_btn.setEnabled(False)
         self._progress_bar.setValue(0)
+        self._queue_status_label.setText("Render queue: idle")
+        self._queue_status_label.setStyleSheet("color: #888;")
         self._status_label.setText(f"Failed: {error_message}")
         if was_preview:
             self._cleanup_preview_temp()
@@ -1517,6 +1579,8 @@ class CaptionAnimateTab(BaseTab):
         self._is_preview_render = False
         self._cancel_btn.setEnabled(False)
         self._progress_bar.setValue(0)
+        self._queue_status_label.setText("Render queue: idle")
+        self._queue_status_label.setStyleSheet("color: #888;")
         self._status_label.setText(f"Cancelled: {message}")
         if was_preview:
             self._cleanup_preview_temp()
@@ -1537,8 +1601,8 @@ class CaptionAnimateTab(BaseTab):
         if not sub_path:
             return False, "No subtitle file selected."
         p = Path(sub_path)
-        if p.suffix.lower() not in (".srt", ".ass"):
-            return False, "Subtitle file must be .srt or .ass."
+        if p.suffix.lower() not in (".srt", ".ass", ".json"):
+            return False, "Subtitle file must be .srt, .ass, or .json bundle."
         if self._mux_audio_cb.isChecked() and not self._input_audio_edit.text().strip():
             return False, "Select an audio file before enabling delivery audio mux."
         return True, ""
@@ -1599,6 +1663,7 @@ class CaptionAnimateTab(BaseTab):
             },
             "input_audio_path": self._input_audio_edit.text(),
             "mux_audio": self._mux_audio_cb.isChecked(),
+            "export_overlay": self._export_overlay_cb.isChecked(),
             "audio_reactive": {
                 "enabled": self._audio_reactive_group.isChecked(),
             },
@@ -1725,6 +1790,7 @@ class CaptionAnimateTab(BaseTab):
             if ar_audio:
                 self._input_audio_edit.setText(ar_audio)
         self._mux_audio_cb.setChecked(data.get("mux_audio", False))
+        self._export_overlay_cb.setChecked(data.get("export_overlay", False))
         self._sync_input_audio_combo_to_path()
 
     # ------------------------------------------------------------------
@@ -1732,6 +1798,15 @@ class CaptionAnimateTab(BaseTab):
     # ------------------------------------------------------------------
 
     def set_global_busy(self, is_busy: bool, owner_tab_id: str | None = None) -> None:
+        # Update shared queue status indicator
+        if is_busy:
+            source = owner_tab_id or "unknown"
+            self._queue_status_label.setText(f"Render queue: busy ({source})")
+            self._queue_status_label.setStyleSheet("color: #FFA726;")
+        else:
+            self._queue_status_label.setText("Render queue: idle")
+            self._queue_status_label.setStyleSheet("color: #888;")
+
         if owner_tab_id == self.tab_id:
             return
         self._start_btn.setEnabled(not is_busy)
