@@ -761,3 +761,90 @@ class TestMarkdownHighlighter:
                 found = True
                 break
         assert found, "Expected MarkdownHighlighter attached to editor document"
+
+
+class TestSidebarEditorSync:
+    """Tests for the sidebar segment text editor synchronization."""
+
+    def _make_tab_with_entries(self):
+        """Create an SrtEditTab with two subtitle entries."""
+        tab = SrtEditTab()
+        tab._document._entries = [
+            SubtitleEntry(index=1, start_ms=0, end_ms=2000, text="Hello"),
+            SubtitleEntry(index=2, start_ms=3000, end_ms=5000, text="World"),
+        ]
+        tab._table_model.refresh()
+        return tab
+
+    def test_sidebar_editor_exists(self):
+        """The sidebar should contain a QPlainTextEdit for segment editing."""
+        tab = SrtEditTab()
+        assert hasattr(tab, "_sidebar_editor")
+        from PySide6.QtWidgets import QPlainTextEdit
+        assert isinstance(tab._sidebar_editor, QPlainTextEdit)
+
+    def test_sidebar_has_markdown_highlighter(self):
+        """The sidebar editor should have a MarkdownHighlighter attached."""
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+        tab = SrtEditTab()
+        assert hasattr(tab, "_sidebar_highlighter")
+        assert isinstance(tab._sidebar_highlighter, MarkdownHighlighter)
+
+    def test_sidebar_shows_selected_entry_text(self):
+        """Selecting a table row should populate the sidebar editor."""
+        tab = self._make_tab_with_entries()
+        tab._table_view.selectRow(0)
+        assert tab._sidebar_editor.toPlainText() == "Hello"
+
+    def test_sidebar_follows_selection_change(self):
+        """Switching selection should update the sidebar text."""
+        tab = self._make_tab_with_entries()
+        tab._table_view.selectRow(0)
+        assert tab._sidebar_editor.toPlainText() == "Hello"
+        tab._table_view.selectRow(1)
+        assert tab._sidebar_editor.toPlainText() == "World"
+
+    def test_sidebar_edit_pushes_undo_command(self):
+        """Editing text in the sidebar should push an undo command."""
+        tab = self._make_tab_with_entries()
+        tab._table_view.selectRow(0)
+        assert tab._undo_stack.count() == 0
+
+        tab._sidebar_editor.setPlainText("Changed via sidebar")
+
+        assert tab._document.entries[0].text == "Changed via sidebar"
+        assert tab._undo_stack.count() == 1
+
+    def test_sidebar_edit_undo(self):
+        """Undoing a sidebar edit should restore the original text."""
+        tab = self._make_tab_with_entries()
+        tab._table_view.selectRow(0)
+        tab._sidebar_editor.setPlainText("Changed")
+
+        tab._undo_stack.undo()
+        assert tab._document.entries[0].text == "Hello"
+
+    def test_no_controls_in_old_toolbar_locations(self):
+        """Bottom toolbars should be removed — all controls are in the sidebar."""
+        tab = SrtEditTab()
+        # _resync_toolbar should no longer exist
+        assert not hasattr(tab, "_resync_toolbar")
+
+    def test_sidebar_controls_grouped(self):
+        """Verify the sidebar has QGroupBox sections for organized controls."""
+        from PySide6.QtWidgets import QGroupBox
+        tab = SrtEditTab()
+        # Find group boxes in the sidebar area — look through all children
+        groups = tab.findChildren(QGroupBox)
+        group_titles = {g.title() for g in groups}
+        expected = {"Segment Text", "Playback", "Edit", "Save / Export", "Resync", "QA / Lint"}
+        assert expected.issubset(group_titles), f"Missing groups: {expected - group_titles}"
+
+    def test_inline_text_edit_syncs_sidebar(self):
+        """An inline table text edit should update the sidebar editor."""
+        tab = self._make_tab_with_entries()
+        tab._table_view.selectRow(0)
+        assert tab._sidebar_editor.toPlainText() == "Hello"
+
+        tab._on_inline_edit(0, COL_TEXT, "Inline change")
+        assert tab._sidebar_editor.toPlainText() == "Inline change"

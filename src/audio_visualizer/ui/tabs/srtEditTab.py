@@ -29,12 +29,12 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QSpinBox,
     QSplitter,
     QTableView,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -150,7 +150,15 @@ class SrtEditTab(BaseTab):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        """Build the full tab layout."""
+        """Build the full tab layout.
+
+        Layout structure:
+        - Top: source picker row (audio + subtitle combos)
+        - Middle: vertical splitter (waveform on top, table+sidebar below)
+          - Table view on the left
+          - Right sidebar with: segment editor, playback, edit, save,
+            resync, and QA/lint sections
+        """
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(6, 6, 6, 6)
 
@@ -179,14 +187,14 @@ class SrtEditTab(BaseTab):
 
         root_layout.addLayout(picker_layout)
 
-        # -- Main splitter (waveform top, table + QA bottom) --
+        # -- Main splitter (waveform top, table + sidebar bottom) --
         self._main_splitter = QSplitter(Qt.Orientation.Vertical)
 
         # Waveform panel
         self._waveform_view = WaveformView()
         self._main_splitter.addWidget(self._waveform_view)
 
-        # Bottom panel (table + QA sidebar)
+        # Bottom panel (table + right sidebar)
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout()
         bottom_layout.setContentsMargins(0, 0, 0, 0)
@@ -203,8 +211,6 @@ class SrtEditTab(BaseTab):
 
         header = self._table_view.horizontalHeader()
         header.setStretchLastSection(False)
-        # COL_INDEX=0, COL_START=1, COL_END=2, COL_DURATION=3 => Fixed
-        # COL_TEXT=4 => Stretch, COL_SPEAKER=5 => Fixed narrow
         from audio_visualizer.ui.tabs.srtEdit.tableModel import (
             COL_INDEX, COL_START, COL_END, COL_DURATION, COL_TEXT, COL_SPEAKER,
             MultilineTextDelegate,
@@ -218,21 +224,123 @@ class SrtEditTab(BaseTab):
         header.setSectionResizeMode(COL_SPEAKER, QHeaderView.ResizeMode.Interactive)
         self._table_view.setColumnWidth(COL_SPEAKER, 80)
 
-        # Allow row heights to grow with content
         self._table_view.verticalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents
         )
 
         bottom_layout.addWidget(self._table_view, stretch=3)
 
-        # QA panel
-        qa_widget = QWidget()
-        qa_layout = QVBoxLayout()
-        qa_layout.setContentsMargins(4, 0, 0, 0)
+        # -- Right sidebar --
+        sidebar = self._build_sidebar()
+        bottom_layout.addWidget(sidebar, stretch=1)
 
-        # Lint profile selector
+        bottom_widget.setLayout(bottom_layout)
+        self._main_splitter.addWidget(bottom_widget)
+
+        self._main_splitter.setSizes([300, 400])
+        root_layout.addWidget(self._main_splitter, stretch=1)
+
+        self.setLayout(root_layout)
+
+        # -- Media player --
+        self._media_player = QMediaPlayer()
+        self._audio_output = QAudioOutput()
+        self._media_player.setAudioOutput(self._audio_output)
+
+    # ------------------------------------------------------------------
+    # Sidebar construction
+    # ------------------------------------------------------------------
+
+    def _build_sidebar(self) -> QWidget:
+        """Build the right sidebar with all control sections."""
+        sidebar = QWidget()
+        sidebar.setMinimumWidth(250)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(4, 0, 0, 0)
+
+        # --- Segment editor section ---
+        editor_group = QGroupBox("Segment Text")
+        editor_layout = QVBoxLayout()
+        self._sidebar_editor = QPlainTextEdit()
+        self._sidebar_editor.setPlaceholderText("Select a segment to edit its text here...")
+        self._sidebar_editor.setMaximumHeight(120)
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+        self._sidebar_highlighter = MarkdownHighlighter(self._sidebar_editor.document())
+        editor_layout.addWidget(self._sidebar_editor)
+        editor_group.setLayout(editor_layout)
+        layout.addWidget(editor_group)
+
+        # Track which entry the sidebar editor is bound to
+        self._sidebar_entry_index: int = -1
+        self._sidebar_updating: bool = False  # Guard against feedback loops
+
+        # --- Playback section ---
+        playback_group = QGroupBox("Playback")
+        playback_layout = QHBoxLayout()
+        self._play_btn = QPushButton("Play")
+        self._pause_btn = QPushButton("Pause")
+        self._stop_btn = QPushButton("Stop")
+        playback_layout.addWidget(self._play_btn)
+        playback_layout.addWidget(self._pause_btn)
+        playback_layout.addWidget(self._stop_btn)
+        playback_group.setLayout(playback_layout)
+        layout.addWidget(playback_group)
+
+        # --- Edit section ---
+        edit_group = QGroupBox("Edit")
+        edit_layout = QVBoxLayout()
+        edit_row1 = QHBoxLayout()
+        self._add_entry_btn = QPushButton("Add Entry")
+        self._remove_entry_btn = QPushButton("Remove Entry")
+        edit_row1.addWidget(self._add_entry_btn)
+        edit_row1.addWidget(self._remove_entry_btn)
+        edit_layout.addLayout(edit_row1)
+        edit_row2 = QHBoxLayout()
+        self._split_entry_btn = QPushButton("Split Entry")
+        self._merge_entries_btn = QPushButton("Merge Entries")
+        edit_row2.addWidget(self._split_entry_btn)
+        edit_row2.addWidget(self._merge_entries_btn)
+        edit_layout.addLayout(edit_row2)
+        edit_group.setLayout(edit_layout)
+        layout.addWidget(edit_group)
+
+        # --- Save section ---
+        save_group = QGroupBox("Save / Export")
+        save_layout = QHBoxLayout()
+        self._save_btn = QPushButton("Save SRT")
+        self._save_bundle_btn = QPushButton("Save Bundle")
+        self._export_btn = QPushButton("Export As...")
+        save_layout.addWidget(self._save_btn)
+        save_layout.addWidget(self._save_bundle_btn)
+        save_layout.addWidget(self._export_btn)
+        save_group.setLayout(save_layout)
+        layout.addWidget(save_group)
+
+        # --- Resync section ---
+        resync_group = QGroupBox("Resync")
+        resync_layout = QVBoxLayout()
+        resync_row1 = QHBoxLayout()
+        self._global_shift_btn = QPushButton("Global Shift")
+        self._shift_cursor_btn = QPushButton("Shift from Cursor")
+        resync_row1.addWidget(self._global_shift_btn)
+        resync_row1.addWidget(self._shift_cursor_btn)
+        resync_layout.addLayout(resync_row1)
+        resync_row2 = QHBoxLayout()
+        self._two_point_btn = QPushButton("2-Point Stretch")
+        self._fps_correct_btn = QPushButton("FPS Correction")
+        resync_row2.addWidget(self._two_point_btn)
+        resync_row2.addWidget(self._fps_correct_btn)
+        resync_layout.addLayout(resync_row2)
+        self._silence_snap_btn = QPushButton("Silence Snap")
+        resync_layout.addWidget(self._silence_snap_btn)
+        resync_group.setLayout(resync_layout)
+        layout.addWidget(resync_group)
+
+        # --- QA/Lint section ---
+        qa_group = QGroupBox("QA / Lint")
+        qa_layout = QVBoxLayout()
         profile_row = QHBoxLayout()
-        profile_row.addWidget(QLabel("Lint Profile:"))
+        profile_row.addWidget(QLabel("Profile:"))
         self._lint_profile_combo = QComboBox()
         for key, profile in BUILTIN_PROFILES.items():
             self._lint_profile_combo.addItem(profile.name, key)
@@ -243,74 +351,12 @@ class SrtEditTab(BaseTab):
 
         self._lint_list = QListWidget()
         qa_layout.addWidget(self._lint_list)
+        qa_group.setLayout(qa_layout)
+        layout.addWidget(qa_group)
 
-        qa_widget.setLayout(qa_layout)
-        qa_widget.setMinimumWidth(250)
-        bottom_layout.addWidget(qa_widget, stretch=1)
-
-        bottom_widget.setLayout(bottom_layout)
-        self._main_splitter.addWidget(bottom_widget)
-
-        self._main_splitter.setSizes([300, 400])
-        root_layout.addWidget(self._main_splitter, stretch=1)
-
-        # -- Resync toolbar --
-        self._resync_toolbar = QToolBar("Resync")
-        self._global_shift_btn = QPushButton("Global Shift")
-        self._shift_cursor_btn = QPushButton("Shift from Cursor")
-        self._two_point_btn = QPushButton("2-Point Stretch")
-        self._fps_correct_btn = QPushButton("FPS Correction")
-        self._silence_snap_btn = QPushButton("Silence Snap")
-
-        for btn in (
-            self._global_shift_btn,
-            self._shift_cursor_btn,
-            self._two_point_btn,
-            self._fps_correct_btn,
-            self._silence_snap_btn,
-        ):
-            self._resync_toolbar.addWidget(btn)
-
-        root_layout.addWidget(self._resync_toolbar)
-
-        # -- Playback + edit toolbar --
-        controls_layout = QHBoxLayout()
-
-        self._play_btn = QPushButton("Play")
-        self._pause_btn = QPushButton("Pause")
-        self._stop_btn = QPushButton("Stop")
-        controls_layout.addWidget(self._play_btn)
-        controls_layout.addWidget(self._pause_btn)
-        controls_layout.addWidget(self._stop_btn)
-
-        controls_layout.addSpacing(20)
-
-        self._add_entry_btn = QPushButton("Add Entry")
-        self._remove_entry_btn = QPushButton("Remove Entry")
-        self._split_entry_btn = QPushButton("Split Entry")
-        self._merge_entries_btn = QPushButton("Merge Entries")
-        controls_layout.addWidget(self._add_entry_btn)
-        controls_layout.addWidget(self._remove_entry_btn)
-        controls_layout.addWidget(self._split_entry_btn)
-        controls_layout.addWidget(self._merge_entries_btn)
-
-        controls_layout.addStretch()
-
-        self._save_btn = QPushButton("Save SRT")
-        self._save_bundle_btn = QPushButton("Save Bundle")
-        self._export_btn = QPushButton("Export As...")
-        controls_layout.addWidget(self._save_btn)
-        controls_layout.addWidget(self._save_bundle_btn)
-        controls_layout.addWidget(self._export_btn)
-
-        root_layout.addLayout(controls_layout)
-
-        self.setLayout(root_layout)
-
-        # -- Media player --
-        self._media_player = QMediaPlayer()
-        self._audio_output = QAudioOutput()
-        self._media_player.setAudioOutput(self._audio_output)
+        layout.addStretch()
+        sidebar.setLayout(layout)
+        return sidebar
 
     def _connect_signals(self) -> None:
         """Wire up all signal/slot connections."""
@@ -340,6 +386,9 @@ class SrtEditTab(BaseTab):
         self._save_btn.clicked.connect(self._on_save)
         self._save_bundle_btn.clicked.connect(self._on_save_bundle)
         self._export_btn.clicked.connect(self._on_export)
+
+        # Sidebar editor: commit edits back to the document
+        self._sidebar_editor.textChanged.connect(self._on_sidebar_text_changed)
 
         self._waveform_view.seek_requested.connect(self._on_seek_requested)
         self._waveform_view.play_pause_requested.connect(self._on_play_pause_toggle)
@@ -614,9 +663,10 @@ class SrtEditTab(BaseTab):
             self._refresh_after_edit()
 
     def _refresh_after_edit(self) -> None:
-        """Refresh the table model and waveform regions after an edit."""
+        """Refresh the table model, waveform regions, and sidebar after an edit."""
         self._table_model.refresh()
         self._waveform_view.set_regions(self._document.entries)
+        self._sync_sidebar_to_selection()
         self.settings_changed.emit()
 
     def _on_table_selection_changed(self) -> None:
@@ -629,13 +679,65 @@ class SrtEditTab(BaseTab):
         entry_idx = mapping.entry_index
         if not self._waveform_view.has_regions():
             self._pending_highlight_row = entry_idx
-            return
         if mapping.is_word_row:
             # Highlight the parent segment and also sync word selection
-            self._waveform_view.highlight_region(entry_idx)
-            self._waveform_view.highlight_word(entry_idx, mapping.word_index)
+            if self._waveform_view.has_regions():
+                self._waveform_view.highlight_region(entry_idx)
+                self._waveform_view.highlight_word(entry_idx, mapping.word_index)
         else:
-            self._waveform_view.highlight_region(entry_idx)
+            if self._waveform_view.has_regions():
+                self._waveform_view.highlight_region(entry_idx)
+        # Sync sidebar editor to the selected segment
+        self._sync_sidebar_to_selection()
+
+    # ------------------------------------------------------------------
+    # Sidebar editor synchronization
+    # ------------------------------------------------------------------
+
+    def _sync_sidebar_to_selection(self) -> None:
+        """Update the sidebar editor to reflect the currently selected segment."""
+        entry_idx = self._selected_entry_index()
+        if entry_idx < 0 or entry_idx >= len(self._document.entries):
+            if self._sidebar_entry_index >= 0:
+                self._sidebar_updating = True
+                self._sidebar_editor.setPlainText("")
+                self._sidebar_entry_index = -1
+                self._sidebar_updating = False
+            return
+
+        entry = self._document.entries[entry_idx]
+        if entry_idx == self._sidebar_entry_index:
+            # Same entry — only update if text actually differs (avoids cursor jump)
+            if self._sidebar_editor.toPlainText() != entry.text:
+                self._sidebar_updating = True
+                self._sidebar_editor.setPlainText(entry.text)
+                self._sidebar_updating = False
+            return
+
+        # Different entry selected — load its text
+        self._sidebar_updating = True
+        self._sidebar_entry_index = entry_idx
+        self._sidebar_editor.setPlainText(entry.text)
+        self._sidebar_updating = False
+
+    def _on_sidebar_text_changed(self) -> None:
+        """Commit sidebar text edits back to the document via the undo stack."""
+        if self._sidebar_updating:
+            return
+        idx = self._sidebar_entry_index
+        if idx < 0 or idx >= len(self._document.entries):
+            return
+        new_text = self._sidebar_editor.toPlainText()
+        entry = self._document.entries[idx]
+        if new_text == entry.text:
+            return
+
+        old_text = entry.text
+        cmd = EditTextCommand(self._document, idx, new_text)
+        self._push_command(cmd)
+        self._table_model.notify_rows_changed(idx, idx)
+        self._waveform_view.set_regions(self._document.entries)
+        self._maybe_record_correction(entry, old_text, new_text)
 
     def _on_inline_edit(self, row: int, col: int, value: object) -> None:
         """Handle inline table edits via undoable commands.
@@ -669,6 +771,9 @@ class SrtEditTab(BaseTab):
 
         self._table_model.notify_rows_changed(row, row)
         self._waveform_view.set_regions(self._document.entries)
+        # Keep sidebar editor in sync when text is edited in the table
+        if col == COL_TEXT:
+            self._sync_sidebar_to_selection()
 
     def _on_data_changed(self, top_left, bottom_right, roles=None) -> None:
         """Resize rows when text content changes."""
