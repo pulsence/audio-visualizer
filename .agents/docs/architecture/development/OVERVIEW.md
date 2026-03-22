@@ -58,7 +58,7 @@ User → MainWindow (PySide6 thin shell)
 
 7. **Caption rendering** — `CaptionAnimateTab` submits a `CaptionRenderWorker` that calls the `caption` package API. Presets, styles, animations, and overlay sizing are applied before FFmpeg renders the transparent overlay.
 
-8. **Composition** — `RenderCompositionTab` builds a `CompositionModel` of visual and audio layers, generates an FFmpeg `filter_complex` command via `filterGraph.py`, and submits a `CompositionRenderWorker`.
+8. **Composition** — `RenderCompositionTab` builds a `CompositionModel` of visual and audio layers, generates an FFmpeg `filter_complex` command via `filterGraph.py`, and submits a `CompositionWorker`.
 
 9. **Cross-tab assets** — Tab outputs are registered as `SessionAsset` entries in `WorkspaceContext`. Downstream tabs can pick session assets via `SessionFilePickerDialog` instead of browsing the filesystem.
 

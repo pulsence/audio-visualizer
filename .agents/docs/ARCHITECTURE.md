@@ -23,7 +23,7 @@ src/audio_visualizer/
         sessionFilePicker.py # Shared browse-path resolution and session-aware chooser
         mediaProbe.py        # FFprobe-based media metadata extraction
         workflowRecipes.py   # Workflow recipe create/save/load/apply
-        renderDialog.py      # RenderDialog — post-render playback dialog
+        renderDialog.py      # RenderDialog — explicit output preview dialog
         widgets/
             clickableColorSwatch.py  # Clickable color swatch for chroma views
         tabs/
@@ -53,7 +53,7 @@ src/audio_visualizer/
             workerBridge.py          # WorkerBridge, WorkerSignals — Qt signal base
             srtGenWorker.py          # SrtGenWorker — background transcription
             captionRenderWorker.py   # CaptionRenderWorker — FFmpeg caption render
-            compositionWorker.py     # CompositionRenderWorker — FFmpeg composition render
+            compositionWorker.py     # CompositionWorker — FFmpeg composition render
         views/
             __init__.py      # Re-exports View, Fonts
             general/
@@ -253,10 +253,10 @@ All stages emit AppEvent (STAGE, RENDER_START/PROGRESS/COMPLETE) via emitter.
 
 ```
 CompositionModel (visual layers + audio layers)
-    → filterGraph.build_composition_command() → FFmpeg filter_complex
+    → filterGraph.build_ffmpeg_command() → FFmpeg filter_complex
     → visual layers: scale, overlay, loop, trim, setpts per layer
     → audio layers: adelay, atrim, stream_loop, amix
-    → CompositionRenderWorker → FFmpeg subprocess
+    → CompositionWorker → FFmpeg subprocess
     → progress parsed from stderr → output MP4
 
 Preview uses the same filter graph helpers with timestamp-based seek.

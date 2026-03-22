@@ -1,150 +1,151 @@
 # Rendering Architecture
 
-This document describes the threading model, video encoding pipeline, and audio muxing process.
+This document describes the shared job model, worker signaling, render/cancel boundaries, and the three heavy output paths used by the Stage Three UI: Audio Visualizer render, Caption Animate render, and Render Composition export.
 
-## Threading Model
+## Shared Job Model
 
-### Render Thread Pool
+### User-job pool
 
-`MainWindow.render_thread_pool` is a `QThreadPool` with `maxThreadCount=1`. This ensures only one render runs at a time. Renders are executed via `RenderWorker(QRunnable)` instances submitted to this pool.
+`MainWindow.render_thread_pool` is a shared `QThreadPool` with `maxThreadCount=1`.
 
-### Background Thread Pool
+- `AudioVisualizerTab`, `SrtGenTab`, `CaptionAnimateTab`, and `RenderCompositionTab` all submit heavy work into this pool.
+- `MainWindow.try_start_job()` blocks a second render/transcribe/export while one job is active.
+- `MainWindow.set_global_busy()` disables start controls in non-owner tabs and shows a busy indicator on the owning sidebar item.
 
-`MainWindow._background_thread_pool` is a separate `QThreadPool` used for non-render background tasks like `UpdateCheckWorker` and `_WaveformLoadWorker`. This prevents update checks and waveform audio loading from blocking renders.
+### Background pool
 
-### Signal Communication
+`MainWindow._background_thread_pool` is reserved for lightweight background work that should not consume the one user-job slot.
 
-`RenderWorker` communicates with the UI thread via Qt signals:
+- Update checks run through `UpdateCheckWorker`.
+- SRT Edit waveform loading uses `_WaveformLoadWorker`.
 
-| Signal | Parameters | Purpose |
-|--------|-----------|---------|
-| `finished` | `VideoData` | Render completed successfully |
-| `error` | `str` | Render failed with error message |
-| `status` | `str` | Status text update (e.g., "Loading audio...") |
-| `progress` | `int, int, float` | current_frame, total_frames, elapsed_seconds |
-| `canceled` | — | Render was canceled |
+## Worker Signaling
 
-## Video Pipeline
+Stage Three workers expose Qt-facing lifecycle state so tabs and the shell can react consistently.
 
-`RenderWorker.run()` executes the full render pipeline:
+### Shared signal vocabulary
 
-```
-1. Load audio
-   AudioData.load_audio_data(duration_seconds)
-   → audio_samples, sample_rate
+`audio_visualizer.ui.workers.workerBridge.WorkerSignals` defines:
 
-2. Chunk audio
-   AudioData.chunk_audio(fps)
-   → audio_frames[]
+- `started(job_type, owner_tab_id, label)`
+- `stage(name, index, total, data)`
+- `progress(percent, message, data)`
+- `log(level, message, data)`
+- `completed(result)`
+- `failed(error_message, data)`
+- `canceled(message)`
 
-3. Analyze audio
-   AudioData.analyze_audio()
-   → average_volumes[], chromagrams[]
+### Worker implementations
 
-4. Prepare video container
-   VideoData.prepare_container()
-   → PyAV container + video stream
+- `SrtGenWorker` uses `AppEventEmitter` + `WorkerBridge` to forward shared `events.py` payloads into `WorkerSignals`.
+- `CaptionRenderWorker` does the same while wrapping the caption package render API.
+- `CompositionWorker` emits the same `WorkerSignals` contract directly around the FFmpeg subprocess lifecycle.
+- `RenderWorker` (the legacy Audio Visualizer worker defined in `mainWindow.py`) still uses its older render-specific signals because it predates the shared worker bridge. `AudioVisualizerTab` adapts those signals into the same global job-status shell methods.
 
-5. (Optional) Prepare audio mux
-   _prepare_audio_mux()
-   → audio resampler + output audio stream
+## Global Status And Completion Flow
 
-6. Prepare visualizer
-   Visualizer.prepare_shapes()
+The shell does not auto-open preview dialogs on completion.
 
-7. Generate frames (main loop)
-   for i in range(len(audio_frames)):
-       frame = Visualizer.generate_frame(i)
-       encode frame to video stream
-       check for cancellation
-       emit progress signal
+- Tabs call `MainWindow.show_job_status()`, `update_job_progress()`, `show_job_completed()`, `show_job_failed()`, and `show_job_canceled()` to drive the persistent `JobStatusWidget`.
+- Completed jobs with an output path expose `Preview`, `Open Output`, and `Open Folder`.
+- `RenderDialog` is only opened when the user explicitly clicks `Preview`.
+- Terminal job rows auto-clear after 5 seconds unless the user dismisses them sooner.
 
-8. (Optional) Mux audio
-   _mux_audio()
-   → encode audio samples to audio stream
+## Audio Visualizer Render Path
 
-9. Finalize
-   VideoData.finalize()
-   → flush streams, close container
-```
+`AudioVisualizerTab` still owns the original PyAV-based frame renderer.
 
-## Codec Configuration
+### Pipeline
 
-`VideoData.prepare_container()` configures the video stream:
+`RenderWorker.run()` performs:
 
-- **Codec:** The user-selected codec (currently one of `h264`, `hevc`, `vp9`, `av1`, or `mpeg4`)
-- **Hardware acceleration:** If `hardware_accel` is True, attempts hardware-accelerated codec first (e.g., `h264_nvenc`), falls back to software codec on failure
-- **Bitrate:** Optional bitrate setting in bits per second
-- **CRF:** Optional Constant Rate Factor for quality control
-- **Container format:** Determined by output file extension (typically `.mp4`)
+1. `AudioData.load_audio_data()` to load source samples.
+2. `AudioData.chunk_audio()` and `AudioData.analyze_audio()` to derive per-frame inputs.
+3. `VideoData.prepare_container()` to open the output container/stream.
+4. Optional `_prepare_audio_mux()` when audio inclusion is enabled.
+5. `Visualizer.prepare_shapes()` and the frame-generation loop.
+6. Optional `_mux_audio()` after video frames are encoded.
+7. `VideoData.finalize()` to flush/close the container.
 
-## Audio Muxing
+### Progress and cancellation
 
-When `include_audio` is enabled:
+- Frame progress is emitted as `(current_frame, total_frames, elapsed_seconds)`.
+- Audio muxing emits a second progress channel so the tab can weight encode and mux work into one user-facing percentage.
+- Cancellation is cooperative: the worker checks its cancel flag between frame writes and before/within audio mux cleanup.
 
-1. **`_prepare_audio_mux()`** — Creates an AAC audio stream in the output container and sets up a PyAV `AudioResampler` to convert the input audio format to the output stream's expected format.
+### Preview behavior
 
-2. **`_mux_audio()`** — After all video frames are written:
-   - Demuxes and decodes the input audio stream
-   - Stops at the preview cutoff when `preview_seconds` is set
-   - Resamples decoded frames to match the output stream format
-   - Encodes and muxes the resampled frames into the container
+- Live preview renders clamp to 5 seconds.
+- Manual preview renders clamp to 30 seconds.
+- Preview outputs are shown in-tab and are not registered as session assets.
+- Final renders register a `visualizer_output` asset and surface completion through `JobStatusWidget`.
 
-## Cancellation
+## SRT Generation
 
-- `MainWindow.cancel_render()` calls `_active_render_worker.cancel()`
-- `RenderWorker.cancel()` sets `_cancel_requested = True`
-- `_check_canceled()` is called between frames; if set, it calls `_cleanup_on_cancel()` (closes containers) and emits the `canceled` signal
-- `MainWindow.render_canceled()` resets the UI controls
+`SrtGenWorker` is not a renderer, but it participates in the same shared user-job lane and status model.
 
-## Progress Reporting
+- The worker loads the Whisper model on the same worker thread that performs transcription to avoid cross-thread CUDA/cuBLAS issues.
+- Model loading is wrapped in a one-thread executor so cancellation can still poll while `load_model()` blocks.
+- Batch cancellation is cooperative between files; per-file work stops at the next safe boundary exposed by the underlying transcription pipeline.
 
-During the frame generation loop, `RenderWorker` emits `progress(current_frame, total_frames, elapsed_seconds)` signals. `MainWindow.render_progress_update()` uses these to:
+## Caption Animate Render Path
 
-- Update the progress bar value and maximum
-- Calculate and display ETA using `_format_duration()`
-- Update the status label with frame count and time remaining
+`CaptionAnimateTab` submits `CaptionRenderWorker`, which wraps `caption.captionApi.render_subtitle()`.
 
-## Preview Rendering
+### Overlay render
 
-Preview renders use the same pipeline with two differences:
+- The caption package generates/loads subtitle styling, applies animations, measures the required overlay size, writes an intermediate ASS file, and runs FFmpeg to render the overlay video.
+- Worker progress, stage, and completion metadata are forwarded through `WorkerBridge`.
 
-- `preview_seconds` parameter limits `AudioData.load_audio_data()` to load only the specified duration (5 seconds for live preview, 30 seconds for render preview)
-- Output is written to `{data_dir}/preview_output.mp4` instead of the user-specified path
+### Delivery output
 
-## Caption Delivery Output
+- When the user requests a delivery MP4, `_create_delivery_output()` writes to a temporary file in the target directory and renames it into place after FFmpeg succeeds.
+- This avoids in-place read/write conflicts when the overlay artifact and delivery artifact would otherwise overlap.
 
-`CaptionAnimateTab._create_delivery_output()` writes the final file to a temporary path then renames it to the target, avoiding FFmpeg in-place read/write conflicts. A process lock guards `_captured_process`. Preview temp files are cleaned up on rerender, failure, cancel, and close.
+### Cancellation
 
-## Composition Model (Phase 11)
+- `CaptionRenderWorker` monkey-patches `subprocess.Popen` during render so it can capture the FFmpeg process handle.
+- `cancel()` sets a flag and terminates the captured FFmpeg subprocess.
+- Partial outputs are cleaned up on cancel/failure.
 
-### CompositionLayer Changes
+### Preview behavior
 
-- `layer_type` has been removed from `CompositionLayer`.
-- `source_kind` (derived from file extension) and `source_duration_ms` have been added to `CompositionLayer`.
-- `source_duration_ms` has also been added to `CompositionAudioLayer`.
-- Both layer types expose `effective_duration_ms()` and `effective_end_ms()` helper methods.
-- Legacy fields and helpers removed: `audio_source_asset_id`, `audio_source_path`, `ChangeAudioSourceCommand`, `_resolve_audio_path()`.
+- Render previews are real FFmpeg renders capped to about 5 seconds via `RenderConfig.max_duration_sec`.
+- Preview outputs are temporary and do not register `SessionAsset` entries.
 
-### Looping
+## Render Composition Export Path
 
-- Audio layers whose `effective_duration_ms()` exceeds `source_duration_ms` use `-stream_loop -1`, then `atrim` and `adelay`, so render output matches the timeline loop markers.
-- Video layers with a requested span longer than `source_duration_ms` also use `-stream_loop -1`; visual streams are trimmed to the requested span and shifted with `setpts` before overlay.
-- Composition filter graphs now use actual FFmpeg input labels (`[0:v]`, `[1:v]`, ...) rather than synthetic placeholders, so preview/render commands and the filter graph stay in sync.
+`RenderCompositionTab` builds a `CompositionModel` and submits `CompositionWorker`.
 
-### Layer-Specific Preview
+### Command generation
 
-`build_single_layer_preview_command()` generates an FFmpeg command for previewing an individual layer in isolation by building a temporary one-layer `CompositionModel`, so it reuses the same input, trim, loop, and timing helpers as the full-composition preview path.
+`audio_visualizer.ui.tabs.renderComposition.filterGraph` builds both preview and full-render commands.
 
-### Timeline
+- `build_ffmpeg_command()` constructs the final export command.
+- `build_preview_command()` renders a single timeline frame.
+- `build_single_layer_preview_command()` renders one selected visual layer in isolation using the same timing helpers.
 
-- Timeline items include `source_duration_ms` and draw loop markers (grey dashed lines) at source-duration boundaries when the effective duration extends beyond a single loop.
-- Timeline and final render share the same effective-duration helpers. Audio full-length mode stores `duration_ms=0` and derives timing from `source_duration_ms`.
+### Layer timing and looping
 
-### Presets
+- Visual layers use scale/overlay filters plus enable expressions derived from timeline timing.
+- Video layers longer than their source duration use `-stream_loop -1`, then trim/shift inside the filter graph so preview and final export follow the same timing model.
+- Audio layers support `adelay`, `atrim`, looping, and `amix=duration=longest` for layered audio output.
+- Timeline loop markers come from the same source-duration data used to build the FFmpeg command.
 
-Presets now support user-saved presets in addition to built-in presets via `save_preset()`, `load_preset()`, and `list_presets()`.
+### Cancellation and failure handling
 
-## Post-Render Playback
+- `CompositionWorker.cancel()` terminates the FFmpeg subprocess.
+- Progress is parsed from FFmpeg `stderr` by reading `time=` updates and converting them against `CompositionModel.get_duration_ms()`.
+- Recent stderr output is included in the failure message when FFmpeg exits non-zero.
 
-After a full render completes, `render_finished()` opens a `RenderDialog` — a modal `QDialog` with a `QMediaPlayer`, `QVideoWidget`, `QAudioOutput`, and volume slider. The video loops automatically. Volume persists across dialog instances via a class variable.
+### Completion behavior
+
+- Successful exports register a `final_render` video asset in `WorkspaceContext`.
+- Completion is surfaced through `JobStatusWidget`; the user may then preview/open the result from the status row.
+
+## RenderDialog
+
+`RenderDialog` remains the shared media preview dialog used by the explicit `Preview` action.
+
+- It wraps `QMediaPlayer`, `QVideoWidget`, and `QAudioOutput`.
+- The remembered output volume is stored at the dialog class level.
