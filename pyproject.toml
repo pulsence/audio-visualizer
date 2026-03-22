@@ -23,6 +23,8 @@ dependencies = [
   "python-docx>=1.1.0",
   "pysubs2>=1.6.0",
   "PyYAML>=6.0",
+  "PyOpenGL>=3.1.0",
+  "sounddevice>=0.4.0",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +33,12 @@ diarize = [
 ]
 cuda = [
   "nvidia-cublas-cu12>=12.4",
+]
+advanced = [
+  "torch>=2.0",
+  "transformers>=4.30",
+  "peft>=0.5",
+  "ctranslate2>=4.0",
 ]
 dev = [
   "pytest==8.3.2",
