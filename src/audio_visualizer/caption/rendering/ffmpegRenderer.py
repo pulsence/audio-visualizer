@@ -82,14 +82,21 @@ class FFmpegRenderer:
 
     def _build_h264_args(self) -> list:
         """
-        Build H.264 codec arguments.
+        Build H.264 codec arguments with hardware acceleration when available.
 
         Returns:
             List of FFmpeg arguments for H.264 encoding
         """
+        from audio_visualizer.hwaccel import select_encoder
+        import logging as _logging
+        _logger = _logging.getLogger(__name__)
+
+        encoder = select_encoder("h264")
+        _logger.info("Caption render using encoder: %s", encoder)
+
         return [
             "-c:v",
-            "libx264",
+            encoder,
             "-crf",
             "18",  # Visually lossless quality
             "-preset",

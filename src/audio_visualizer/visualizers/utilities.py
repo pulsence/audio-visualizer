@@ -145,21 +145,35 @@ class VideoData:
         except Exception as exc:
             self.last_error = str(exc)
             return False
-        codec = self.codec
-        if self.hardware_accel:
-            hw_map = {
-                "h264": "h264_nvenc",
-                "hevc": "hevc_nvenc",
-            }
-            codec = hw_map.get(self.codec, self.codec)
+
+        from audio_visualizer.hwaccel import select_encoder, is_hardware_encoder
+        import logging as _logging
+        _logger = _logging.getLogger(__name__)
+
+        if self.hardware_accel and self.codec == "h264":
+            codec = select_encoder("h264", use_pyav=True)
+        elif self.hardware_accel:
+            codec = self.codec
+        else:
+            codec = self.codec
+
         try:
             self.stream = self.container.add_stream(codec, rate=self.fps)
+            _logger.info("Audio Visualizer render using encoder: %s", codec)
         except Exception as exc:
             self.last_error = str(exc)
-            try:
-                self.stream = self.container.add_stream(self.codec, rate=self.fps)
-            except Exception as exc_inner:
-                self.last_error = str(exc_inner)
+            if is_hardware_encoder(codec):
+                _logger.warning(
+                    "Hardware encoder %s failed, falling back to %s: %s",
+                    codec, self.codec, exc,
+                )
+                try:
+                    self.stream = self.container.add_stream(self.codec, rate=self.fps)
+                    _logger.info("Audio Visualizer render fallback encoder: %s", self.codec)
+                except Exception as exc_inner:
+                    self.last_error = str(exc_inner)
+                    return False
+            else:
                 return False
         self.stream.width = self.video_width
         self.stream.height = self.video_height

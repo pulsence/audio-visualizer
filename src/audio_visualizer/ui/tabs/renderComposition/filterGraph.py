@@ -128,8 +128,10 @@ def build_ffmpeg_command(
     extra_args: list[str] | None = None,
 ) -> list[str]:
     """Build a complete FFmpeg command from *model*."""
+    from audio_visualizer.hwaccel import get_decode_flags
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     cmd: list[str] = [ffmpeg, "-y"]
+    cmd.extend(get_decode_flags())
 
     layers = _get_renderable_layers(model)
 
@@ -227,8 +229,12 @@ def build_ffmpeg_command(
     if duration_s > 0:
         cmd.extend(["-t", f"{duration_s:.3f}"])
 
+    from audio_visualizer.hwaccel import select_encoder
+    encoder = select_encoder("h264")
+    logger.info("Render Composition using encoder: %s", encoder)
+
     cmd.extend([
-        "-c:v", "libx264",
+        "-c:v", encoder,
         "-preset", "medium",
         "-crf", "18",
         "-pix_fmt", "yuv420p",

@@ -267,7 +267,9 @@ class TestBuildFFmpegCommand:
         assert str(Path("/tmp/bg.mp4")) in cmd
         assert "-filter_complex" in cmd
         assert "-c:v" in cmd
-        assert "libx264" in cmd
+        # Encoder may be hardware-accelerated or libx264
+        cv_idx = cmd.index("-c:v")
+        assert "h264" in cmd[cv_idx + 1] or "libx264" in cmd[cv_idx + 1]
         assert Path(cmd[-1]) == Path("/tmp/output.mp4")
 
     def test_audio_source_included(self):
