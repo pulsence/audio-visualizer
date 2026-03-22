@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import difflib
 import re
-import uuid as _uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from audio_visualizer.srt.models import SubtitleBlock, WordItem
 from audio_visualizer.srt.core.textProcessing import normalize_spaces
