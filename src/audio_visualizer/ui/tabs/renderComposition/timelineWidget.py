@@ -286,11 +286,7 @@ class TimelineWidget(QWidget):
         self._draw_ruler(painter)
 
         # Separate items by track type; visual sorted by z_order descending
-        visual_items = sorted(
-            [i for i in self._items if i.track_type == "visual"],
-            key=lambda it: it.z_order,
-            reverse=True,
-        )
+        visual_items = self._visual_items_in_display_order()
         audio_items = [i for i in self._items if i.track_type == "audio"]
 
         y_offset = 25  # After ruler
@@ -461,11 +457,7 @@ class TimelineWidget(QWidget):
 
     def _item_at(self, x: float, y: float) -> tuple[TimelineItem | None, str]:
         """Find item at position. Returns (item, hit_type) where hit_type is 'body', 'handle_start', 'handle_end', or ''."""
-        visual_items = sorted(
-            [i for i in self._items if i.track_type == "visual"],
-            key=lambda it: it.z_order,
-            reverse=True,
-        )
+        visual_items = self._visual_items_in_display_order()
         audio_items = [i for i in self._items if i.track_type == "audio"]
 
         y_offset = 25
@@ -528,7 +520,7 @@ class TimelineWidget(QWidget):
             self._drag_original_end = item.end_ms
 
             # Record original visual index for reorder detection
-            visual_items = [i for i in self._items if i.track_type == "visual"]
+            visual_items = self._visual_items_in_display_order()
             self._drag_original_visual_index = -1
             for vi, vi_item in enumerate(visual_items):
                 if vi_item.item_id == item.item_id:
@@ -607,7 +599,7 @@ class TimelineWidget(QWidget):
 
             # Vertical reorder: detect when a visual item is dragged to a different track row
             if item.track_type == "visual" and self._drag_original_visual_index >= 0:
-                visual_items = [i for i in self._items if i.track_type == "visual"]
+                visual_items = self._visual_items_in_display_order()
                 y = event.position().y()
                 y_base = 25  # after ruler
                 track_step = _TRACK_HEIGHT + _TRACK_SPACING
@@ -708,3 +700,11 @@ class TimelineWidget(QWidget):
         super().resizeEvent(event)
         self._clamp_scroll()
         self._emit_scroll_state()
+
+    def _visual_items_in_display_order(self) -> list[TimelineItem]:
+        """Return visual items in the same top-to-bottom order used for painting."""
+        return sorted(
+            [item for item in self._items if item.track_type == "visual"],
+            key=lambda item: item.z_order,
+            reverse=True,
+        )

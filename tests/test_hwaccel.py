@@ -4,6 +4,7 @@ import pytest
 
 from audio_visualizer.hwaccel import (
     detect_subprocess_encoders,
+    detect_working_subprocess_encoders,
     detect_pyav_encoders,
     select_encoder,
     get_decode_flags,
@@ -67,6 +68,38 @@ class TestSelectEncoder:
         result = select_encoder("h264", use_pyav=True)
         assert isinstance(result, str)
         assert result in _H264_ENCODER_PRIORITY
+
+    def test_subprocess_mode_skips_encoders_that_fail_runtime_probe(self):
+        detect_working_subprocess_encoders.cache_clear()
+        with patch(
+            "audio_visualizer.hwaccel.detect_working_subprocess_encoders",
+            return_value=["h264_qsv", "libx264"],
+        ):
+            result = select_encoder("h264")
+        assert result == "h264_qsv"
+
+
+class TestDetectWorkingSubprocessEncoders:
+    def test_filters_out_runtime_failing_hardware_encoders(self):
+        detect_subprocess_encoders.cache_clear()
+        detect_working_subprocess_encoders.cache_clear()
+
+        with patch(
+            "audio_visualizer.hwaccel.shutil.which",
+            return_value="/usr/bin/ffmpeg",
+        ):
+            with patch(
+                "audio_visualizer.hwaccel.detect_subprocess_encoders",
+                return_value=["h264_nvenc", "h264_qsv", "libx264"],
+            ):
+                with patch(
+                    "audio_visualizer.hwaccel._probe_subprocess_encoder",
+                    side_effect=[False, True, True],
+                ):
+                    result = detect_working_subprocess_encoders()
+
+        assert result == ["h264_qsv", "libx264"]
+        detect_working_subprocess_encoders.cache_clear()
 
 
 class TestGetDecodeFlags:

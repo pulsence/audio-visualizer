@@ -23,6 +23,8 @@ from audio_visualizer.ui.tabs.renderComposition.timelineWidget import (
     TimelineWidget,
     _SNAP_THRESHOLD_MS,
     _PLAYHEAD_HIT_PX,
+    _TRACK_HEIGHT,
+    _TRACK_SPACING,
     _waveform_cache,
     compute_waveform_envelope,
     clear_waveform_cache,
@@ -352,6 +354,47 @@ class TestPlayheadScrubbing:
 
         widget.mouseMoveEvent(move_event)
         assert widget.cursor().shape() == Qt.CursorShape.SizeHorCursor
+
+
+# ---------------------------------------------------------------------------
+# Visual track reorder tests
+# ---------------------------------------------------------------------------
+
+
+class TestVisualTrackReorder:
+    def test_dragging_top_visual_track_to_bottom_emits_bottom_index(self, widget):
+        low = TimelineItem("low", "Low", 0, 5000, "visual", z_order=0)
+        high = TimelineItem("high", "High", 0, 5000, "visual", z_order=1)
+        widget.set_items([low, high])
+
+        top_row_y = 25 + (_TRACK_HEIGHT / 2)
+        bottom_row_y = 25 + (_TRACK_HEIGHT + _TRACK_SPACING) + (_TRACK_HEIGHT / 2)
+        x = widget._ms_to_x(1000)
+
+        press_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(x, top_row_y),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        with patch.object(widget, "update"):
+            widget.mousePressEvent(press_event)
+
+        reordered = []
+        widget.item_reordered.connect(lambda item_id, index: reordered.append((item_id, index)))
+
+        move_event = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPointF(x, bottom_row_y),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        with patch.object(widget, "update"):
+            widget.mouseMoveEvent(move_event)
+
+        assert reordered == [("high", 1)]
 
 
 # ---------------------------------------------------------------------------

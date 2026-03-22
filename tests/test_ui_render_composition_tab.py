@@ -1871,6 +1871,17 @@ class TestUnifiedLayerList:
         assert "Low" in tab._layer_list.item(0).text()
         assert "High" in tab._layer_list.item(1).text()
 
+    def test_timeline_reorder_uses_display_order_for_z_mapping(self):
+        tab = RenderCompositionTab()
+        low = CompositionLayer(display_name="Low", z_order=0)
+        high = CompositionLayer(display_name="High", z_order=1)
+        tab._model.layers.extend([low, high])
+
+        tab._on_timeline_item_reordered(high.id, 1)
+
+        assert high.z_order == 0
+        assert low.z_order == 1
+
 
 # ------------------------------------------------------------------
 # Stacked widget page switching

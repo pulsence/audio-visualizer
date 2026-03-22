@@ -780,8 +780,8 @@ class RenderCompositionTab(BaseTab):
         layer = self._model.get_layer(item_id)
         if layer is None:
             return
-        # Rebuild z-order based on the new visual index order from the timeline
-        visual_items = [i for i in self._model.layers]
+        # Timeline rows are shown top-to-bottom with the highest z-order first.
+        visual_items = sorted(self._model.layers, key=lambda item: item.z_order, reverse=True)
         dragged = None
         for i, l in enumerate(visual_items):
             if l.id == item_id:
@@ -790,8 +790,9 @@ class RenderCompositionTab(BaseTab):
         if dragged is not None:
             new_visual_index = max(0, min(new_visual_index, len(visual_items)))
             visual_items.insert(new_visual_index, dragged)
-            for z, l in enumerate(visual_items):
-                l.z_order = z
+            highest_z = len(visual_items) - 1
+            for display_index, visual_layer in enumerate(visual_items):
+                visual_layer.z_order = highest_z - display_index
             self._model.layers = visual_items
         self._refresh_layer_list()
         self.settings_changed.emit()
