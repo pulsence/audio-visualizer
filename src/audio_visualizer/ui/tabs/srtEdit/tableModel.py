@@ -451,12 +451,18 @@ class MultilineTextDelegate(QStyledItemDelegate):
     """Delegate that uses a QPlainTextEdit for multiline editing.
 
     Shift+Enter inserts a newline. Enter commits the edit.
+    A MarkdownHighlighter is attached to give live visual feedback on
+    ``**bold**``, ``*italic*``, and ``==highlight==`` markers.
     """
 
     def createEditor(self, parent: QWidget, option, index: QModelIndex) -> QWidget:
         editor = QPlainTextEdit(parent)
         editor.setFrameShape(QPlainTextEdit.Shape.NoFrame)
         editor.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Attach markdown highlighter for live preview while editing
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+
+        MarkdownHighlighter(editor.document())
         return editor
 
     def setEditorData(self, editor: QPlainTextEdit, index: QModelIndex) -> None:

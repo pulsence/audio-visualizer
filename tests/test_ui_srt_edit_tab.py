@@ -624,3 +624,140 @@ class TestParserBundleDetection:
     def test_ass_not_detected(self):
         from audio_visualizer.ui.tabs.srtEdit.parser import is_bundle_file
         assert is_bundle_file("/path/to/file.ass") is False
+
+
+class TestMarkdownHighlighter:
+    """Tests for the MarkdownHighlighter syntax highlighter."""
+
+    def _highlight(self, text: str):
+        """Return a list of (start, length, format_name) tuples applied to *text*."""
+        from PySide6.QtGui import QTextDocument
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+
+        doc = QTextDocument()
+        doc.setPlainText(text)
+        highlighter = MarkdownHighlighter(doc)
+        # Force re-highlight
+        highlighter.rehighlight()
+        return highlighter
+
+    def test_bold_is_highlighted(self):
+        from PySide6.QtGui import QFont, QTextDocument
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+
+        doc = QTextDocument()
+        doc.setPlainText("hello **bold** world")
+        hl = MarkdownHighlighter(doc)
+        hl.rehighlight()
+
+        block = doc.firstBlock()
+        layout = block.layout()
+        formats = layout.formats()
+        # Should have formatting applied (delimiter + content spans)
+        assert len(formats) > 0
+        # Verify bold content has bold weight
+        bold_found = False
+        for fmt_range in formats:
+            if fmt_range.format.fontWeight() == QFont.Weight.Bold:
+                bold_found = True
+                break
+        assert bold_found, "Expected bold formatting to be applied"
+
+    def test_italic_is_highlighted(self):
+        from PySide6.QtGui import QTextDocument
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+
+        doc = QTextDocument()
+        doc.setPlainText("hello *italic* world")
+        hl = MarkdownHighlighter(doc)
+        hl.rehighlight()
+
+        block = doc.firstBlock()
+        formats = block.layout().formats()
+        assert len(formats) > 0
+        italic_found = any(fr.format.fontItalic() for fr in formats)
+        assert italic_found, "Expected italic formatting to be applied"
+
+    def test_highlight_marker_is_highlighted(self):
+        from PySide6.QtGui import QTextDocument
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+
+        doc = QTextDocument()
+        doc.setPlainText("hello ==highlight== world")
+        hl = MarkdownHighlighter(doc)
+        hl.rehighlight()
+
+        block = doc.firstBlock()
+        formats = block.layout().formats()
+        assert len(formats) > 0
+        # The highlight format uses a background colour
+        bg_found = any(fr.format.background().color().alpha() > 0 for fr in formats)
+        assert bg_found, "Expected highlight background to be applied"
+
+    def test_no_markdown_produces_no_formats(self):
+        from PySide6.QtGui import QTextDocument
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+
+        doc = QTextDocument()
+        doc.setPlainText("plain text without markdown")
+        hl = MarkdownHighlighter(doc)
+        hl.rehighlight()
+
+        block = doc.firstBlock()
+        formats = block.layout().formats()
+        assert len(formats) == 0
+
+    def test_bold_does_not_trigger_italic(self):
+        """Bold delimiters (**) should not be interpreted as two italics."""
+        from PySide6.QtGui import QFont, QTextDocument
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+
+        doc = QTextDocument()
+        doc.setPlainText("**only bold**")
+        hl = MarkdownHighlighter(doc)
+        hl.rehighlight()
+
+        block = doc.firstBlock()
+        formats = block.layout().formats()
+        italic_found = any(
+            fr.format.fontItalic() and fr.format.fontWeight() != QFont.Weight.Bold
+            for fr in formats
+        )
+        assert not italic_found, "Bold-only text should not trigger italic"
+
+    def test_mixed_bold_and_italic(self):
+        from PySide6.QtGui import QFont, QTextDocument
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+
+        doc = QTextDocument()
+        doc.setPlainText("**bold** and *italic*")
+        hl = MarkdownHighlighter(doc)
+        hl.rehighlight()
+
+        block = doc.firstBlock()
+        formats = block.layout().formats()
+        bold_found = any(fr.format.fontWeight() == QFont.Weight.Bold for fr in formats)
+        italic_found = any(fr.format.fontItalic() for fr in formats)
+        assert bold_found
+        assert italic_found
+
+    def test_multiline_text_delegate_attaches_highlighter(self):
+        """MultilineTextDelegate.createEditor should attach a MarkdownHighlighter."""
+        from audio_visualizer.ui.tabs.srtEdit.tableModel import MultilineTextDelegate
+        from audio_visualizer.ui.tabs.srtEdit.markdownHighlighter import MarkdownHighlighter
+        from PySide6.QtWidgets import QWidget, QStyleOptionViewItem
+        from PySide6.QtCore import QModelIndex
+
+        delegate = MultilineTextDelegate()
+        parent = QWidget()
+        option = QStyleOptionViewItem()
+        index = QModelIndex()
+        editor = delegate.createEditor(parent, option, index)
+
+        # The editor's document should have a MarkdownHighlighter child
+        found = False
+        for child in editor.document().children():
+            if isinstance(child, MarkdownHighlighter):
+                found = True
+                break
+        assert found, "Expected MarkdownHighlighter attached to editor document"
