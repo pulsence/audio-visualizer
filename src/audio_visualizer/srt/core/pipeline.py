@@ -53,6 +53,92 @@ def _emit(emitter: Optional[AppEventEmitter], event: AppEvent) -> None:
         emitter.emit(event)
 
 
+def _apply_correction_db_replacements(
+    subs: List[SubtitleBlock],
+    emitter: Optional[AppEventEmitter],
+) -> List[SubtitleBlock]:
+    """Apply per-speaker replacement rules from the correction database.
+
+    When a subtitle block has a speaker label, per-speaker replacement rules
+    are applied first, followed by global rules.  When no speaker label is
+    present, only global rules are applied.
+
+    This is a best-effort pass: if the correction database is unavailable
+    or empty, subs are returned unmodified.
+    """
+    try:
+        from audio_visualizer.core.correctionDb import CorrectionDatabase
+    except Exception:
+        return subs
+
+    try:
+        db = CorrectionDatabase()
+    except Exception:
+        return subs
+
+    # Pre-fetch global rules (speaker_label=None)
+    global_rules = db.list_replacement_rules(speaker_label=None)
+
+    # Collect distinct speaker labels from the subtitle blocks
+    speaker_labels = {sub.speaker for sub in subs if sub.speaker}
+    speaker_rules: dict[str, list] = {}
+    for label in speaker_labels:
+        speaker_rules[label] = db.list_replacement_rules(speaker_label=label)
+
+    if not global_rules and not any(speaker_rules.values()):
+        return subs
+
+    applied_count = 0
+    for sub in subs:
+        # Determine which rules to apply
+        rules_to_apply: list = []
+        if sub.speaker and sub.speaker in speaker_rules:
+            rules_to_apply.extend(speaker_rules[sub.speaker])
+        rules_to_apply.extend(global_rules)
+
+        if not rules_to_apply:
+            continue
+
+        new_lines = []
+        for line in sub.lines:
+            modified = _apply_rules_to_text(line, rules_to_apply)
+            new_lines.append(modified)
+            if modified != line:
+                applied_count += 1
+        sub.lines = new_lines
+
+    if applied_count > 0:
+        _emit(
+            emitter,
+            AppEvent(
+                event_type=EventType.LOG,
+                message=f"Applied {applied_count} replacement rule(s) from correction database",
+            ),
+        )
+
+    return subs
+
+
+def _apply_rules_to_text(text: str, rules: list) -> str:
+    """Apply a list of replacement rules to a text string."""
+    for rule in rules:
+        pattern = rule.get("pattern", "")
+        replacement = rule.get("replacement", "")
+        is_regex = bool(rule.get("is_regex", False))
+
+        if not pattern:
+            continue
+
+        if is_regex:
+            try:
+                text = re.sub(pattern, replacement, text)
+            except re.error:
+                pass  # Skip invalid regex patterns
+        else:
+            text = text.replace(pattern, replacement)
+    return text
+
+
 def transcribe_file_internal(
     *,
     input_path: Path,
@@ -265,6 +351,10 @@ def transcribe_file_internal(
             pad=cfg.formatting.pad,
             silence_intervals=silences,
         )
+
+        # Per-speaker adaptation: apply replacement rules from correction DB
+        subs = _apply_correction_db_replacements(subs, emitter)
+
         _emit(
             emitter,
             AppEvent(

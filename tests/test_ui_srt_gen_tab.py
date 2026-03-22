@@ -36,6 +36,7 @@ class TestSrtGenTabSettings:
             "format",
             "model",
             "device",
+            "lora_name",
             "mode",
             "language",
             "word_level",

@@ -1,17 +1,20 @@
-"""Advanced tab — correction database management, prompt terms, and replacement rules.
+"""Advanced tab — correction database management, prompt terms, replacement rules,
+training data export, and LoRA training controls.
 
 Provides user-facing tools for managing prompt terms (used as Whisper
-initial_prompt) and replacement rules (post-transcription dictionary).
-Phase 6 will add LoRA training controls.
+initial_prompt), replacement rules (post-transcription dictionary), training
+dataset export, and LoRA fine-tuning controls.
 """
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import (
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -19,9 +22,12 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -111,6 +117,12 @@ class AdvancedTab(BaseTab):
         splitter.setSizes([300, 300])
         root_layout.addWidget(splitter, stretch=1)
 
+        # -- Training data export --
+        root_layout.addWidget(self._build_training_export_section())
+
+        # -- LoRA training controls --
+        root_layout.addWidget(self._build_lora_training_section())
+
         self.setLayout(root_layout)
 
     def _build_prompt_terms_section(self) -> QWidget:
@@ -195,6 +207,156 @@ class AdvancedTab(BaseTab):
         group.setLayout(layout)
         return group
 
+    def _build_training_export_section(self) -> QWidget:
+        """Build the Training Data Export action group."""
+        group = QGroupBox("Training Data Export")
+        layout = QHBoxLayout()
+
+        self._export_training_btn = QPushButton("Export Training Data")
+        self._export_training_btn.setToolTip(
+            "Export correction pairs as audio clips + metadata.csv for LoRA training"
+        )
+        layout.addWidget(self._export_training_btn)
+
+        self._export_training_status = QLabel("")
+        layout.addWidget(self._export_training_status, 1)
+        layout.addStretch()
+
+        group.setLayout(layout)
+        return group
+
+    def _build_lora_training_section(self) -> QWidget:
+        """Build the LoRA training controls group."""
+        group = QGroupBox("LoRA Training")
+        layout = QVBoxLayout()
+
+        # Capability status
+        self._training_capability_label = QLabel("")
+        layout.addWidget(self._training_capability_label)
+
+        # Row 1: base model + dataset source + output name
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("Base Model:"))
+        self._train_base_model_combo = QComboBox()
+        self._train_base_model_combo.addItems(["tiny", "base", "small", "medium", "large", "turbo"])
+        self._train_base_model_combo.setCurrentText("base")
+        row1.addWidget(self._train_base_model_combo)
+
+        row1.addWidget(QLabel("Dataset:"))
+        self._train_dataset_edit = QLineEdit()
+        self._train_dataset_edit.setPlaceholderText("Path to dataset directory")
+        row1.addWidget(self._train_dataset_edit, 1)
+
+        self._train_dataset_browse_btn = QPushButton("Browse...")
+        row1.addWidget(self._train_dataset_browse_btn)
+
+        row1.addWidget(QLabel("Output Name:"))
+        self._train_output_name_edit = QLineEdit()
+        self._train_output_name_edit.setPlaceholderText("my_lora_model")
+        row1.addWidget(self._train_output_name_edit)
+        layout.addLayout(row1)
+
+        # Row 2: hyperparameters
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Epochs:"))
+        self._train_epochs_spin = QSpinBox()
+        self._train_epochs_spin.setRange(1, 100)
+        self._train_epochs_spin.setValue(3)
+        row2.addWidget(self._train_epochs_spin)
+
+        row2.addWidget(QLabel("Learning Rate:"))
+        self._train_lr_spin = QDoubleSpinBox()
+        self._train_lr_spin.setRange(1e-6, 1e-2)
+        self._train_lr_spin.setDecimals(6)
+        self._train_lr_spin.setSingleStep(1e-5)
+        self._train_lr_spin.setValue(1e-4)
+        row2.addWidget(self._train_lr_spin)
+
+        row2.addWidget(QLabel("Batch Size:"))
+        self._train_batch_size_spin = QSpinBox()
+        self._train_batch_size_spin.setRange(1, 64)
+        self._train_batch_size_spin.setValue(4)
+        row2.addWidget(self._train_batch_size_spin)
+
+        row2.addWidget(QLabel("LoRA Rank:"))
+        self._train_lora_rank_spin = QSpinBox()
+        self._train_lora_rank_spin.setRange(1, 128)
+        self._train_lora_rank_spin.setValue(8)
+        row2.addWidget(self._train_lora_rank_spin)
+        row2.addStretch()
+        layout.addLayout(row2)
+
+        # Row 3: actions
+        row3 = QHBoxLayout()
+        self._train_start_btn = QPushButton("Start Training")
+        row3.addWidget(self._train_start_btn)
+
+        self._train_cancel_btn = QPushButton("Cancel")
+        self._train_cancel_btn.setEnabled(False)
+        row3.addWidget(self._train_cancel_btn)
+        row3.addStretch()
+        layout.addLayout(row3)
+
+        # Progress
+        self._train_progress_bar = QProgressBar()
+        self._train_progress_bar.setRange(0, 100)
+        self._train_progress_bar.setValue(0)
+        layout.addWidget(self._train_progress_bar)
+
+        self._train_status_label = QLabel("Ready")
+        layout.addWidget(self._train_status_label)
+
+        # Trained models list
+        models_row = QHBoxLayout()
+        models_row.addWidget(QLabel("Trained Models:"))
+        self._trained_models_list = QListWidget()
+        self._trained_models_list.setMaximumHeight(100)
+        models_row.addWidget(self._trained_models_list, 1)
+
+        models_btn_col = QVBoxLayout()
+        self._train_refresh_btn = QPushButton("Refresh")
+        models_btn_col.addWidget(self._train_refresh_btn)
+        self._train_delete_btn = QPushButton("Delete")
+        models_btn_col.addWidget(self._train_delete_btn)
+        models_btn_col.addStretch()
+        models_row.addLayout(models_btn_col)
+        layout.addLayout(models_row)
+
+        group.setLayout(layout)
+        self._update_training_capability_label()
+        return group
+
+    def _update_training_capability_label(self) -> None:
+        """Update the capability status label based on runtime checks."""
+        try:
+            from audio_visualizer.capabilities import has_training_stack, has_cuda
+
+            if not has_training_stack():
+                self._training_capability_label.setText(
+                    "<span style='color: orange;'>Training stack unavailable "
+                    "(requires torch, transformers, peft, ctranslate2)</span>"
+                )
+                self._train_start_btn.setEnabled(False)
+                return
+
+            if not has_cuda():
+                self._training_capability_label.setText(
+                    "<span style='color: orange;'>CUDA unavailable — "
+                    "training requires a CUDA-capable GPU</span>"
+                )
+                self._train_start_btn.setEnabled(False)
+                return
+
+            self._training_capability_label.setText(
+                "<span style='color: green;'>Training stack ready (CUDA available)</span>"
+            )
+            self._train_start_btn.setEnabled(True)
+        except Exception:
+            self._training_capability_label.setText(
+                "<span style='color: red;'>Could not check training capabilities</span>"
+            )
+            self._train_start_btn.setEnabled(False)
+
     # ------------------------------------------------------------------
     # Signal connections
     # ------------------------------------------------------------------
@@ -216,6 +378,16 @@ class AdvancedTab(BaseTab):
         self._rules_edit_btn.clicked.connect(self._on_rules_edit)
         self._rules_remove_btn.clicked.connect(self._on_rules_remove)
         self._rules_export_btn.clicked.connect(self._on_rules_export)
+
+        # Training data export
+        self._export_training_btn.clicked.connect(self._on_export_training_data)
+
+        # LoRA training
+        self._train_dataset_browse_btn.clicked.connect(self._on_train_browse_dataset)
+        self._train_start_btn.clicked.connect(self._on_train_start)
+        self._train_cancel_btn.clicked.connect(self._on_train_cancel)
+        self._train_refresh_btn.clicked.connect(self._refresh_trained_models)
+        self._train_delete_btn.clicked.connect(self._on_train_delete_model)
 
     # ------------------------------------------------------------------
     # Speaker filter
@@ -594,6 +766,252 @@ class AdvancedTab(BaseTab):
             QMessageBox.warning(self, "Error", f"Could not write file:\n{path}")
 
     # ------------------------------------------------------------------
+    # Training data export
+    # ------------------------------------------------------------------
+
+    def _on_export_training_data(self) -> None:
+        """Export correction pairs as audio clips + metadata.csv."""
+        db = self._get_db()
+        if db is None:
+            QMessageBox.warning(self, "Error", "Correction database not available.")
+            return
+
+        count = db.correction_count()
+        if count == 0:
+            QMessageBox.information(
+                self, "Export", "No corrections recorded. Nothing to export."
+            )
+            return
+
+        output_dir = QFileDialog.getExistingDirectory(
+            self, "Select Training Data Output Directory"
+        )
+        if not output_dir:
+            return
+
+        self._export_training_btn.setEnabled(False)
+        self._export_training_status.setText("Exporting...")
+
+        try:
+            exported, skipped, warnings = db.export_training_dataset(
+                Path(output_dir),
+            )
+            summary = f"Exported {exported} clips, skipped {skipped}."
+            self._export_training_status.setText(summary)
+
+            if warnings:
+                detail = "\n".join(warnings[:20])
+                if len(warnings) > 20:
+                    detail += f"\n... and {len(warnings) - 20} more warnings."
+                QMessageBox.information(
+                    self,
+                    "Export Complete",
+                    f"{summary}\n\nWarnings:\n{detail}",
+                )
+            else:
+                QMessageBox.information(self, "Export Complete", summary)
+            logger.info("Training data export: %s", summary)
+        except Exception:
+            logger.exception("Training data export failed")
+            self._export_training_status.setText("Export failed.")
+            QMessageBox.warning(
+                self, "Error", "Training data export failed. Check logs for details."
+            )
+        finally:
+            self._export_training_btn.setEnabled(True)
+
+    # ------------------------------------------------------------------
+    # LoRA training
+    # ------------------------------------------------------------------
+
+    def _on_train_browse_dataset(self) -> None:
+        """Browse for a dataset directory."""
+        d = QFileDialog.getExistingDirectory(
+            self, "Select Training Dataset Directory"
+        )
+        if d:
+            self._train_dataset_edit.setText(d)
+
+    def _on_train_start(self) -> None:
+        """Validate and start LoRA training in a background worker."""
+        try:
+            from audio_visualizer.capabilities import has_training_stack, has_cuda
+        except ImportError:
+            QMessageBox.warning(self, "Error", "Capabilities module not available.")
+            return
+
+        if not has_training_stack():
+            QMessageBox.warning(
+                self,
+                "Training Unavailable",
+                "Training stack not available. Install torch, transformers, peft, "
+                "and ctranslate2 to enable training.",
+            )
+            return
+
+        if not has_cuda():
+            QMessageBox.warning(
+                self,
+                "CUDA Required",
+                "LoRA training requires a CUDA-capable GPU.",
+            )
+            return
+
+        dataset_path = self._train_dataset_edit.text().strip()
+        if not dataset_path:
+            QMessageBox.warning(self, "Validation Error", "Please select a dataset directory.")
+            return
+        dataset_dir = Path(dataset_path)
+        if not dataset_dir.is_dir():
+            QMessageBox.warning(self, "Validation Error", "Dataset directory does not exist.")
+            return
+        metadata_csv = dataset_dir / "metadata.csv"
+        if not metadata_csv.is_file():
+            QMessageBox.warning(
+                self,
+                "Validation Error",
+                "Dataset directory must contain a metadata.csv file.",
+            )
+            return
+
+        output_name = self._train_output_name_edit.text().strip()
+        if not output_name:
+            QMessageBox.warning(self, "Validation Error", "Please enter an output model name.")
+            return
+
+        # Build config and launch worker
+        from audio_visualizer.srt.training.loraTrainer import LoraTrainingConfig
+
+        config = LoraTrainingConfig(
+            base_model_name=self._train_base_model_combo.currentText(),
+            dataset_dir=dataset_dir,
+            output_name=output_name,
+            num_epochs=self._train_epochs_spin.value(),
+            learning_rate=self._train_lr_spin.value(),
+            batch_size=self._train_batch_size_spin.value(),
+            lora_rank=self._train_lora_rank_spin.value(),
+        )
+
+        from audio_visualizer.ui.workers.loraTrainWorker import LoraTrainWorker
+
+        self._train_worker = LoraTrainWorker(config)
+        self._train_worker.signals.progress.connect(self._on_train_progress)
+        self._train_worker.signals.log.connect(self._on_train_log)
+        self._train_worker.signals.completed.connect(self._on_train_completed)
+        self._train_worker.signals.failed.connect(self._on_train_failed)
+        self._train_worker.signals.canceled.connect(self._on_train_canceled)
+
+        self._train_start_btn.setEnabled(False)
+        self._train_cancel_btn.setEnabled(True)
+        self._train_progress_bar.setValue(0)
+        self._train_status_label.setText("Starting training...")
+
+        if not hasattr(self, "_train_thread_pool"):
+            self._train_thread_pool = QThreadPool()
+            self._train_thread_pool.setMaxThreadCount(1)
+        self._train_thread_pool.start(self._train_worker)
+        logger.info("Started LoRA training for '%s'", output_name)
+
+    def _on_train_cancel(self) -> None:
+        """Cancel the running training job."""
+        if hasattr(self, "_train_worker") and self._train_worker is not None:
+            self._train_worker.cancel()
+            self._train_status_label.setText("Cancelling...")
+
+    def _on_train_progress(self, percent: float, message: str, data: dict) -> None:
+        if percent >= 0:
+            self._train_progress_bar.setValue(int(percent))
+        if message:
+            self._train_status_label.setText(message)
+
+    def _on_train_log(self, level: str, message: str, data: dict) -> None:
+        logger.log(
+            logging.getLevelName(level) if isinstance(level, str) else logging.INFO,
+            "LoRA Training: %s",
+            message,
+        )
+
+    def _on_train_completed(self, data: dict) -> None:
+        self._train_worker = None
+        self._train_start_btn.setEnabled(True)
+        self._train_cancel_btn.setEnabled(False)
+        self._train_progress_bar.setValue(100)
+        model_name = data.get("output_name", "unknown")
+        self._train_status_label.setText(f"Training complete: {model_name}")
+        self._refresh_trained_models()
+        self._update_training_capability_label()
+        QMessageBox.information(
+            self, "Training Complete", f"LoRA model '{model_name}' trained successfully."
+        )
+
+    def _on_train_failed(self, error_message: str, data: dict) -> None:
+        self._train_worker = None
+        self._train_start_btn.setEnabled(True)
+        self._train_cancel_btn.setEnabled(False)
+        self._train_progress_bar.setValue(0)
+        self._train_status_label.setText(f"Training failed: {error_message}")
+        self._update_training_capability_label()
+        QMessageBox.warning(
+            self, "Training Failed", f"LoRA training failed:\n{error_message}"
+        )
+
+    def _on_train_canceled(self, message: str) -> None:
+        self._train_worker = None
+        self._train_start_btn.setEnabled(True)
+        self._train_cancel_btn.setEnabled(False)
+        self._train_status_label.setText(f"Cancelled: {message}")
+        self._update_training_capability_label()
+
+    # ------------------------------------------------------------------
+    # Trained models management
+    # ------------------------------------------------------------------
+
+    def _get_lora_models_dir(self) -> Path:
+        """Return the LoRA models directory."""
+        from audio_visualizer.app_paths import get_data_dir
+        return get_data_dir() / "lora_models"
+
+    def _refresh_trained_models(self) -> None:
+        """Refresh the list of trained LoRA models."""
+        self._trained_models_list.clear()
+        models_dir = self._get_lora_models_dir()
+        if not models_dir.is_dir():
+            return
+        for item in sorted(models_dir.iterdir()):
+            if item.is_dir():
+                self._trained_models_list.addItem(item.name)
+
+    def _on_train_delete_model(self) -> None:
+        """Delete the selected trained model."""
+        current = self._trained_models_list.currentItem()
+        if current is None:
+            return
+
+        model_name = current.text()
+        reply = QMessageBox.question(
+            self,
+            "Delete Model",
+            f"Delete trained model '{model_name}'? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        model_dir = self._get_lora_models_dir() / model_name
+        if model_dir.is_dir():
+            import shutil
+            try:
+                shutil.rmtree(model_dir)
+                logger.info("Deleted trained model: %s", model_name)
+            except Exception:
+                logger.exception("Failed to delete trained model: %s", model_name)
+                QMessageBox.warning(
+                    self, "Error", f"Could not delete model '{model_name}'."
+                )
+                return
+        self._refresh_trained_models()
+
+    # ------------------------------------------------------------------
     # Tab activation
     # ------------------------------------------------------------------
 
@@ -603,6 +1021,8 @@ class AdvancedTab(BaseTab):
         self._refresh_speaker_labels()
         self._refresh_prompt_terms()
         self._refresh_replacement_rules()
+        self._refresh_trained_models()
+        self._update_training_capability_label()
 
     # ------------------------------------------------------------------
     # Settings persistence
@@ -614,6 +1034,15 @@ class AdvancedTab(BaseTab):
     def collect_settings(self) -> dict[str, Any]:
         return {
             "speaker_filter": self._speaker_combo.currentData(),
+            "training": {
+                "base_model": self._train_base_model_combo.currentText(),
+                "dataset_dir": self._train_dataset_edit.text(),
+                "output_name": self._train_output_name_edit.text(),
+                "epochs": self._train_epochs_spin.value(),
+                "learning_rate": self._train_lr_spin.value(),
+                "batch_size": self._train_batch_size_spin.value(),
+                "lora_rank": self._train_lora_rank_spin.value(),
+            },
         }
 
     def apply_settings(self, data: dict[str, Any]) -> None:
@@ -622,3 +1051,16 @@ class AdvancedTab(BaseTab):
             idx = self._speaker_combo.findData(speaker)
             if idx >= 0:
                 self._speaker_combo.setCurrentIndex(idx)
+
+        training = data.get("training", {})
+        if training:
+            base_model = training.get("base_model", "base")
+            idx = self._train_base_model_combo.findText(base_model)
+            if idx >= 0:
+                self._train_base_model_combo.setCurrentIndex(idx)
+            self._train_dataset_edit.setText(training.get("dataset_dir", ""))
+            self._train_output_name_edit.setText(training.get("output_name", ""))
+            self._train_epochs_spin.setValue(training.get("epochs", 3))
+            self._train_lr_spin.setValue(training.get("learning_rate", 1e-4))
+            self._train_batch_size_spin.setValue(training.get("batch_size", 4))
+            self._train_lora_rank_spin.setValue(training.get("lora_rank", 8))

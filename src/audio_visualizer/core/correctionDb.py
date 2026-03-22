@@ -8,12 +8,15 @@ single-writer pattern that only commits on explicit action boundaries.
 """
 from __future__ import annotations
 
+import csv
 import logging
+import os
 import sqlite3
+import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 from audio_visualizer.app_paths import get_data_dir
 
@@ -516,6 +519,118 @@ class CorrectionDatabase:
         finally:
             conn.close()
 
+    def export_training_dataset(
+        self,
+        output_dir: Path,
+        *,
+        source_media_path: Optional[str] = None,
+        speaker_label: Optional[str] = None,
+        model_name: Optional[str] = None,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    ) -> Tuple[int, int, List[str]]:
+        """Export correction pairs as audio clips + metadata.csv for training.
+
+        Each correction pair that references an existing source media file
+        gets its audio segment extracted using PyAV and written as a 16kHz
+        mono WAV clip.  A ``metadata.csv`` is written with columns:
+        ``file_name``, ``text``, ``original_text``, ``speaker_label``.
+
+        Parameters
+        ----------
+        output_dir:
+            Directory to write clips and metadata.csv into.
+        source_media_path, speaker_label, model_name:
+            Passed through to :meth:`export_training_pairs` for filtering.
+        progress_callback:
+            Optional ``(current, total, message)`` callback for UI progress.
+
+        Returns
+        -------
+        tuple of (exported_count, skipped_count, warnings)
+            *exported_count* is the number of clips written.
+            *skipped_count* is the number of pairs skipped (missing file, etc.).
+            *warnings* is a list of human-readable warning strings.
+        """
+        pairs = self.export_training_pairs(
+            source_media_path=source_media_path,
+            speaker_label=speaker_label,
+            model_name=model_name,
+        )
+
+        if not pairs:
+            return 0, 0, ["No correction pairs found matching the filters."]
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        exported = 0
+        skipped = 0
+        warnings: List[str] = []
+        metadata_rows: List[dict[str, str]] = []
+
+        total = len(pairs)
+        for idx, pair in enumerate(pairs):
+            audio_ref = pair["audio_ref"]
+            if progress_callback:
+                progress_callback(idx, total, f"Processing {Path(audio_ref).name}")
+
+            if not os.path.isfile(audio_ref):
+                warnings.append(f"Skipped: source file not found: {audio_ref}")
+                skipped += 1
+                continue
+
+            start_ms = pair["time_start_ms"]
+            end_ms = pair["time_end_ms"]
+            if end_ms <= start_ms:
+                warnings.append(
+                    f"Skipped: invalid time range {start_ms}-{end_ms}ms in {audio_ref}"
+                )
+                skipped += 1
+                continue
+
+            clip_name = f"clip_{exported:05d}.wav"
+            clip_path = output_dir / clip_name
+
+            try:
+                _extract_audio_segment(
+                    source_path=audio_ref,
+                    output_path=clip_path,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                )
+            except Exception as exc:
+                warnings.append(f"Skipped: extraction failed for {audio_ref}: {exc}")
+                skipped += 1
+                continue
+
+            metadata_rows.append({
+                "file_name": clip_name,
+                "text": pair["corrected_text"],
+                "original_text": pair["original_text"],
+                "speaker_label": pair.get("speaker_label") or "",
+            })
+            exported += 1
+
+        # Write metadata.csv
+        csv_path = output_dir / "metadata.csv"
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f, fieldnames=["file_name", "text", "original_text", "speaker_label"]
+            )
+            writer.writeheader()
+            writer.writerows(metadata_rows)
+
+        if progress_callback:
+            progress_callback(total, total, "Export complete")
+
+        logger.info(
+            "Training dataset exported: %d clips, %d skipped, to %s",
+            exported,
+            skipped,
+            output_dir,
+        )
+        return exported, skipped, warnings
+
     # ------------------------------------------------------------------
     # Utility
     # ------------------------------------------------------------------
@@ -548,6 +663,121 @@ class CorrectionDatabase:
             return row["cnt"] if row else 0
         finally:
             conn.close()
+
+
+# ------------------------------------------------------------------
+# Audio extraction helper
+# ------------------------------------------------------------------
+
+
+def _extract_audio_segment(
+    source_path: str,
+    output_path: Path,
+    start_ms: int,
+    end_ms: int,
+    sample_rate: int = 16000,
+) -> None:
+    """Extract an audio segment from *source_path* and write a 16kHz mono WAV.
+
+    Uses PyAV for decoding.  The output is always 16kHz mono signed-16-bit PCM,
+    which is the format expected by Whisper-based training pipelines.
+    """
+    import array
+    import struct
+    import av
+
+    start_sec = start_ms / 1000.0
+    end_sec = end_ms / 1000.0
+
+    container = av.open(source_path)
+    try:
+        audio_stream = container.streams.audio[0]
+        # Seek to just before the desired start
+        seek_ts = int(start_sec / audio_stream.time_base)
+        container.seek(max(0, seek_ts - 1), stream=audio_stream)
+
+        resampler = av.AudioResampler(
+            format="s16",
+            layout="mono",
+            rate=sample_rate,
+        )
+
+        samples: list[bytes] = []
+        collecting = False
+
+        for frame in container.decode(audio=0):
+            frame_start = float(frame.pts * audio_stream.time_base)
+            frame_end = frame_start + (frame.samples / frame.sample_rate)
+
+            if frame_end < start_sec:
+                continue
+            if frame_start > end_sec:
+                break
+
+            collecting = True
+            resampled = resampler.resample(frame)
+            for r_frame in resampled:
+                raw = bytes(r_frame.planes[0])
+                # Trim to the desired time range
+                frame_sr = r_frame.sample_rate
+                r_start = float(r_frame.pts * audio_stream.time_base) if r_frame.pts is not None else frame_start
+                r_end = r_start + (r_frame.samples / frame_sr)
+
+                if r_start < start_sec:
+                    skip_samples = int((start_sec - r_start) * frame_sr)
+                    raw = raw[skip_samples * 2:]
+                if r_end > end_sec:
+                    keep_samples = int((end_sec - max(r_start, start_sec)) * frame_sr)
+                    raw = raw[:keep_samples * 2]
+                if raw:
+                    samples.append(raw)
+
+        if not collecting:
+            # Flush resampler
+            resampled = resampler.resample(None)
+            for r_frame in resampled:
+                raw = bytes(r_frame.planes[0])
+                if raw:
+                    samples.append(raw)
+    finally:
+        container.close()
+
+    # Write WAV file (PCM s16le mono)
+    pcm_data = b"".join(samples)
+    _write_wav(output_path, pcm_data, sample_rate=sample_rate, channels=1, sample_width=2)
+
+
+def _write_wav(
+    path: Path,
+    pcm_data: bytes,
+    sample_rate: int,
+    channels: int,
+    sample_width: int,
+) -> None:
+    """Write raw PCM data as a WAV file."""
+    import struct
+
+    data_size = len(pcm_data)
+    # RIFF header
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        36 + data_size,
+        b"WAVE",
+        b"fmt ",
+        16,                            # chunk size
+        1,                             # PCM format
+        channels,
+        sample_rate,
+        sample_rate * channels * sample_width,  # byte rate
+        channels * sample_width,       # block align
+        sample_width * 8,              # bits per sample
+        b"data",
+        data_size,
+    )
+    with open(path, "wb") as f:
+        f.write(header)
+        f.write(pcm_data)
 
 
 # ------------------------------------------------------------------

@@ -20,6 +20,7 @@ class ModelInfo:
     model_name: str
     device: str
     compute_type: str
+    lora_name: Optional[str] = None
 
 
 class ModelManager:
@@ -40,16 +41,24 @@ class ModelManager:
         device: str = "auto",
         strict_cuda: bool = False,
         emitter: Optional[AppEventEmitter] = None,
+        lora_name: Optional[str] = None,
     ) -> Any:
         """Load a Whisper model. Returns the model instance.
 
-        If a model with the same name is already loaded, returns it without reloading.
-        If a different model is loaded, unloads it first.
+        If a model with the same name (and same LoRA adapter) is already
+        loaded, returns it without reloading.  If a different model is
+        loaded, unloads it first.
+
+        The *lora_name* parameter is used as part of the cache key so
+        that base models and LoRA-merged models are cached separately.
         """
+        # Build a cache key that distinguishes base from LoRA-merged models.
+        cache_key = f"{model_name}|lora={lora_name or ''}"
         event_emitter = emitter or self._emitter
         with self._lock:
             if self._model is not None and self._info is not None:
-                if self._info.model_name == model_name and (
+                existing_key = f"{self._info.model_name}|lora={self._info.lora_name or ''}"
+                if existing_key == cache_key and (
                     device == "auto" or self._info.device == device
                 ):
                     return self._model
@@ -93,6 +102,7 @@ class ModelManager:
                 model_name=model_name,
                 device=device_used,
                 compute_type=compute_type,
+                lora_name=lora_name,
             )
 
             if event_emitter is not None:

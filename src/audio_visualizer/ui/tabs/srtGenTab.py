@@ -309,6 +309,22 @@ class SrtGenTab(BaseTab):
         controls.addStretch()
         layout.addLayout(controls)
 
+        # LoRA adapter selection row
+        lora_row = QHBoxLayout()
+        lora_row.addWidget(QLabel("LoRA Adapter:"))
+        self._lora_combo = QComboBox()
+        self._lora_combo.addItem("(none)", None)
+        self._lora_combo.setToolTip(
+            "Select a trained LoRA adapter to use during transcription"
+        )
+        lora_row.addWidget(self._lora_combo)
+        self._lora_refresh_btn = QPushButton("Refresh")
+        self._lora_refresh_btn.setToolTip("Reload available LoRA models")
+        self._lora_refresh_btn.clicked.connect(self._refresh_lora_models)
+        lora_row.addWidget(self._lora_refresh_btn)
+        lora_row.addStretch()
+        layout.addLayout(lora_row)
+
         self._model_status_label = QLabel("No model loaded")
         layout.addWidget(self._model_status_label)
 
@@ -636,6 +652,36 @@ class SrtGenTab(BaseTab):
         self._content_layout.addWidget(group)
 
     # ==================================================================
+    # LoRA model list
+    # ==================================================================
+
+    def _refresh_lora_models(self) -> None:
+        """Reload the LoRA adapter dropdown from the trained-model directory."""
+        current = self._lora_combo.currentData()
+        self._lora_combo.blockSignals(True)
+        self._lora_combo.clear()
+        self._lora_combo.addItem("(none)", None)
+
+        try:
+            from audio_visualizer.srt.training.loraTrainer import list_trained_models
+
+            for name in list_trained_models():
+                self._lora_combo.addItem(name, name)
+        except Exception:
+            logger.debug("Could not load trained LoRA models list")
+
+        # Restore selection if still present
+        if current is not None:
+            idx = self._lora_combo.findData(current)
+            if idx >= 0:
+                self._lora_combo.setCurrentIndex(idx)
+        self._lora_combo.blockSignals(False)
+
+    def _selected_lora_name(self) -> Optional[str]:
+        """Return the selected LoRA adapter name, or None for 'none'."""
+        return self._lora_combo.currentData()
+
+    # ==================================================================
     # Slot handlers
     # ==================================================================
 
@@ -941,6 +987,7 @@ class SrtGenTab(BaseTab):
             "format": self._format_combo.currentText(),
             "model": self._model_combo.currentText(),
             "device": self._device_combo.currentText(),
+            "lora_name": self._selected_lora_name(),
             "mode": self._mode_combo.currentText(),
             "language": self._language_edit.text(),
             "word_level": self._word_level_cb.isChecked(),
@@ -1008,6 +1055,14 @@ class SrtGenTab(BaseTab):
         idx = self._device_combo.findText(device)
         if idx >= 0:
             self._device_combo.setCurrentIndex(idx)
+
+        # LoRA adapter
+        lora_name = data.get("lora_name")
+        if lora_name is not None:
+            self._refresh_lora_models()
+            idx = self._lora_combo.findData(lora_name)
+            if idx >= 0:
+                self._lora_combo.setCurrentIndex(idx)
 
         # General
         mode = data.get("mode", "general")
@@ -1114,8 +1169,12 @@ class SrtGenTab(BaseTab):
         model_name = _MODEL_MAP.get(display_name, display_name)
         device = self._device_combo.currentText()
 
+        lora_name = self._selected_lora_name()
+
         self._event_log.clear()
         self._append_event(f"Starting transcription with model '{display_name}' ({model_name})")
+        if lora_name:
+            self._append_event(f"Using LoRA adapter: {lora_name}")
         self._append_event(f"Processing {len(input_paths)} file(s)...")
         diarize = self._diarize_cb.isChecked()
         hf_token = self._hf_token_edit.text().strip() or None
@@ -1148,6 +1207,7 @@ class SrtGenTab(BaseTab):
                 hf_token=hf_token,
                 dry_run=dry_run,
                 keep_wav=keep_wav,
+                lora_name=lora_name,
             ))
 
         emitter = AppEventEmitter()

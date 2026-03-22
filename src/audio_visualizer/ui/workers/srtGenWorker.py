@@ -28,6 +28,22 @@ from audio_visualizer.ui.workers.workerBridge import WorkerBridge, WorkerSignals
 logger = logging.getLogger(__name__)
 
 
+def _resolve_lora_ct2_path(lora_name: str) -> Optional[Path]:
+    """Return the CTranslate2 model directory for a trained LoRA adapter.
+
+    Returns None if the LoRA model or its CT2 subdirectory does not exist.
+    """
+    try:
+        from audio_visualizer.srt.training.loraTrainer import get_lora_models_dir
+
+        model_dir = get_lora_models_dir() / lora_name / "ct2"
+        if model_dir.is_dir():
+            return model_dir
+    except Exception:
+        logger.debug("Could not resolve LoRA CT2 path for '%s'", lora_name)
+    return None
+
+
 @dataclass
 class SrtGenJobSpec:
     """Parameters for a single transcription job within the batch."""
@@ -48,6 +64,7 @@ class SrtGenJobSpec:
     hf_token: Optional[str] = None
     dry_run: bool = False
     keep_wav: bool = False
+    lora_name: Optional[str] = None
 
 
 class SrtGenWorker(QRunnable):
@@ -128,13 +145,34 @@ class SrtGenWorker(QRunnable):
                 data={"stage_number": 0, "total_stages": total + 1},
             ))
 
+            # Resolve model name: if a LoRA adapter is selected, use the
+            # merged CTranslate2 model path instead of the base model name.
+            effective_model_name = first.model_name
+            if first.lora_name:
+                lora_model_path = _resolve_lora_ct2_path(first.lora_name)
+                if lora_model_path is not None:
+                    effective_model_name = str(lora_model_path)
+                    self._emitter.emit(AppEvent(
+                        event_type=EventType.LOG,
+                        message=f"Using LoRA model: {first.lora_name}",
+                    ))
+                else:
+                    self._emitter.emit(AppEvent(
+                        event_type=EventType.LOG,
+                        message=(
+                            f"LoRA model '{first.lora_name}' not found, "
+                            "falling back to base model"
+                        ),
+                        level=EventLevel.WARNING,
+                    ))
+
             # Always load the model on THIS thread so GPU handles (CUDA /
             # cuBLAS) stay thread-local.  We wrap in a ThreadPoolExecutor so
             # we can poll for cancel while the blocking load_model runs.
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(
                     load_model,
-                    model_name=first.model_name,
+                    model_name=effective_model_name,
                     device=first.device,
                     strict_cuda=False,
                     emitter=self._emitter,
