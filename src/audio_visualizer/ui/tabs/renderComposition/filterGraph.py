@@ -130,6 +130,7 @@ def build_ffmpeg_command(
     model: CompositionModel,
     output_path: str | Path,
     extra_args: list[str] | None = None,
+    encoder_override: str | None = None,
 ) -> list[str]:
     """Build a complete FFmpeg command from *model*."""
     from audio_visualizer.hwaccel import get_decode_flags
@@ -238,7 +239,7 @@ def build_ffmpeg_command(
         cmd.extend(["-t", f"{duration_s:.3f}"])
 
     from audio_visualizer.hwaccel import select_encoder
-    encoder = select_encoder("h264")
+    encoder = encoder_override or select_encoder("h264")
     logger.info("Render Composition using encoder: %s", encoder)
 
     cmd.extend([

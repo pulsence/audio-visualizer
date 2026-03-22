@@ -5,6 +5,7 @@ This module provides a renderer that uses FFmpeg with libass to render
 subtitle overlays as transparent ProRes 4444 videos.
 """
 
+import logging
 import shutil
 import subprocess
 import time
@@ -13,6 +14,8 @@ from typing import Optional
 
 from audio_visualizer.events import AppEvent, AppEventEmitter, EventLevel, EventType
 from ..core.sizing import OverlaySize
+
+logger = logging.getLogger(__name__)
 
 
 class FFmpegRenderer:
@@ -80,19 +83,17 @@ class FFmpegRenderer:
             )
         return ffmpeg
 
-    def _build_h264_args(self) -> list:
+    def _build_h264_args(self, encoder_override: str | None = None) -> tuple[list[str], str]:
         """
         Build H.264 codec arguments with hardware acceleration when available.
 
         Returns:
-            List of FFmpeg arguments for H.264 encoding
+            Tuple of FFmpeg arguments and the selected encoder name.
         """
         from audio_visualizer.hwaccel import select_encoder
-        import logging as _logging
-        _logger = _logging.getLogger(__name__)
 
-        encoder = select_encoder("h264")
-        _logger.info("Caption render using encoder: %s", encoder)
+        encoder = encoder_override or select_encoder("h264")
+        logger.info("Caption render using encoder: %s", encoder)
 
         return [
             "-c:v",
@@ -103,7 +104,7 @@ class FFmpegRenderer:
             "slow",  # Better compression
             "-pix_fmt",
             "yuva420p",  # Alpha support
-        ]
+        ], encoder
 
     def _build_prores_422hq_args(self) -> list:
         """
@@ -163,73 +164,73 @@ class FFmpegRenderer:
         # Escape path for FFmpeg filter syntax
         ass_escaped = self._escape_filter_path(ass_path)
 
-        # Build filter chain
-        # Build codec-specific video filter and command args
-        if self.quality == "small":
-            # H.264 with transparency support (using overlay)
-            video_filter = (
-                f"format=rgba,"
-                f"subtitles=filename='{ass_escaped}':alpha=1:original_size={w}x{h},"
-                f"format=yuva420p"
-            )
-            codec_args = self._build_h264_args()
-        elif self.quality == "medium":
-            # ProRes 422 HQ (no alpha)
-            video_filter = (
-                f"format=rgba,"
-                f"subtitles=filename='{ass_escaped}':alpha=1:original_size={w}x{h},"
-                f"format=yuv422p10le"
-            )
-            codec_args = self._build_prores_422hq_args()
-        else:  # large
-            # ProRes 4444 (with alpha)
-            video_filter = (
-                f"format=rgba,"
-                f"subtitles=filename='{ass_escaped}':alpha=1:original_size={w}x{h},"
-                f"format=yuva444p10le"
-            )
-            codec_args = self._build_prores_4444_args()
+        actual_encoder: str | None = None
 
-        # Build FFmpeg command
-        cmd = [
-            self.ffmpeg_path,
-            "-y",  # Overwrite output
-            "-hide_banner",
-            "-loglevel",
-            self.loglevel,
-            "-f",
-            "lavfi",
-            "-t",
-            f"{duration_sec:.3f}",
-            "-i",
-            f"color=c=black@0.0:s={w}x{h}:r={fps}",
-            "-vf",
-            video_filter,
-        ]
-        cmd.extend(codec_args)
-        cmd.extend(
-            [
-                "-r",
-                fps,
-                "-an",  # No audio
-                str(output_path),
+        def _build_command(
+            *,
+            encoder_override: str | None = None,
+        ) -> tuple[list[str], str | None]:
+            if self.quality == "small":
+                # H.264 with transparency support (using overlay)
+                video_filter = (
+                    f"format=rgba,"
+                    f"subtitles=filename='{ass_escaped}':alpha=1:original_size={w}x{h},"
+                    f"format=yuva420p"
+                )
+                codec_args, selected_encoder = self._build_h264_args(encoder_override)
+            elif self.quality == "medium":
+                # ProRes 422 HQ (no alpha)
+                video_filter = (
+                    f"format=rgba,"
+                    f"subtitles=filename='{ass_escaped}':alpha=1:original_size={w}x{h},"
+                    f"format=yuv422p10le"
+                )
+                codec_args = self._build_prores_422hq_args()
+                selected_encoder = None
+            else:  # large
+                # ProRes 4444 (with alpha)
+                video_filter = (
+                    f"format=rgba,"
+                    f"subtitles=filename='{ass_escaped}':alpha=1:original_size={w}x{h},"
+                    f"format=yuva444p10le"
+                )
+                codec_args = self._build_prores_4444_args()
+                selected_encoder = None
+
+            cmd = [
+                self.ffmpeg_path,
+                "-y",  # Overwrite output
+                "-hide_banner",
+                "-loglevel",
+                self.loglevel,
+                "-f",
+                "lavfi",
+                "-t",
+                f"{duration_sec:.3f}",
+                "-i",
+                f"color=c=black@0.0:s={w}x{h}:r={fps}",
+                "-vf",
+                video_filter,
             ]
-        )
-
-        # Add progress reporting if requested
-        if self.show_progress:
-            cmd.insert(1, "-progress")
-            cmd.insert(2, "pipe:2")
-            cmd.insert(3, "-nostats")
-
-        # Emit debug event with FFmpeg command
-        self.emitter.emit(
-            AppEvent(
-                event_type=EventType.LOG,
-                message="FFmpeg command:\n  " + " ".join(cmd),
-                level=EventLevel.DEBUG,
+            cmd.extend(codec_args)
+            cmd.extend(
+                [
+                    "-r",
+                    fps,
+                    "-an",  # No audio
+                    str(output_path),
+                ]
             )
-        )
+
+            if self.show_progress:
+                cmd.insert(1, "-progress")
+                cmd.insert(2, "pipe:2")
+                cmd.insert(3, "-nostats")
+            return cmd, selected_encoder
+
+        cmd, selected_encoder = _build_command()
+        actual_encoder = selected_encoder
+        self._emit_command_log(cmd, selected_encoder)
 
         # Emit render start event
         self.emitter.emit(
@@ -239,19 +240,78 @@ class FFmpegRenderer:
             )
         )
 
-        # Execute
-        if not self.show_progress:
-            self._render_simple(cmd, output_path)
-        else:
-            self._render_with_progress(cmd, output_path, duration_sec)
+        try:
+            self._run_render_command(cmd, output_path, duration_sec)
+        except RuntimeError:
+            from audio_visualizer.hwaccel import is_hardware_encoder
+
+            if (
+                self.quality != "small"
+                or not selected_encoder
+                or not is_hardware_encoder(selected_encoder)
+            ):
+                raise
+
+            actual_encoder = "libx264"
+            self.emitter.emit(
+                AppEvent(
+                    event_type=EventType.LOG,
+                    message=(
+                        "Hardware encoder failed; retrying FFmpeg render "
+                        "with software encoder libx264."
+                    ),
+                    level=EventLevel.WARNING,
+                    data={
+                        "failed_encoder": selected_encoder,
+                        "fallback_encoder": actual_encoder,
+                    },
+                )
+            )
+            cmd, _ = _build_command(encoder_override=actual_encoder)
+            self._emit_command_log(cmd, actual_encoder)
+            self._run_render_command(cmd, output_path, duration_sec)
 
         # Emit render complete event
         self.emitter.emit(
             AppEvent(
                 event_type=EventType.RENDER_COMPLETE,
                 message="FFmpeg render complete",
+                data=({"video_encoder": actual_encoder} if actual_encoder else None),
             )
         )
+
+    def _emit_command_log(self, cmd: list[str], video_encoder: str | None) -> None:
+        """Emit diagnostic events describing the FFmpeg command and encoder."""
+        if video_encoder:
+            self.emitter.emit(
+                AppEvent(
+                    event_type=EventType.LOG,
+                    message=f"Using video encoder: {video_encoder}",
+                    level=EventLevel.INFO,
+                    data={"video_encoder": video_encoder},
+                )
+            )
+
+        self.emitter.emit(
+            AppEvent(
+                event_type=EventType.LOG,
+                message="FFmpeg command:\n  " + " ".join(cmd),
+                level=EventLevel.DEBUG,
+                data=({"video_encoder": video_encoder} if video_encoder else None),
+            )
+        )
+
+    def _run_render_command(
+        self,
+        cmd: list,
+        output_path: Path,
+        duration_sec: float,
+    ) -> None:
+        """Dispatch to the configured FFmpeg execution mode."""
+        if not self.show_progress:
+            self._render_simple(cmd, output_path)
+        else:
+            self._render_with_progress(cmd, output_path, duration_sec)
 
     def _render_simple(self, cmd: list, output_path: Path) -> None:
         """Run FFmpeg without progress tracking."""

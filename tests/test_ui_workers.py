@@ -10,6 +10,8 @@ from audio_visualizer.events import (
     EventLevel,
     EventType,
 )
+from audio_visualizer.ui.tabs.renderComposition.model import CompositionModel
+from audio_visualizer.ui.workers.compositionWorker import CompositionWorker
 from audio_visualizer.ui.workers.workerBridge import WorkerBridge, WorkerSignals
 
 
@@ -168,3 +170,185 @@ class TestWorkerBridgeEventForwarding:
 
         signals.canceled.emit("user canceled")
         assert received == ["user canceled"]
+
+
+class TestCompositionWorkerSignalContract:
+    def test_uses_shared_worker_signals_and_emits_started(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.shutil.which",
+            lambda _name: None,
+        )
+
+        worker = CompositionWorker(CompositionModel(), tmp_path / "out.mp4")
+        assert isinstance(worker.signals, WorkerSignals)
+
+        started: list[tuple[str, str, str]] = []
+        stages: list[tuple[str, int, int, dict]] = []
+        failed: list[tuple[str, dict]] = []
+        logs: list[tuple[str, str, dict]] = []
+
+        worker.signals.started.connect(
+            lambda job_type, owner_tab_id, label: started.append((job_type, owner_tab_id, label))
+        )
+        worker.signals.stage.connect(
+            lambda name, index, total, data: stages.append((name, index, total, data))
+        )
+        worker.signals.failed.connect(lambda message, data: failed.append((message, data)))
+        worker.signals.log.connect(lambda level, message, data: logs.append((level, message, data)))
+
+        worker.run()
+
+        assert started == [
+            ("composition", "render_composition", "Rendering composition to out.mp4")
+        ]
+        assert stages == [
+            (
+                "Preparing FFmpeg command",
+                0,
+                2,
+                {"output_path": str(tmp_path / "out.mp4")},
+            )
+        ]
+        assert logs == []
+        assert len(failed) == 1
+        assert "ffmpeg not found on PATH" in failed[0][0]
+
+    def test_emits_log_and_running_stage_before_spawn_failure(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.shutil.which",
+            lambda _name: "/usr/bin/ffmpeg",
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.build_ffmpeg_command",
+            lambda model, output_path: ["ffmpeg", "-y", str(output_path)],
+        )
+
+        def _raise_spawn(*_args, **_kwargs):
+            raise OSError("spawn failed")
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.subprocess.Popen",
+            _raise_spawn,
+        )
+
+        worker = CompositionWorker(CompositionModel(), tmp_path / "out.mp4")
+
+        stages: list[tuple[str, int, int, dict]] = []
+        logs: list[tuple[str, str, dict]] = []
+        failed: list[tuple[str, dict]] = []
+
+        worker.signals.stage.connect(
+            lambda name, index, total, data: stages.append((name, index, total, data))
+        )
+        worker.signals.log.connect(lambda level, message, data: logs.append((level, message, data)))
+        worker.signals.failed.connect(lambda message, data: failed.append((message, data)))
+
+        worker.run()
+
+        assert stages == [
+            (
+                "Preparing FFmpeg command",
+                0,
+                2,
+                {"output_path": str(tmp_path / "out.mp4")},
+            ),
+            (
+                "Running FFmpeg",
+                1,
+                2,
+                {"output_path": str(tmp_path / "out.mp4")},
+            ),
+        ]
+        assert logs == [
+            (
+                "INFO",
+                "Prepared FFmpeg composition command.",
+                {
+                    "command": ["ffmpeg", "-y", str(tmp_path / "out.mp4")],
+                    "output_path": str(tmp_path / "out.mp4"),
+                },
+            )
+        ]
+        assert failed == [
+            (
+                "Failed to start FFmpeg: spawn failed",
+                {"output_path": str(tmp_path / "out.mp4")},
+            )
+        ]
+
+    def test_retries_with_software_encoder_after_hardware_failure(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.shutil.which",
+            lambda _name: "/usr/bin/ffmpeg",
+        )
+
+        built_encoders: list[str] = []
+
+        def _build_cmd(model, output_path, encoder_override=None):
+            encoder = encoder_override or "h264_nvenc"
+            built_encoders.append(encoder)
+            return ["ffmpeg", "-y", "-c:v", encoder, str(output_path)]
+
+        class _Proc:
+            def __init__(self, returncode, stderr_lines):
+                self._returncode = returncode
+                self.stderr = iter(stderr_lines)
+
+            def wait(self):
+                return self._returncode
+
+            def terminate(self):
+                return None
+
+        procs = [
+            _Proc(1, ["Encoder init failed\n"]),
+            _Proc(0, ["time=00:00:01.00\n"]),
+        ]
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.build_ffmpeg_command",
+            _build_cmd,
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.subprocess.Popen",
+            lambda *args, **kwargs: procs.pop(0),
+        )
+
+        worker = CompositionWorker(CompositionModel(), tmp_path / "out.mp4")
+
+        logs: list[tuple[str, str, dict]] = []
+        progress: list[tuple[float, str, dict]] = []
+        stages: list[tuple[str, int, int, dict]] = []
+        completed: list[dict] = []
+        failed: list[tuple[str, dict]] = []
+
+        worker.signals.log.connect(lambda level, message, data: logs.append((level, message, data)))
+        worker.signals.progress.connect(lambda pct, msg, data: progress.append((pct, msg, data)))
+        worker.signals.stage.connect(lambda name, index, total, data: stages.append((name, index, total, data)))
+        worker.signals.completed.connect(lambda result: completed.append(result))
+        worker.signals.failed.connect(lambda message, data: failed.append((message, data)))
+
+        worker.run()
+
+        assert built_encoders == ["h264_nvenc", "libx264"]
+        assert failed == []
+        assert completed == [
+            {
+                "output_path": str(tmp_path / "out.mp4"),
+                "video_encoder": "libx264",
+            }
+        ]
+        assert any(
+            level == "WARNING" and "retrying with software encoder" in message.lower()
+            for level, message, _data in logs
+        )
+        assert any(
+            name == "Retrying FFmpeg with software encoder"
+            and data["video_encoder"] == "libx264"
+            for name, _index, _total, data in stages
+        )
+        assert any(
+            message == "Retrying with libx264..."
+            and data["video_encoder"] == "libx264"
+            for _pct, message, data in progress
+        )

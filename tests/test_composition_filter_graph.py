@@ -318,6 +318,22 @@ class TestBuildFFmpegCommand:
         assert "-threads" in cmd
         assert "4" in cmd
 
+    def test_encoder_override_is_honored(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=5000,
+        ))
+        cmd = build_ffmpeg_command(
+            model,
+            "/tmp/output.mp4",
+            encoder_override="libx264",
+        )
+        cv_idx = cmd.index("-c:v")
+        assert cmd[cv_idx + 1] == "libx264"
+
     def test_empty_model_no_filter(self):
         model = CompositionModel()
         cmd = build_ffmpeg_command(model, "/tmp/output.mp4")

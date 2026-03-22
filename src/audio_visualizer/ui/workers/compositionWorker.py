@@ -1,8 +1,8 @@
 """Composition render worker — FFmpeg subprocess runner.
 
 Builds the FFmpeg command from a :class:`CompositionModel`, executes it
-in a subprocess, parses progress output, and reports status through
-:class:`WorkerSignals`.
+in a subprocess, parses progress output, and reports lifecycle state
+through the shared :class:`WorkerSignals` contract.
 """
 from __future__ import annotations
 
@@ -15,26 +15,20 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QRunnable, Signal
+from PySide6.QtCore import QRunnable
 
+from audio_visualizer.hwaccel import is_hardware_encoder
 from audio_visualizer.ui.tabs.renderComposition.filterGraph import (
     build_ffmpeg_command,
 )
 from audio_visualizer.ui.tabs.renderComposition.model import CompositionModel
+from audio_visualizer.ui.workers.workerBridge import WorkerSignals
 
 logger = logging.getLogger(__name__)
 
 # Regex to extract time= from FFmpeg stderr progress
 _TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
-
-
-class _CompositionSignals(QObject):
-    """Qt signals emitted by :class:`CompositionWorker`."""
-
-    progress = Signal(float, str, dict)
-    completed = Signal(dict)
-    failed = Signal(str, dict)
-    canceled = Signal(str)
+_SOFTWARE_FALLBACK_ENCODER = "libx264"
 
 
 class CompositionWorker(QRunnable):
@@ -60,7 +54,7 @@ class CompositionWorker(QRunnable):
         self._output_path = str(output_path)
         self._cancel_flag = threading.Event()
         self._process: subprocess.Popen | None = None
-        self.signals = _CompositionSignals()
+        self.signals = WorkerSignals()
 
     # ------------------------------------------------------------------
     # Cancel support
@@ -82,6 +76,17 @@ class CompositionWorker(QRunnable):
 
     def run(self) -> None:
         """Build and execute the FFmpeg command."""
+        self.signals.started.emit(
+            "composition",
+            "render_composition",
+            f"Rendering composition to {Path(self._output_path).name}",
+        )
+        self.signals.stage.emit(
+            "Preparing FFmpeg command",
+            0,
+            2,
+            {"output_path": self._output_path},
+        )
         try:
             self._do_render()
         except Exception as exc:
@@ -98,70 +103,84 @@ class CompositionWorker(QRunnable):
             return
 
         cmd = build_ffmpeg_command(self._model, self._output_path)
+        selected_encoder = self._extract_video_encoder(cmd)
         logger.info("FFmpeg command: %s", " ".join(cmd))
-
-        self.signals.progress.emit(0.0, "Starting FFmpeg...", {})
-
-        try:
-            self._process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-        except OSError as exc:
-            self.signals.failed.emit(f"Failed to start FFmpeg: {exc}", {})
-            return
-
-        if self._cancel_flag.is_set():
-            self._cleanup()
-            self.signals.canceled.emit("Render canceled before start.")
-            return
+        self.signals.log.emit(
+            "INFO",
+            "Prepared FFmpeg composition command.",
+            self._command_log_data(cmd, selected_encoder),
+        )
+        self.signals.stage.emit(
+            "Running FFmpeg",
+            1,
+            2,
+            self._stage_data(selected_encoder),
+        )
 
         duration_s = self._model.get_duration_ms() / 1000.0
         if duration_s <= 0:
             duration_s = 10.0
 
-        # Read stderr for progress
-        stderr_lines: list[str] = []
-        try:
-            if self._process.stderr is None:
-                raise RuntimeError("FFmpeg process stderr is unavailable")
-            for line in self._process.stderr:
-                if self._cancel_flag.is_set():
-                    self._cleanup()
-                    self.signals.canceled.emit("Render canceled.")
-                    return
-
-                stderr_lines.append(line)
-                progress = self._parse_progress(line, duration_s)
-                if progress is not None:
-                    self.signals.progress.emit(
-                        progress,
-                        f"Rendering... {progress:.0f}%",
-                        {},
-                    )
-        except Exception as exc:
-            logger.warning("Error reading FFmpeg output: %s", exc)
-
-        returncode = self._process.wait()
-        self._process = None
-
-        if self._cancel_flag.is_set():
-            self.signals.canceled.emit("Render canceled.")
+        result = self._run_ffmpeg_command(cmd, duration_s, selected_encoder)
+        if result is None:
             return
+
+        returncode, stderr_lines = result
+        actual_encoder = selected_encoder
+
+        if (
+            returncode != 0
+            and selected_encoder
+            and is_hardware_encoder(selected_encoder)
+            and not self._cancel_flag.is_set()
+        ):
+            self.signals.log.emit(
+                "WARNING",
+                "Hardware encoder failed; retrying with software encoder.",
+                {
+                    "failed_encoder": selected_encoder,
+                    "fallback_encoder": _SOFTWARE_FALLBACK_ENCODER,
+                    "output_path": self._output_path,
+                },
+            )
+            fallback_cmd = build_ffmpeg_command(
+                self._model,
+                self._output_path,
+                encoder_override=_SOFTWARE_FALLBACK_ENCODER,
+            )
+            actual_encoder = _SOFTWARE_FALLBACK_ENCODER
+            self.signals.log.emit(
+                "INFO",
+                "Prepared fallback FFmpeg composition command.",
+                self._command_log_data(fallback_cmd, actual_encoder),
+            )
+            self.signals.stage.emit(
+                "Retrying FFmpeg with software encoder",
+                1,
+                2,
+                self._stage_data(actual_encoder),
+            )
+            result = self._run_ffmpeg_command(fallback_cmd, duration_s, actual_encoder, retry=True)
+            if result is None:
+                return
+            returncode, stderr_lines = result
 
         if returncode != 0:
             stderr_text = "".join(stderr_lines[-20:])
             self.signals.failed.emit(
                 f"FFmpeg exited with code {returncode}:\n{stderr_text}",
-                {},
+                self._stage_data(actual_encoder),
             )
             return
 
-        self.signals.progress.emit(100.0, "Render complete.", {})
+        self.signals.progress.emit(
+            100.0,
+            f"Render complete ({actual_encoder or 'unknown encoder'}).",
+            self._stage_data(actual_encoder),
+        )
         self.signals.completed.emit({
             "output_path": self._output_path,
+            "video_encoder": actual_encoder,
         })
 
     # ------------------------------------------------------------------
@@ -199,3 +218,93 @@ class CompositionWorker(QRunnable):
                 except OSError:
                     pass
             self._process = None
+
+    def _run_ffmpeg_command(
+        self,
+        cmd: list[str],
+        duration_s: float,
+        video_encoder: str | None,
+        *,
+        retry: bool = False,
+    ) -> tuple[int, list[str]] | None:
+        """Run one FFmpeg invocation and collect stderr for progress/failure."""
+        status_message = (
+            f"Retrying with {video_encoder}..."
+            if retry and video_encoder
+            else f"Starting FFmpeg ({video_encoder})..."
+            if video_encoder
+            else "Starting FFmpeg..."
+        )
+        self.signals.progress.emit(0.0, status_message, self._stage_data(video_encoder))
+
+        try:
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except OSError as exc:
+            self.signals.failed.emit(
+                f"Failed to start FFmpeg: {exc}",
+                self._stage_data(video_encoder),
+            )
+            return None
+
+        if self._cancel_flag.is_set():
+            self._cleanup()
+            self.signals.canceled.emit("Render canceled before start.")
+            return None
+
+        stderr_lines: list[str] = []
+        try:
+            if self._process.stderr is None:
+                raise RuntimeError("FFmpeg process stderr is unavailable")
+            for line in self._process.stderr:
+                if self._cancel_flag.is_set():
+                    self._cleanup()
+                    self.signals.canceled.emit("Render canceled.")
+                    return None
+
+                stderr_lines.append(line)
+                progress = self._parse_progress(line, duration_s)
+                if progress is not None:
+                    self.signals.progress.emit(
+                        progress,
+                        f"Rendering... {progress:.0f}%",
+                        self._stage_data(video_encoder),
+                    )
+        except Exception as exc:
+            logger.warning("Error reading FFmpeg output: %s", exc)
+
+        returncode = self._process.wait()
+        self._process = None
+
+        if self._cancel_flag.is_set():
+            self.signals.canceled.emit("Render canceled.")
+            return None
+
+        return returncode, stderr_lines
+
+    def _extract_video_encoder(self, cmd: list[str]) -> str | None:
+        """Return the ``-c:v`` encoder from an FFmpeg command, if present."""
+        try:
+            idx = cmd.index("-c:v")
+        except ValueError:
+            return None
+        if idx + 1 >= len(cmd):
+            return None
+        return cmd[idx + 1]
+
+    def _stage_data(self, video_encoder: str | None) -> dict[str, Any]:
+        """Build signal payloads while keeping existing fields stable."""
+        data: dict[str, Any] = {"output_path": self._output_path}
+        if video_encoder:
+            data["video_encoder"] = video_encoder
+        return data
+
+    def _command_log_data(self, cmd: list[str], video_encoder: str | None) -> dict[str, Any]:
+        """Build log payloads for prepared commands."""
+        data = self._stage_data(video_encoder)
+        data["command"] = cmd
+        return data
