@@ -50,6 +50,13 @@ Both work flows should be integrated into this single app.
 ## v0.7.0
 ### Edit SRT Screen
 - Load SRT bundle produced by SRT Gen screen to work on word-level parings
+- Timeline segment boarders need to expand width when highlighted to make it easier for the the to click and drag
+- Selecting a transcription row should not zoom in on the timeline to the segment, but should pan/scroll the timeline
+  to the cooresponding segment
+- Split segment at playhead on timeline by right click menu.
+- Split segment should split at playhead location if within the segment
+- Ability to drag and select a section on timeline to create new segment
+- Adding new segments should auto resort table by time start
 
 ### Render Composition Screen
 - Ability to set audio volume
@@ -59,10 +66,25 @@ Both work flows should be integrated into this single app.
   standard symbols for the functions in the live preview panel. User should be able to press
   space to start/stop live preview playback.
 - Audio tracks on timeline should have basic waveform that can be generated more quickly than in SRT Edit.
+- Video/Graphic tracks should be stacked in accending Z order upwards on the timeline while audio tracks should
+  be stacked in ascending order downwards:
+  '''
+  video at z=2
+  video at z=1
+  audio at z=1
+  audio at z=2
+  ```
+- When a video asset with audio is added, both video and audio should be added to the timeline. User should then
+  be able to remove just the audio or video track from the timeline.
+- Visual asserts should have a button to resize to original and resize to output size
+- Video Position & Size label/input boxes have big gap between instead of being next to each other
+- Video Size ratio (w & h) should be locked so when one is change they all adjust
 
 ### SRT Gen Screen
 - The user should be able to pass in the plain text of a script for a particular audio file and this is used to
   help automatically generate/correct the srt file.
+- Ability to see downloaded models and delete downloaded models.
+- Investigate how hard it would be to refine/training existing model for the users voice.
 
 ### Visualizers
 - Set video dimensions by number of objects in visualizer
@@ -79,6 +101,7 @@ Both work flows should be integrated into this single app.
   - Create a new animation that mimics a typewriter effect
   - Add ability to highlight specific words in a sentence
   - For many of the abilities, take in a general srt and word-level srt to produce the proper effect.
+- Render should not produce an `*_caption.mp4` file and `*_caption_overlay.mov` but a single `*_caption.mp4`
 
 ### SRT:
 - Improve test benchmarking harness to be configurable to point at folder with .mp3 and .srt and a set of
