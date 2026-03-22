@@ -46,9 +46,9 @@ class TestMainWindowCreation:
 
 
 class TestMainWindowTabs:
-    def test_has_six_tab_slots(self, main_window):
-        """Verify the stack has 6 widgets (1 eager + 5 lazy placeholders)."""
-        assert main_window._stack.count() == 6
+    def test_has_seven_tab_slots(self, main_window):
+        """Verify the stack has 7 widgets (1 eager + 6 lazy placeholders)."""
+        assert main_window._stack.count() == 7
 
     def test_eager_tab_is_audio_visualizer(self, main_window):
         """Only AudioVisualizerTab is instantiated eagerly."""
@@ -56,8 +56,8 @@ class TestMainWindowTabs:
         assert main_window._tabs[0].tab_id == "audio_visualizer"
 
     def test_lazy_placeholders_registered(self, main_window):
-        """Five lazy tab definitions are registered."""
-        expected_lazy = {"srt_gen", "srt_edit", "caption_animate", "render_composition", "assets"}
+        """Six lazy tab definitions are registered."""
+        expected_lazy = {"srt_gen", "srt_edit", "caption_animate", "render_composition", "assets", "advanced"}
         # Lazy placeholders may have been instantiated by other tests,
         # so check the union of instantiated + still-lazy covers all expected.
         instantiated_ids = {t.tab_id for t in main_window._tabs}
@@ -171,7 +171,7 @@ class TestMainWindowSettings:
         assert "tabs" in settings
         assert isinstance(settings["tabs"], dict)
 
-        # All six tabs should be present in collected settings
+        # All seven tabs should be present in collected settings
         # (instantiated tabs contribute directly, lazy tabs via pending settings)
         expected_tabs = {
             "audio_visualizer",
@@ -180,6 +180,7 @@ class TestMainWindowSettings:
             "caption_animate",
             "render_composition",
             "assets",
+            "advanced",
         }
         assert expected_tabs <= set(settings["tabs"].keys())
 

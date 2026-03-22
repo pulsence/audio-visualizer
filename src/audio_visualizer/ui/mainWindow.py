@@ -176,6 +176,7 @@ class MainWindow(QMainWindow):
             ("caption_animate", "Caption Animate"),
             ("render_composition", "Render Composition"),
             ("assets", "Assets"),
+            ("advanced", "Advanced"),
         ]
         for tab_id, title in lazy_defs:
             placeholder = QWidget()
@@ -225,6 +226,9 @@ class MainWindow(QMainWindow):
         elif tab_id == "assets":
             from audio_visualizer.ui.tabs.assetsTab import AssetsTab
             return AssetsTab(self)
+        elif tab_id == "advanced":
+            from audio_visualizer.ui.tabs.advancedTab import AdvancedTab
+            return AdvancedTab(self)
         return None
 
     def _ensure_tab_instantiated(self, index: int) -> BaseTab | None:
