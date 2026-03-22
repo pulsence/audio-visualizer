@@ -1,12 +1,14 @@
 """SRT Edit tab — waveform-backed subtitle editor.
 
 Provides a split-pane UI with an audio waveform on top and a subtitle
-table below.  Supports undo/redo, QA lint, and resync tools.
+table below.  Supports undo/redo, QA lint, resync tools, and automatic
+correction recording for bundle-backed subtitle entries.
 """
 from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Optional
@@ -128,6 +130,7 @@ class SrtEditTab(BaseTab):
         self._refreshing_asset_combos = False
         self._waveform_request_id: int = 0
         self._pending_highlight_row: int | None = None
+        self._correction_db: Any = None  # Lazy CorrectionDatabase
 
         self._build_ui()
         self._connect_signals()
@@ -585,7 +588,11 @@ class SrtEditTab(BaseTab):
             self._waveform_view.highlight_region(row)
 
     def _on_inline_edit(self, row: int, col: int, value: object) -> None:
-        """Handle inline table edits via undoable commands."""
+        """Handle inline table edits via undoable commands.
+
+        For text edits on bundle-backed entries, a correction is recorded
+        automatically when the new text differs from original_text.
+        """
         from audio_visualizer.ui.tabs.srtEdit.tableModel import (
             COL_END,
             COL_SPEAKER,
@@ -600,8 +607,12 @@ class SrtEditTab(BaseTab):
             cmd = EditTimestampCommand(self._document, row, new_end_ms=value)
             self._push_command(cmd)
         elif col == COL_TEXT:
+            entry = self._document.entries[row]
+            old_text = entry.text
             cmd = EditTextCommand(self._document, row, str(value))
             self._push_command(cmd)
+            # Record correction for forward text edits on provenance entries
+            self._maybe_record_correction(entry, old_text, str(value))
         elif col == COL_SPEAKER:
             cmd = EditSpeakerCommand(self._document, row, value)
             self._push_command(cmd)
@@ -616,6 +627,111 @@ class SrtEditTab(BaseTab):
         for row in range(top_left.row(), bottom_right.row() + 1):
             if top_left.column() <= COL_TEXT <= bottom_right.column():
                 self._table_view.resizeRowToContents(row)
+
+    # ------------------------------------------------------------------
+    # Correction recording
+    # ------------------------------------------------------------------
+
+    def _get_correction_db(self):
+        """Lazily create and return the CorrectionDatabase singleton."""
+        if self._correction_db is None:
+            try:
+                from audio_visualizer.core.correctionDb import CorrectionDatabase
+
+                self._correction_db = CorrectionDatabase()
+            except Exception:
+                logger.exception("Failed to initialise correction database")
+                return None
+        return self._correction_db
+
+    @staticmethod
+    def _entry_has_provenance(entry: SubtitleEntry) -> bool:
+        """Return True if the entry has bundle-backed provenance fields.
+
+        Provenance requires both a source media path and an original text
+        snapshot.  Plain SRT imports will lack these fields.
+        """
+        return (
+            entry.source_media_path is not None
+            and entry.original_text is not None
+        )
+
+    def _maybe_record_correction(
+        self,
+        entry: SubtitleEntry,
+        old_text: str,
+        new_text: str,
+    ) -> None:
+        """Record a correction if the entry has provenance and text changed.
+
+        This is the single recording path used by both table inline edits
+        and any future sidebar edits.  It is only called for forward user
+        actions, never for undo/redo replays.
+        """
+        if old_text == new_text:
+            return
+        if not self._entry_has_provenance(entry):
+            return
+
+        db = self._get_correction_db()
+        if db is None:
+            return
+
+        try:
+            db.record_correction(
+                source_media_path=entry.source_media_path,  # type: ignore[arg-type]
+                time_start_ms=entry.start_ms,
+                time_end_ms=entry.end_ms,
+                original_text=entry.original_text,  # type: ignore[arg-type]
+                corrected_text=new_text,
+                speaker_label=entry.speaker,
+                model_name=entry.model_name,
+                confidence=entry.alignment_confidence,
+                bundle_entry_id=entry.id,
+            )
+            self._maybe_add_prompt_terms(entry.original_text or "", new_text, entry.speaker)
+        except Exception:
+            logger.exception("Failed to record correction for entry #%d", entry.index)
+
+    def _maybe_add_prompt_terms(
+        self,
+        original_text: str,
+        corrected_text: str,
+        speaker_label: Optional[str],
+    ) -> None:
+        """Auto-populate prompt terms when a correction introduces new words.
+
+        New words that look like domain terms or proper nouns (capitalised
+        words not at sentence boundaries, or words containing digits/hyphens)
+        are added as candidate prompt terms.
+        """
+        db = self._get_correction_db()
+        if db is None:
+            return
+
+        original_words = set(original_text.split())
+        corrected_words = set(corrected_text.split())
+        new_words = corrected_words - original_words
+
+        for word in new_words:
+            clean = word.strip(".,!?;:\"'()[]")
+            if not clean:
+                continue
+            # Consider a word a domain-term candidate if it is:
+            #   - capitalised (but not the first word of the sentence)
+            #   - contains digits or hyphens (e.g. "COVID-19", "v3")
+            is_capitalised = clean[0].isupper() and len(clean) > 1
+            has_special = bool(re.search(r"[\d-]", clean))
+            if is_capitalised or has_special:
+                try:
+                    db.add_prompt_term(
+                        clean,
+                        category="auto",
+                        speaker_label=speaker_label,
+                        source="correction",
+                    )
+                except Exception:
+                    logger.debug("Could not add prompt term '%s'", clean)
 
     # ------------------------------------------------------------------
     # Lint
