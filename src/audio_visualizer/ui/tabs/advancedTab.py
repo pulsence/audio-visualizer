@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from audio_visualizer.ui.tabs.baseTab import BaseTab
 
 logger = logging.getLogger(__name__)
+_PENDING_SPEAKER_FILTER = object()
 
 
 class AdvancedTab(BaseTab):
@@ -67,6 +68,7 @@ class AdvancedTab(BaseTab):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._db: Any = None  # Lazy CorrectionDatabase
+        self._pending_speaker_filter: Any = _PENDING_SPEAKER_FILTER
 
         self._build_ui()
         self._connect_signals()
@@ -399,7 +401,10 @@ class AdvancedTab(BaseTab):
         if db is None:
             return
 
-        current = self._speaker_combo.currentData()
+        if self._pending_speaker_filter is not _PENDING_SPEAKER_FILTER:
+            current = self._pending_speaker_filter
+        else:
+            current = self._speaker_combo.currentData()
         self._speaker_combo.blockSignals(True)
         self._speaker_combo.clear()
         self._speaker_combo.addItem("(all speakers)", None)
@@ -412,13 +417,22 @@ class AdvancedTab(BaseTab):
             logger.exception("Failed to load speaker labels")
 
         # Restore selection if still present
-        if current is not None:
+        restored = False
+        if current is None:
+            self._speaker_combo.setCurrentIndex(0)
+            restored = True
+        else:
             idx = self._speaker_combo.findData(current)
             if idx >= 0:
                 self._speaker_combo.setCurrentIndex(idx)
+                restored = True
         self._speaker_combo.blockSignals(False)
 
+        if restored:
+            self._pending_speaker_filter = _PENDING_SPEAKER_FILTER
+
     def _on_speaker_filter_changed(self) -> None:
+        self._pending_speaker_filter = _PENDING_SPEAKER_FILTER
         self._refresh_prompt_terms()
         self._refresh_replacement_rules()
 
@@ -651,6 +665,14 @@ class AdvancedTab(BaseTab):
         if not ok:
             return
 
+        is_regex = self._prompt_yes_no(
+            title="Add Replacement Rule",
+            label="Treat pattern as regex?",
+            default=False,
+        )
+        if is_regex is None:
+            return
+
         speaker = self._selected_speaker()
         speaker_label = speaker if speaker is not ... else None
 
@@ -658,6 +680,7 @@ class AdvancedTab(BaseTab):
             db.add_replacement_rule(
                 pattern.strip(),
                 replacement.strip(),
+                is_regex=is_regex,
                 speaker_label=speaker_label,
             )
         except Exception:
@@ -677,6 +700,7 @@ class AdvancedTab(BaseTab):
         row = self._rules_table.currentRow()
         current_pattern = self._rules_table.item(row, 0).text()
         current_replacement = self._rules_table.item(row, 1).text()
+        current_is_regex = self._rules_table.item(row, 2).text().strip().lower() == "yes"
 
         new_pattern, ok = QInputDialog.getText(
             self, "Edit Replacement Rule", "Pattern:", text=current_pattern
@@ -690,11 +714,20 @@ class AdvancedTab(BaseTab):
         if not ok:
             return
 
+        new_is_regex = self._prompt_yes_no(
+            title="Edit Replacement Rule",
+            label="Treat pattern as regex?",
+            default=current_is_regex,
+        )
+        if new_is_regex is None:
+            return
+
         try:
             db.update_replacement_rule(
                 rule_id,
                 pattern=new_pattern.strip(),
                 replacement=new_replacement.strip(),
+                is_regex=new_is_regex,
             )
         except Exception:
             logger.exception("Failed to update replacement rule")
@@ -1046,11 +1079,16 @@ class AdvancedTab(BaseTab):
         }
 
     def apply_settings(self, data: dict[str, Any]) -> None:
-        speaker = data.get("speaker_filter")
-        if speaker is not None:
-            idx = self._speaker_combo.findData(speaker)
-            if idx >= 0:
-                self._speaker_combo.setCurrentIndex(idx)
+        if "speaker_filter" in data:
+            speaker = data.get("speaker_filter")
+            self._pending_speaker_filter = speaker
+            if speaker is None:
+                self._speaker_combo.setCurrentIndex(0)
+            else:
+                idx = self._speaker_combo.findData(speaker)
+                if idx >= 0:
+                    self._speaker_combo.setCurrentIndex(idx)
+                    self._pending_speaker_filter = _PENDING_SPEAKER_FILTER
 
         training = data.get("training", {})
         if training:
@@ -1064,3 +1102,25 @@ class AdvancedTab(BaseTab):
             self._train_lr_spin.setValue(training.get("learning_rate", 1e-4))
             self._train_batch_size_spin.setValue(training.get("batch_size", 4))
             self._train_lora_rank_spin.setValue(training.get("lora_rank", 8))
+
+    def _prompt_yes_no(
+        self,
+        *,
+        title: str,
+        label: str,
+        default: bool,
+    ) -> bool | None:
+        """Prompt for a boolean choice using a simple non-freeform dialog."""
+        options = ["No", "Yes"]
+        default_index = 1 if default else 0
+        choice, ok = QInputDialog.getItem(
+            self,
+            title,
+            label,
+            options,
+            default_index,
+            False,
+        )
+        if not ok:
+            return None
+        return choice == "Yes"

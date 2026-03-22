@@ -102,6 +102,14 @@ class TestCorrections:
         rows = db.query_corrections(source_media_path="/a.wav")
         assert len(rows) == 1
 
+    def test_duplicate_correction_skipped(self, db):
+        first = self._record(db)
+        duplicate = self._record(db)
+
+        assert first > 0
+        assert duplicate == -1
+        assert db.correction_count() == 1
+
     def test_query_filter_by_model(self, db):
         self._record(db, model_name="tiny", corrected_text="x1")
         self._record(db, model_name="large-v3", corrected_text="x2")

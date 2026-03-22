@@ -110,6 +110,22 @@ class CorrectionDatabase:
         if original_text == corrected_text:
             return -1  # No actual change — skip silently.
 
+        duplicate_id = self._find_duplicate_correction(
+            source_media_path=source_media_path,
+            time_start_ms=time_start_ms,
+            time_end_ms=time_end_ms,
+            original_text=original_text,
+            corrected_text=corrected_text,
+            speaker_label=speaker_label,
+            model_name=model_name,
+            lora_name=lora_name,
+            confidence=confidence,
+            bundle_entry_id=bundle_entry_id,
+        )
+        if duplicate_id is not None:
+            logger.debug("Skipping duplicate correction row #%d", duplicate_id)
+            return -1
+
         now = datetime.now(timezone.utc).isoformat()
         with self._write_lock:
             conn = self._connect()
@@ -153,6 +169,56 @@ class CorrectionDatabase:
             finally:
                 conn.close()
 
+    def _find_duplicate_correction(
+        self,
+        *,
+        source_media_path: str,
+        time_start_ms: int,
+        time_end_ms: int,
+        original_text: str,
+        corrected_text: str,
+        speaker_label: Optional[str],
+        model_name: Optional[str],
+        lora_name: Optional[str],
+        confidence: Optional[float],
+        bundle_entry_id: Optional[str],
+    ) -> int | None:
+        """Return an existing correction id when the new row would be identical."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM corrections
+                WHERE source_media_path = ?
+                  AND time_start_ms = ?
+                  AND time_end_ms = ?
+                  AND original_text = ?
+                  AND corrected_text = ?
+                  AND speaker_label IS ?
+                  AND model_name IS ?
+                  AND lora_name IS ?
+                  AND confidence IS ?
+                  AND bundle_entry_id IS ?
+                LIMIT 1
+                """,
+                (
+                    source_media_path,
+                    time_start_ms,
+                    time_end_ms,
+                    original_text,
+                    corrected_text,
+                    speaker_label,
+                    model_name,
+                    lora_name,
+                    confidence,
+                    bundle_entry_id,
+                ),
+            ).fetchone()
+            return int(row["id"]) if row else None
+        finally:
+            conn.close()
+
     def query_corrections(
         self,
         *,
@@ -190,12 +256,24 @@ class CorrectionDatabase:
             conn.close()
 
     def distinct_speaker_labels(self) -> list[str]:
-        """Return all distinct non-null speaker labels across corrections."""
+        """Return all distinct non-null speaker labels across correction data.
+
+        Speaker-aware prompt terms and replacement rules may exist before any
+        correction row is recorded for that speaker, so the Advanced tab needs
+        the union across all three relevant tables instead of just
+        ``corrections``.
+        """
         conn = self._connect()
         try:
             rows = conn.execute(
-                "SELECT DISTINCT speaker_label FROM corrections "
-                "WHERE speaker_label IS NOT NULL ORDER BY speaker_label"
+                """
+                SELECT speaker_label FROM corrections WHERE speaker_label IS NOT NULL
+                UNION
+                SELECT speaker_label FROM prompt_terms WHERE speaker_label IS NOT NULL
+                UNION
+                SELECT speaker_label FROM replacement_rules WHERE speaker_label IS NOT NULL
+                ORDER BY speaker_label
+                """
             ).fetchall()
             return [r["speaker_label"] for r in rows]
         finally:

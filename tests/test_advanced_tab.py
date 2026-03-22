@@ -113,6 +113,14 @@ class TestAdvancedTabDbIntegration:
         labels = db.distinct_speaker_labels()
         assert labels == ["Alice", "Bob"]
 
+    def test_speaker_labels_include_prompt_terms_and_rules(self, db):
+        """Speaker label discovery should include all correction DB tables."""
+        db.add_prompt_term("DomainTerm", speaker_label="Carol")
+        db.add_replacement_rule("foo", "bar", speaker_label="Dave")
+
+        labels = db.distinct_speaker_labels()
+        assert labels == ["Carol", "Dave"]
+
     def test_export_prompt_text(self, db):
         """Export produces comma-separated terms."""
         db.add_prompt_term("Alpha")
@@ -203,6 +211,23 @@ class TestAdvancedTabWidget:
         assert tab._speaker_combo.count() == 2
         assert tab._speaker_combo.itemText(1) == "Alice"
 
+    def test_apply_settings_restores_pending_speaker_filter(self, tab):
+        db = tab._db
+        db.record_correction(
+            source_media_path="/a.wav",
+            time_start_ms=0,
+            time_end_ms=100,
+            original_text="a",
+            corrected_text="b",
+            speaker_label="Alice",
+        )
+
+        tab.apply_settings({"speaker_filter": "Alice"})
+        assert tab._speaker_combo.currentData() is None
+
+        tab._refresh_speaker_labels()
+        assert tab._speaker_combo.currentData() == "Alice"
+
     def test_speaker_filter_partitions_terms(self, tab):
         db = tab._db
         db.add_prompt_term("Global", speaker_label=None)
@@ -277,6 +302,56 @@ class TestAdvancedTabWidget:
         db.remove_replacement_rule(rule_id)
         tab._refresh_replacement_rules()
         assert tab._rules_table.rowCount() == 0
+
+    def test_rules_add_can_create_regex_rule(self, tab, monkeypatch):
+        db = tab._db
+        text_answers = iter([
+            ("\\bum\\b", True),
+            ("", True),
+        ])
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.tabs.advancedTab.QInputDialog.getText",
+            lambda *args, **kwargs: next(text_answers),
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.ui.tabs.advancedTab.QInputDialog.getItem",
+            lambda *args, **kwargs: ("Yes", True),
+        )
+
+        tab._on_rules_add()
+
+        rules = db.list_replacement_rules()
+        assert len(rules) == 1
+        assert rules[0]["pattern"] == "\\bum\\b"
+        assert bool(rules[0]["is_regex"]) is True
+
+    def test_rules_edit_can_toggle_regex_flag(self, tab, monkeypatch):
+        db = tab._db
+        db.add_replacement_rule("gonna", "going to", is_regex=False)
+        tab._refresh_replacement_rules()
+        tab._rules_table.selectRow(0)
+
+        text_answers = iter([
+            ("gonna+", True),
+            ("going to", True),
+        ])
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.tabs.advancedTab.QInputDialog.getText",
+            lambda *args, **kwargs: next(text_answers),
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.ui.tabs.advancedTab.QInputDialog.getItem",
+            lambda *args, **kwargs: ("Yes", True),
+        )
+
+        tab._on_rules_edit()
+
+        rules = db.list_replacement_rules()
+        assert len(rules) == 1
+        assert rules[0]["pattern"] == "gonna+"
+        assert bool(rules[0]["is_regex"]) is True
 
     def test_export_prompt_file(self, tab, tmp_path):
         """Export prompt terms to a file."""
