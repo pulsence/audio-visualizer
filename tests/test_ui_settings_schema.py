@@ -37,8 +37,8 @@ class TestCreateDefaultSchema:
         # App section defaults
         assert schema["app"]["theme_mode"] == "auto"
 
-        # Tabs has exactly 6 keys
-        assert len(schema["tabs"]) == 6
+        # Tabs has exactly 7 keys (including advanced)
+        assert len(schema["tabs"]) == 7
         expected_tabs = {
             "audio_visualizer",
             "srt_gen",
@@ -46,6 +46,7 @@ class TestCreateDefaultSchema:
             "caption_animate",
             "render_composition",
             "assets",
+            "advanced",
         }
         assert set(schema["tabs"].keys()) == expected_tabs
 
@@ -111,7 +112,7 @@ class TestMigrateSettings:
         # Should return a clean default schema, not the old data
         assert migrated["version"] == CURRENT_SCHEMA_VERSION
         assert "tabs" in migrated
-        assert len(migrated["tabs"]) == 6
+        assert len(migrated["tabs"]) == 7
 
         # All tabs should be empty (old data discarded)
         for tab_key in migrated["tabs"]:
@@ -122,13 +123,13 @@ class TestMigrateSettings:
             "version": CURRENT_SCHEMA_VERSION,
             "tabs": {
                 "audio_visualizer": {"general": {"fps": 30}},
-                # Missing: srt_gen, srt_edit, caption_animate, render_composition
+                # Missing: srt_gen, srt_edit, caption_animate, render_composition, advanced
             },
         }
         migrated = migrate_settings(data)
 
-        # All six tabs should be present
-        assert len(migrated["tabs"]) == 6
+        # All seven tabs should be present
+        assert len(migrated["tabs"]) == 7
         expected_tabs = {
             "audio_visualizer",
             "srt_gen",
@@ -136,6 +137,7 @@ class TestMigrateSettings:
             "caption_animate",
             "render_composition",
             "assets",
+            "advanced",
         }
         assert set(migrated["tabs"].keys()) == expected_tabs
 

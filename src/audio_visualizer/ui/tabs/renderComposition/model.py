@@ -275,6 +275,10 @@ class CompositionModel:
 
     # -- serialization ---------------------------------------------
 
+    # Composition schema version — must be present in serialized data
+    # to prevent loading pre-center-origin payloads.
+    COMPOSITION_SCHEMA_VERSION = 2
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize the model to a plain dictionary."""
         layers_out: list[dict] = []
@@ -314,6 +318,7 @@ class CompositionModel:
             })
 
         return {
+            "composition_schema_version": self.COMPOSITION_SCHEMA_VERSION,
             "layers": layers_out,
             "audio_layers": audio_layers_out,
             "output_width": self.output_width,
@@ -324,7 +329,21 @@ class CompositionModel:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CompositionModel:
-        """Restore a model from a dictionary produced by :meth:`to_dict`."""
+        """Restore a model from a dictionary produced by :meth:`to_dict`.
+
+        Raises
+        ------
+        ValueError
+            If the payload was created before the center-origin coordinate
+            system (missing or old ``composition_schema_version``).
+        """
+        schema_ver = data.get("composition_schema_version")
+        if schema_ver is None or schema_ver < cls.COMPOSITION_SCHEMA_VERSION:
+            raise ValueError(
+                "This composition was created with an older coordinate system "
+                "(top-left origin) that is incompatible with v0.7.0's center-origin "
+                "coordinates. Please recreate the composition."
+            )
         model = cls()
         model.output_width = data.get("output_width", 1920)
         model.output_height = data.get("output_height", 1080)

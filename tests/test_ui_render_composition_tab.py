@@ -737,15 +737,22 @@ class TestResolutionPresets:
         assert data["resolution_preset"] == "4k"
 
     def test_model_from_dict_restores_preset(self):
-        data = {"resolution_preset": "2k", "output_width": 2560, "output_height": 1440}
+        data = {"composition_schema_version": 2, "resolution_preset": "2k", "output_width": 2560, "output_height": 1440}
         model = CompositionModel.from_dict(data)
         assert model.resolution_preset == "2k"
 
     def test_model_from_dict_defaults_to_custom(self):
-        """Legacy data without resolution_preset defaults to custom."""
-        data = {"output_width": 1280, "output_height": 720}
+        """Data without resolution_preset defaults to custom."""
+        data = {"composition_schema_version": 2, "output_width": 1280, "output_height": 720}
         model = CompositionModel.from_dict(data)
         assert model.resolution_preset == "custom"
+
+    def test_model_from_dict_rejects_old_schema(self):
+        """Pre-v0.7.0 payloads without composition_schema_version are rejected."""
+        import pytest
+        data = {"output_width": 1920, "output_height": 1080}
+        with pytest.raises(ValueError, match="older coordinate system"):
+            CompositionModel.from_dict(data)
 
     def test_tab_has_resolution_preset_combo(self):
         tab = RenderCompositionTab()
@@ -1183,6 +1190,7 @@ class TestCompositionModelAudioLayers:
 
     def test_from_dict_restores_audio_layers(self):
         data = {
+            "composition_schema_version": 2,
             "audio_layers": [
                 {
                     "id": "al-1",
@@ -1218,6 +1226,7 @@ class TestCompositionModelAudioLayers:
     def test_from_dict_ignores_legacy_audio_source_fields(self):
         """Legacy audio_source_path/audio_source_asset_id fields are ignored."""
         data = {
+            "composition_schema_version": 2,
             "audio_source_asset_id": "audio-legacy",
             "audio_source_path": "/tmp/legacy_audio.mp3",
         }
@@ -1227,6 +1236,7 @@ class TestCompositionModelAudioLayers:
     def test_from_dict_audio_layers_present(self):
         """audio_layers in data are restored correctly."""
         data = {
+            "composition_schema_version": 2,
             "audio_layers": [
                 {"id": "al-1", "display_name": "New Track", "asset_path": "/tmp/new.mp3"},
             ],

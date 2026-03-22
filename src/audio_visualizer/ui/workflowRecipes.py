@@ -36,6 +36,7 @@ VALID_STAGES: tuple[str, ...] = (
     "srt_edit",
     "caption_animate",
     "render_composition",
+    "advanced",
 )
 
 # Valid asset role keys used in recipe asset_roles
@@ -197,13 +198,26 @@ def load_recipe(path: Path) -> WorkflowRecipe | None:
         logger.warning("Recipe file does not contain a JSON object: %s", path)
         return None
 
+    # Reject old composition payloads that lack composition_schema_version
+    tabs_data = data.get("tabs", {})
+    comp_data = tabs_data.get("render_composition", {})
+    if comp_data and "composition" in comp_data:
+        comp_payload = comp_data["composition"]
+        if isinstance(comp_payload, dict) and "composition_schema_version" not in comp_payload:
+            logger.warning(
+                "Rejecting recipe composition payload from %s: "
+                "missing composition_schema_version (pre-center-origin).",
+                path,
+            )
+            comp_data.pop("composition", None)
+
     try:
         recipe = WorkflowRecipe(
             version=data.get("version", RECIPE_SCHEMA_VERSION),
             name=data.get("name", ""),
             enabled_stages=data.get("enabled_stages", {s: True for s in VALID_STAGES}),
             asset_roles=data.get("asset_roles", {r: None for r in RECIPE_ASSET_ROLES}),
-            tabs=data.get("tabs", {}),
+            tabs=tabs_data,
             references=data.get("references", {
                 "caption_preset": None,
                 "layout_preset": None,
