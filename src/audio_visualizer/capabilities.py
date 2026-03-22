@@ -65,11 +65,42 @@ def has_cuda() -> bool:
         return False
 
 
+@functools.cache
+def has_opengl_widget() -> bool:
+    """Return True if ``QOpenGLWidget`` can be imported from PySide6.
+
+    This is a lighter check than :func:`has_opengl` — it only verifies
+    that the Qt OpenGL integration module is available, not that a full
+    desktop OpenGL context can be created.
+    """
+    try:
+        from PySide6.QtOpenGLWidgets import QOpenGLWidget  # noqa: F401
+        logger.debug("QOpenGLWidget capability: available")
+        return True
+    except Exception:
+        logger.info("QOpenGLWidget capability: unavailable")
+        return False
+
+
+@functools.cache
+def has_pyav() -> bool:
+    """Return True if PyAV (``av``) is importable."""
+    try:
+        import av  # noqa: F401
+        logger.debug("PyAV capability: available")
+        return True
+    except Exception:
+        logger.info("PyAV capability: unavailable")
+        return False
+
+
 def capability_summary() -> dict[str, bool]:
     """Return a dict of all capability check results."""
     return {
         "opengl": has_opengl(),
+        "opengl_widget": has_opengl_widget(),
         "sounddevice": has_sounddevice(),
+        "pyav": has_pyav(),
         "training_stack": has_training_stack(),
         "cuda": has_cuda(),
     }

@@ -2050,3 +2050,237 @@ class TestPickFromPreview:
 
         tab._cancel_pick_mode()
         assert tab._picking_key_color is False
+
+
+# ------------------------------------------------------------------
+# Transport controls
+# ------------------------------------------------------------------
+
+
+class TestTransportControls:
+    def test_transport_buttons_exist(self):
+        tab = RenderCompositionTab()
+        assert hasattr(tab, "_transport_play_btn")
+        assert hasattr(tab, "_transport_stop_btn")
+        assert hasattr(tab, "_transport_jump_start_btn")
+        assert hasattr(tab, "_transport_jump_end_btn")
+
+    def test_compositor_widget_exists(self):
+        tab = RenderCompositionTab()
+        assert hasattr(tab, "_compositor_widget")
+
+    def test_playback_engine_initialized(self):
+        tab = RenderCompositionTab()
+        assert tab._playback_engine is not None
+
+    def test_playback_engine_default_state(self):
+        tab = RenderCompositionTab()
+        assert tab._playback_engine.state == "stopped"
+
+    def test_play_button_text_defaults_to_play(self):
+        tab = RenderCompositionTab()
+        assert tab._transport_play_btn.text() == "\u25B6"
+
+    def test_stop_on_empty_does_not_crash(self):
+        tab = RenderCompositionTab()
+        tab._on_transport_stop()
+
+    def test_jump_start_on_empty_does_not_crash(self):
+        tab = RenderCompositionTab()
+        tab._on_transport_jump_start()
+
+    def test_jump_end_on_empty_does_not_crash(self):
+        tab = RenderCompositionTab()
+        tab._on_transport_jump_end()
+
+    def test_play_pause_toggle_on_empty(self):
+        """Play/pause on an empty composition does not crash."""
+        tab = RenderCompositionTab()
+        tab._on_transport_play_pause()
+
+    def test_engine_state_changed_updates_button(self):
+        """State change signal updates the play button text."""
+        tab = RenderCompositionTab()
+        tab._on_engine_state_changed("playing")
+        assert "\u23F8" in tab._transport_play_btn.text()
+
+        tab._on_engine_state_changed("paused")
+        assert "\u25B6" in tab._transport_play_btn.text()
+
+    def test_engine_finished_resets_button(self):
+        tab = RenderCompositionTab()
+        tab._on_engine_finished()
+        assert "\u25B6" in tab._transport_play_btn.text()
+
+    def test_engine_position_updates_timeline(self):
+        tab = RenderCompositionTab()
+        tab._on_engine_position_changed(3000)
+        assert tab._preview_time_spin.value() == 3000
+        assert tab._timeline._playhead_ms == 3000
+
+    def test_playhead_change_seeks_engine(self):
+        """Timeline playhead change seeks the engine (no crash)."""
+        tab = RenderCompositionTab()
+        tab._model.add_layer(CompositionLayer(
+            display_name="L1", start_ms=0, end_ms=10000,
+        ))
+        tab._load_engine_data()
+        tab._on_playhead_changed(5000)
+        assert tab._preview_time_spin.value() == 5000
+
+    def test_load_engine_data_with_layers(self):
+        """Loading engine data from model with layers does not crash."""
+        tab = RenderCompositionTab()
+        tab._model.add_layer(CompositionLayer(
+            display_name="BG",
+            start_ms=0,
+            end_ms=10000,
+            center_x=0,
+            center_y=0,
+            width=1920,
+            height=1080,
+            z_order=0,
+        ))
+        tab._model.audio_layers.append(CompositionAudioLayer(
+            display_name="Audio",
+            start_ms=0,
+            duration_ms=5000,
+            use_full_length=False,
+            enabled=True,
+        ))
+        tab._load_engine_data()
+        assert tab._playback_engine.duration_ms == 10000
+
+
+# ------------------------------------------------------------------
+# Playback engine unit tests
+# ------------------------------------------------------------------
+
+
+class TestPlaybackEngine:
+    def test_compositor_widget_creation(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+        )
+        widget = CompositorWidget(1920, 1080)
+        assert widget._comp_width == 1920
+        assert widget._comp_height == 1080
+
+    def test_compositor_widget_set_layers(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+        )
+        widget = CompositorWidget(1920, 1080)
+        widget.set_layers([
+            {"qimage": QImage(), "x": 0, "y": 0, "w": 100, "h": 100, "z_order": 0, "opacity": 1.0},
+        ])
+        assert len(widget._layers) == 1
+
+    def test_compositor_widget_clear(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+        )
+        widget = CompositorWidget(1920, 1080)
+        widget.set_layers([
+            {"qimage": QImage(), "x": 0, "y": 0, "w": 100, "h": 100, "z_order": 0, "opacity": 1.0},
+        ])
+        widget.clear()
+        assert len(widget._layers) == 0
+
+    def test_compositor_paint_does_not_crash(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+        )
+        widget = CompositorWidget(1920, 1080)
+        widget.resize(400, 300)
+        widget.repaint()
+
+    def test_engine_lifecycle(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+            PlaybackEngine,
+        )
+        widget = CompositorWidget(1920, 1080)
+        engine = PlaybackEngine(widget, allow_audio=False)
+        assert engine.state == "stopped"
+
+        engine.load([], [], 10000)
+        assert engine.duration_ms == 10000
+        assert engine.state == "stopped"
+
+    def test_engine_seek_clamped(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+            PlaybackEngine,
+        )
+        widget = CompositorWidget(1920, 1080)
+        engine = PlaybackEngine(widget, allow_audio=False)
+        engine.load([], [], 5000)
+
+        engine.seek(10000)
+        # Position should be clamped to duration
+        assert engine._position_ms <= 5000
+
+        engine.seek(-100)
+        assert engine._position_ms >= 0
+
+    def test_engine_jump_to_start(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+            PlaybackEngine,
+        )
+        widget = CompositorWidget(1920, 1080)
+        engine = PlaybackEngine(widget, allow_audio=False)
+        engine.load([], [], 5000)
+
+        engine.seek(3000)
+        engine.jump_to_start()
+        assert engine._position_ms == 0
+
+    def test_engine_jump_to_end(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+            PlaybackEngine,
+        )
+        widget = CompositorWidget(1920, 1080)
+        engine = PlaybackEngine(widget, allow_audio=False)
+        engine.load([], [], 5000)
+
+        engine.jump_to_end()
+        assert engine._position_ms == 5000
+
+    def test_engine_stop_resets_state(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+            PlaybackEngine,
+        )
+        widget = CompositorWidget(1920, 1080)
+        engine = PlaybackEngine(widget, allow_audio=False)
+        engine.load([], [], 5000)
+        engine.seek(2000)
+        engine.stop()
+        assert engine.state == "stopped"
+        assert engine._position_ms == 0
+
+
+# ------------------------------------------------------------------
+# Capabilities tests
+# ------------------------------------------------------------------
+
+
+class TestCapabilities:
+    def test_has_opengl_widget_returns_bool(self):
+        from audio_visualizer.capabilities import has_opengl_widget
+        result = has_opengl_widget()
+        assert isinstance(result, bool)
+
+    def test_has_pyav_returns_bool(self):
+        from audio_visualizer.capabilities import has_pyav
+        result = has_pyav()
+        assert isinstance(result, bool)
+
+    def test_capability_summary_includes_new_keys(self):
+        from audio_visualizer.capabilities import capability_summary
+        summary = capability_summary()
+        assert "opengl_widget" in summary
+        assert "pyav" in summary

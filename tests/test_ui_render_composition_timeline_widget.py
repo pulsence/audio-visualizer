@@ -1,10 +1,11 @@
-"""Tests for TimelineWidget snap-to-align feature."""
+"""Tests for TimelineWidget snap-to-align, scrubbing, and waveform features."""
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 # Ensure src is on the path (mirrors conftest.py)
@@ -21,6 +22,10 @@ from audio_visualizer.ui.tabs.renderComposition.timelineWidget import (
     TimelineItem,
     TimelineWidget,
     _SNAP_THRESHOLD_MS,
+    _PLAYHEAD_HIT_PX,
+    _waveform_cache,
+    compute_waveform_envelope,
+    clear_waveform_cache,
 )
 
 
@@ -242,3 +247,167 @@ class TestSnapGuideLine:
             widget.mouseMoveEvent(mock_event)
 
         assert widget._snap_line_x is None
+
+
+# ---------------------------------------------------------------------------
+# Playhead scrubbing tests
+# ---------------------------------------------------------------------------
+
+class TestPlayheadScrubbing:
+    """Tests for playhead drag-scrub behavior."""
+
+    def test_scrubbing_state_initially_false(self, widget):
+        assert widget._scrubbing is False
+
+    def test_is_near_playhead_true_when_close(self, widget):
+        widget.set_playhead_ms(5000)
+        playhead_x = widget._ms_to_x(5000)
+        assert widget._is_near_playhead(playhead_x) is True
+        assert widget._is_near_playhead(playhead_x + _PLAYHEAD_HIT_PX) is True
+
+    def test_is_near_playhead_false_when_far(self, widget):
+        widget.set_playhead_ms(5000)
+        playhead_x = widget._ms_to_x(5000)
+        assert widget._is_near_playhead(playhead_x + _PLAYHEAD_HIT_PX + 10) is False
+
+    def test_press_near_playhead_starts_scrub(self, widget):
+        widget.set_playhead_ms(5000)
+        playhead_x = widget._ms_to_x(5000)
+
+        mock_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(playhead_x, 40),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+        with patch.object(widget, "update"):
+            widget.mousePressEvent(mock_event)
+
+        assert widget._scrubbing is True
+        assert widget._dragging is False
+
+    def test_scrub_drag_updates_playhead(self, widget):
+        widget.set_playhead_ms(5000)
+        playhead_x = widget._ms_to_x(5000)
+
+        # Start scrub
+        press_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(playhead_x, 40),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        with patch.object(widget, "update"):
+            widget.mousePressEvent(press_event)
+
+        signals = []
+        widget.playhead_changed.connect(lambda ms: signals.append(ms))
+
+        # Drag to new position
+        new_x = widget._ms_to_x(7000)
+        move_event = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPointF(new_x, 40),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        with patch.object(widget, "update"):
+            widget.mouseMoveEvent(move_event)
+
+        assert len(signals) > 0
+        # Playhead should have moved toward 7000
+        assert abs(widget._playhead_ms - 7000) < 200
+
+    def test_scrub_release_ends_scrub(self, widget):
+        widget._scrubbing = True
+
+        release_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            QPointF(300, 40),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        with patch.object(widget, "update"):
+            widget.mouseReleaseEvent(release_event)
+
+        assert widget._scrubbing is False
+
+    def test_cursor_changes_near_playhead(self, widget):
+        """Cursor should change to SizeHorCursor when hovering near playhead."""
+        widget.set_playhead_ms(5000)
+        playhead_x = widget._ms_to_x(5000)
+
+        move_event = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPointF(playhead_x, 40),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+        widget.mouseMoveEvent(move_event)
+        assert widget.cursor().shape() == Qt.CursorShape.SizeHorCursor
+
+
+# ---------------------------------------------------------------------------
+# Waveform cache tests
+# ---------------------------------------------------------------------------
+
+class TestWaveformCache:
+    """Tests for waveform envelope computation and caching."""
+
+    def setup_method(self):
+        clear_waveform_cache()
+
+    def test_cache_cleared(self):
+        _waveform_cache["test"] = np.array([0.5])
+        clear_waveform_cache()
+        assert len(_waveform_cache) == 0
+
+    def test_cache_returns_stored_value(self):
+        fake_envelope = np.array([0.1, 0.5, 0.8, 0.3])
+        _waveform_cache["/fake/path.wav"] = fake_envelope
+        result = compute_waveform_envelope("/fake/path.wav")
+        assert result is fake_envelope
+
+    def test_missing_av_returns_none(self):
+        """When av is not importable, compute_waveform_envelope returns None."""
+        with patch.dict("sys.modules", {"av": None}):
+            # This won't actually affect the import inside the function
+            # since av was already imported. Instead test with nonexistent file.
+            result = compute_waveform_envelope("/nonexistent/audio.wav")
+            assert result is None
+
+    def test_source_path_on_timeline_item(self):
+        """TimelineItem accepts source_path kwarg."""
+        item = TimelineItem(
+            "a1", "Audio", 0, 5000, "audio", source_path="/tmp/test.wav"
+        )
+        assert item.source_path == "/tmp/test.wav"
+
+    def test_source_path_defaults_to_none(self):
+        item = TimelineItem("a1", "Audio", 0, 5000, "audio")
+        assert item.source_path is None
+
+    def test_paint_audio_with_waveform_no_crash(self, widget):
+        """Painting an audio item with cached waveform data does not crash."""
+        fake_envelope = np.linspace(0, 1, 128)
+        _waveform_cache["/tmp/audio.wav"] = fake_envelope
+
+        items = [
+            TimelineItem(
+                "a1", "Audio Track", 0, 5000, "audio",
+                source_path="/tmp/audio.wav",
+            ),
+        ]
+        widget.set_items(items)
+        widget.resize(800, 200)
+        widget.repaint()
+
+        # Cleanup
+        clear_waveform_cache()

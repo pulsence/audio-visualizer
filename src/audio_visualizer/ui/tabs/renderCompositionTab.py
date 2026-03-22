@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -123,10 +124,13 @@ class RenderCompositionTab(BaseTab):
         self._active_worker: Optional[Any] = None
         self._updating_ui = False  # guard against recursive signal loops
         self._picking_key_color = False
+        self._playback_engine = None  # lazy init in _build_ui
+        self._playback_position_from_engine = False  # feedback loop guard
 
         self._init_undo_stack(100)
         self._build_ui()
         self._setup_shortcuts()
+        self._setup_playback_engine()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -222,6 +226,34 @@ class RenderCompositionTab(BaseTab):
         preview_group = QGroupBox("Live Preview")
         preview_layout = QVBoxLayout()
 
+        # Transport controls
+        transport_row = QHBoxLayout()
+        self._transport_jump_start_btn = QToolButton()
+        self._transport_jump_start_btn.setText("\u23EE")  # previous track
+        self._transport_jump_start_btn.setToolTip("Jump to Start")
+        self._transport_jump_start_btn.clicked.connect(self._on_transport_jump_start)
+        transport_row.addWidget(self._transport_jump_start_btn)
+
+        self._transport_stop_btn = QToolButton()
+        self._transport_stop_btn.setText("\u23F9")  # stop
+        self._transport_stop_btn.setToolTip("Stop")
+        self._transport_stop_btn.clicked.connect(self._on_transport_stop)
+        transport_row.addWidget(self._transport_stop_btn)
+
+        self._transport_play_btn = QToolButton()
+        self._transport_play_btn.setText("\u25B6")  # play
+        self._transport_play_btn.setToolTip("Play / Pause  (Space)")
+        self._transport_play_btn.clicked.connect(self._on_transport_play_pause)
+        transport_row.addWidget(self._transport_play_btn)
+
+        self._transport_jump_end_btn = QToolButton()
+        self._transport_jump_end_btn.setText("\u23ED")  # next track
+        self._transport_jump_end_btn.setToolTip("Jump to End")
+        self._transport_jump_end_btn.clicked.connect(self._on_transport_jump_end)
+        transport_row.addWidget(self._transport_jump_end_btn)
+
+        transport_row.addSpacing(12)
+
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Timestamp (ms):"))
         self._preview_time_spin = QSpinBox()
@@ -236,12 +268,26 @@ class RenderCompositionTab(BaseTab):
         self._preview_status_label = QLabel("")
         controls.addWidget(self._preview_status_label)
         controls.addStretch()
-        preview_layout.addLayout(controls)
+
+        transport_row.addLayout(controls)
+        preview_layout.addLayout(transport_row)
 
         self._preview_time_spin.valueChanged.connect(self._on_preview_time_changed)
 
-        # Preview tabs: Timeline and Layer
+        # Preview tabs: Compositor, Timeline, and Layer
         self._preview_tabs = QTabWidget()
+
+        # Compositor tab (real-time playback)
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import CompositorWidget
+        self._compositor_widget = CompositorWidget(
+            self._model.output_width,
+            self._model.output_height,
+        )
+        self._compositor_widget.setMinimumSize(400, 300)
+        self._compositor_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding,
+        )
+        self._preview_tabs.addTab(self._compositor_widget, "Compositor")
 
         self._timeline_preview_label = QLabel()
         self._timeline_preview_label.setMinimumSize(400, 300)
@@ -669,6 +715,7 @@ class RenderCompositionTab(BaseTab):
                 enabled=al.enabled,
                 source_duration_ms=al.source_duration_ms,
                 muted=al.muted,
+                source_path=str(al.asset_path) if al.asset_path else None,
             ))
         if hasattr(self, "_timeline"):
             self._timeline.set_items(items)
@@ -761,17 +808,26 @@ class RenderCompositionTab(BaseTab):
         self._timeline_scrollbar.blockSignals(False)
 
     def _on_playhead_changed(self, ms: int) -> None:
-        """Sync playhead with preview timestamp spin."""
+        """Sync playhead with preview timestamp spin and playback engine."""
+        if self._playback_position_from_engine:
+            return
         self._updating_ui = True
         self._preview_time_spin.setValue(ms)
         self._updating_ui = False
+        # Seek the playback engine without re-emitting position
+        if self._playback_engine is not None:
+            self._playback_engine.seek_from_timeline(ms)
 
     def _on_preview_time_changed(self, ms: int) -> None:
-        """Sync preview spin with timeline playhead."""
+        """Sync preview spin with timeline playhead and playback engine."""
         if self._updating_ui:
+            return
+        if self._playback_position_from_engine:
             return
         if hasattr(self, '_timeline'):
             self._timeline.set_playhead_ms(ms)
+        if self._playback_engine is not None:
+            self._playback_engine.seek_from_timeline(ms)
 
     # ------------------------------------------------------------------
     # Session context
@@ -825,11 +881,137 @@ class RenderCompositionTab(BaseTab):
     # ------------------------------------------------------------------
 
     def _setup_shortcuts(self) -> None:
-        """Set up keyboard shortcuts for undo/redo."""
+        """Set up keyboard shortcuts for undo/redo and transport."""
         undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
         undo_shortcut.activated.connect(self._on_undo)
         redo_shortcut = QShortcut(QKeySequence.StandardKey.Redo, self)
         redo_shortcut.activated.connect(self._on_redo)
+
+        # Space = Play/Pause
+        space_shortcut = QShortcut(Qt.Key.Key_Space, self)
+        space_shortcut.activated.connect(self._on_transport_play_pause)
+
+    def _setup_playback_engine(self) -> None:
+        """Create and wire the playback engine to the compositor widget."""
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import PlaybackEngine
+
+        # Detect audio capability — allow_audio=False in test/headless environments
+        try:
+            from audio_visualizer.capabilities import has_sounddevice
+            allow_audio = has_sounddevice()
+        except Exception:
+            allow_audio = False
+
+        self._playback_engine = PlaybackEngine(
+            self._compositor_widget,
+            allow_audio=allow_audio,
+        )
+        self._playback_engine.position_changed.connect(self._on_engine_position_changed)
+        self._playback_engine.state_changed.connect(self._on_engine_state_changed)
+        self._playback_engine.playback_finished.connect(self._on_engine_finished)
+
+    # ------------------------------------------------------------------
+    # Transport controls
+    # ------------------------------------------------------------------
+
+    def _on_transport_play_pause(self) -> None:
+        """Toggle play/pause on the playback engine."""
+        if self._playback_engine is None:
+            return
+        if self._playback_engine.state == "stopped":
+            # Load composition data into engine before first play
+            self._load_engine_data()
+        self._playback_engine.toggle_play_pause()
+
+    def _on_transport_stop(self) -> None:
+        if self._playback_engine:
+            self._playback_engine.stop()
+
+    def _on_transport_jump_start(self) -> None:
+        if self._playback_engine:
+            if self._playback_engine.state == "stopped":
+                self._load_engine_data()
+            self._playback_engine.jump_to_start()
+
+    def _on_transport_jump_end(self) -> None:
+        if self._playback_engine:
+            if self._playback_engine.state == "stopped":
+                self._load_engine_data()
+            self._playback_engine.jump_to_end()
+
+    def _load_engine_data(self) -> None:
+        """Prepare and load model data into the playback engine."""
+        if self._playback_engine is None:
+            return
+
+        visual_layers: list[dict] = []
+        for layer in self._model.get_layers_sorted():
+            if not layer.enabled:
+                continue
+            visual_layers.append({
+                "id": layer.id,
+                "path": str(layer.asset_path) if layer.asset_path else "",
+                "start_ms": layer.start_ms,
+                "end_ms": layer.start_ms + layer.effective_duration_ms(),
+                "center_x": layer.center_x,
+                "center_y": layer.center_y,
+                "width": layer.width,
+                "height": layer.height,
+                "z_order": layer.z_order,
+                "opacity": 1.0,
+                "enabled": layer.enabled,
+            })
+
+        audio_layers: list[dict] = []
+        for al in self._model.audio_layers:
+            if not al.enabled:
+                continue
+            audio_layers.append({
+                "id": al.id,
+                "path": str(al.asset_path) if al.asset_path else "",
+                "start_ms": al.start_ms,
+                "duration_ms": al.effective_end_ms() - al.start_ms,
+                "volume": al.volume,
+                "muted": al.muted,
+                "enabled": al.enabled,
+            })
+
+        duration_ms = self._model.get_duration_ms()
+        self._playback_engine.load(
+            visual_layers,
+            audio_layers,
+            duration_ms,
+            output_width=self._model.output_width,
+            output_height=self._model.output_height,
+        )
+
+    def _on_engine_position_changed(self, ms: int) -> None:
+        """Update timeline and spin from engine position (avoid feedback loops)."""
+        if self._playback_position_from_engine:
+            return
+        self._playback_position_from_engine = True
+        self._updating_ui = True
+        try:
+            self._preview_time_spin.setValue(ms)
+            if hasattr(self, "_timeline"):
+                self._timeline.set_playhead_ms(ms)
+        finally:
+            self._updating_ui = False
+            self._playback_position_from_engine = False
+
+    def _on_engine_state_changed(self, state: str) -> None:
+        """Update transport button text based on playback state."""
+        if state == "playing":
+            self._transport_play_btn.setText("\u23F8")  # pause symbol
+            self._transport_play_btn.setToolTip("Pause  (Space)")
+        else:
+            self._transport_play_btn.setText("\u25B6")  # play symbol
+            self._transport_play_btn.setToolTip("Play  (Space)")
+
+    def _on_engine_finished(self) -> None:
+        """Handle natural end of playback."""
+        self._transport_play_btn.setText("\u25B6")
+        self._transport_play_btn.setToolTip("Play  (Space)")
 
     def _on_undo(self) -> None:
         if self._undo_stack is not None and self._undo_stack.canUndo():

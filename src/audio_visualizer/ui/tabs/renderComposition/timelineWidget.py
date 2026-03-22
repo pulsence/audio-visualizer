@@ -1,15 +1,27 @@
 """Timeline widget for Render Composition.
 
 Provides a visual timeline showing visual and audio layers as horizontal
-bars on separate tracks. Supports drag-to-move and handle-based trimming.
+bars on separate tracks. Supports drag-to-move, handle-based trimming,
+playhead scrubbing, and audio waveform display.
 """
 from __future__ import annotations
 
 import logging
+import math
 from typing import Optional
 
+import numpy as np
+
 from PySide6.QtCore import Qt, QRectF, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QMouseEvent, QWheelEvent
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QMouseEvent,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import QWidget, QScrollBar, QVBoxLayout
 
 logger = logging.getLogger(__name__)
@@ -23,6 +35,82 @@ _TRACK_HEIGHT = 30
 _TRACK_SPACING = 4
 _HEADER_WIDTH = 100
 _SNAP_THRESHOLD_MS = 200
+_PLAYHEAD_HIT_PX = 8  # pixel tolerance for playhead scrub grab
+_WAVEFORM_BINS = 1024  # max RMS bins per cached envelope
+
+
+# ------------------------------------------------------------------
+# Waveform envelope cache
+# ------------------------------------------------------------------
+
+_waveform_cache: dict[str, np.ndarray] = {}
+
+
+def compute_waveform_envelope(source_path: str, num_bins: int = _WAVEFORM_BINS) -> np.ndarray | None:
+    """Compute an RMS envelope from *source_path* using PyAV.
+
+    Returns a 1-D numpy array of length *num_bins* with values in [0, 1],
+    or ``None`` if the file cannot be decoded.  Results are cached by path.
+    """
+    if source_path in _waveform_cache:
+        return _waveform_cache[source_path]
+
+    try:
+        import av  # noqa: F811
+    except ImportError:
+        return None
+
+    try:
+        container = av.open(source_path)
+        audio_stream = None
+        for s in container.streams:
+            if s.type == "audio":
+                audio_stream = s
+                break
+        if audio_stream is None:
+            container.close()
+            return None
+
+        # Decode all audio into a flat sample array
+        samples_list: list[np.ndarray] = []
+        for frame in container.decode(audio_stream):
+            arr = frame.to_ndarray()
+            if arr.ndim > 1:
+                arr = arr.mean(axis=0)
+            samples_list.append(arr.astype(np.float32))
+        container.close()
+
+        if not samples_list:
+            return None
+
+        all_samples = np.concatenate(samples_list)
+        total = len(all_samples)
+        if total == 0:
+            return None
+
+        bin_size = max(1, total // num_bins)
+        actual_bins = total // bin_size
+        if actual_bins == 0:
+            return None
+
+        trimmed = all_samples[: actual_bins * bin_size].reshape(actual_bins, bin_size)
+        rms = np.sqrt(np.mean(trimmed ** 2, axis=1))
+
+        # Normalize to [0, 1]
+        peak = rms.max()
+        if peak > 0:
+            rms = rms / peak
+
+        _waveform_cache[source_path] = rms
+        return rms
+    except Exception:
+        logger.debug("Waveform envelope computation failed for %s", source_path, exc_info=True)
+        return None
+
+
+def clear_waveform_cache() -> None:
+    """Clear all cached waveform envelopes."""
+    _waveform_cache.clear()
 
 
 class TimelineItem:
@@ -30,7 +118,7 @@ class TimelineItem:
     def __init__(self, item_id: str, display_name: str, start_ms: int,
                  end_ms: int, track_type: str = "visual", enabled: bool = True,
                  source_duration_ms: int = 0, z_order: int = 0,
-                 muted: bool = False):
+                 muted: bool = False, source_path: str | None = None):
         self.item_id = item_id
         self.display_name = display_name
         self.start_ms = start_ms
@@ -40,6 +128,7 @@ class TimelineItem:
         self.source_duration_ms = source_duration_ms
         self.z_order = z_order
         self.muted = muted
+        self.source_path = source_path  # for waveform display on audio tracks
 
 
 class TimelineWidget(QWidget):
@@ -77,6 +166,9 @@ class TimelineWidget(QWidget):
 
         # Snap guide state
         self._snap_line_x: float | None = None
+
+        # Scrub state (playhead dragging)
+        self._scrubbing: bool = False
 
         # Drag state
         self._dragging: bool = False
@@ -296,6 +388,10 @@ class TimelineWidget(QWidget):
                         painter.drawLine(int(bx), int(rect.top()), int(bx), int(rect.bottom()))
                     n += 1
 
+        # Draw waveform overlay for audio items with a source path
+        if item.track_type == "audio" and item.source_path:
+            self._draw_waveform(painter, item, rect)
+
         # Draw trim handles
         if item.item_id == self._selected_id:
             painter.setBrush(QBrush(QColor(255, 255, 255, 150)))
@@ -304,6 +400,64 @@ class TimelineWidget(QWidget):
             painter.drawRect(QRectF(rect.left(), rect.top(), _HANDLE_WIDTH, rect.height()))
             # Right handle
             painter.drawRect(QRectF(rect.right() - _HANDLE_WIDTH, rect.top(), _HANDLE_WIDTH, rect.height()))
+
+    def _draw_waveform(self, painter: QPainter, item: TimelineItem, rect: QRectF) -> None:
+        """Draw an RMS waveform envelope inside *rect* for an audio item."""
+        envelope = compute_waveform_envelope(item.source_path)
+        if envelope is None or len(envelope) == 0:
+            return
+
+        item_duration = item.end_ms - item.start_ms
+        if item_duration <= 0:
+            return
+
+        # Map visible rect pixels to envelope bins
+        num_bins = len(envelope)
+        mid_y = rect.center().y()
+        half_h = rect.height() * 0.4  # leave a small margin
+
+        path = QPainterPath()
+        px_width = rect.width()
+        if px_width < 2:
+            return
+
+        steps = max(1, int(px_width))
+        started = False
+        for i in range(steps + 1):
+            px = rect.left() + (i / steps) * px_width
+            # Determine which ms this pixel corresponds to
+            ms = self._x_to_ms(px)
+            # Fraction within the item
+            frac = (ms - item.start_ms) / item_duration
+            if frac < 0 or frac > 1:
+                continue
+            bin_idx = min(int(frac * num_bins), num_bins - 1)
+            amp = float(envelope[bin_idx])
+            y_val = mid_y - amp * half_h
+            if not started:
+                path.moveTo(px, y_val)
+                started = True
+            else:
+                path.lineTo(px, y_val)
+
+        # Mirror for the lower half
+        for i in range(steps, -1, -1):
+            px = rect.left() + (i / steps) * px_width
+            ms = self._x_to_ms(px)
+            frac = (ms - item.start_ms) / item_duration
+            if frac < 0 or frac > 1:
+                continue
+            bin_idx = min(int(frac * num_bins), num_bins - 1)
+            amp = float(envelope[bin_idx])
+            y_val = mid_y + amp * half_h
+            path.lineTo(px, y_val)
+
+        path.closeSubpath()
+
+        wave_color = QColor(180, 255, 200, 100)
+        painter.setBrush(QBrush(wave_color))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawPath(path)
 
     def _item_at(self, x: float, y: float) -> tuple[TimelineItem | None, str]:
         """Find item at position. Returns (item, hit_type) where hit_type is 'body', 'handle_start', 'handle_end', or ''."""
@@ -336,13 +490,29 @@ class TimelineWidget(QWidget):
 
         return None, ""
 
+    def _is_near_playhead(self, x: float) -> bool:
+        """Return True if *x* is within the scrub grab zone of the playhead."""
+        playhead_x = self._ms_to_x(self._playhead_ms)
+        return abs(x - playhead_x) <= _PLAYHEAD_HIT_PX
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(event)
 
-        if event.position().x() >= _HEADER_WIDTH:
+        x = event.position().x()
+
+        # Check for playhead scrub grab first (in content area)
+        if x >= _HEADER_WIDTH and self._is_near_playhead(x):
+            self._scrubbing = True
+            self._playhead_ms = self._x_to_ms(x)
+            self.playhead_changed.emit(self._playhead_ms)
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+            self.update()
+            return
+
+        if x >= _HEADER_WIDTH:
             # Update playhead on any left click in the timeline content area.
-            self._playhead_ms = self._x_to_ms(event.position().x())
+            self._playhead_ms = self._x_to_ms(x)
             self.playhead_changed.emit(self._playhead_ms)
 
         item, hit_type = self._item_at(event.position().x(), event.position().y())
@@ -378,9 +548,21 @@ class TimelineWidget(QWidget):
         self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        # Playhead scrub drag
+        if self._scrubbing:
+            x = event.position().x()
+            self._playhead_ms = max(0, self._x_to_ms(x))
+            self.playhead_changed.emit(self._playhead_ms)
+            self.update()
+            return
+
         if not self._dragging or self._drag_item_id is None:
-            # Update cursor
-            item, hit_type = self._item_at(event.position().x(), event.position().y())
+            # Update cursor — show resize cursor near playhead line
+            x = event.position().x()
+            if x >= _HEADER_WIDTH and self._is_near_playhead(x):
+                self.setCursor(Qt.CursorShape.SizeHorCursor)
+                return
+            item, hit_type = self._item_at(x, event.position().y())
             if hit_type in ("handle_start", "handle_end"):
                 self.setCursor(Qt.CursorShape.SizeHorCursor)
             elif hit_type == "body":
@@ -475,6 +657,12 @@ class TimelineWidget(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self._scrubbing:
+            self._scrubbing = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.update()
+            return
+
         if self._dragging and self._drag_item_id:
             item = next((i for i in self._items if i.item_id == self._drag_item_id), None)
             if item:
