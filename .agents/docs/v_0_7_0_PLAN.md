@@ -31,7 +31,8 @@ This file is intentionally streamlined. The full task breakdown for each numbere
 | 8 | SRT Edit markdown support and right-sidebar controls restructure | [PHASE_8.md](./plan_phases/PHASE_8.md) |
 | 9 | SRT Gen script input, model management UI, bundle-from-SRT flow | [PHASE_9.md](./plan_phases/PHASE_9.md) |
 | 10 | Caption Animator bundle input, markdown-to-ASS, new animations, output consolidation | [PHASE_10.md](./plan_phases/PHASE_10.md) |
-| 11 | Final review, integration testing, architecture docs, release prep | [PHASE_11.md](./plan_phases/PHASE_11.md) |
+| 11 | Refinement - 1 | [PHASE_11.md](./plan_phases/PHASE_11.md) |
+| 12 | Final review, integration testing, architecture docs, release prep | [PHASE_12.md](./plan_phases/PHASE_12.md) |
 
 ## Recommended Execution Order
 
@@ -40,7 +41,8 @@ This file is intentionally streamlined. The full task breakdown for each numbere
 3. Complete [PHASE_5.md](./plan_phases/PHASE_5.md) before [PHASE_6.md](./plan_phases/PHASE_6.md).
 4. Complete [PHASE_7.md](./plan_phases/PHASE_7.md) before [PHASE_8.md](./plan_phases/PHASE_8.md).
 5. Complete [PHASE_9.md](./plan_phases/PHASE_9.md) before [PHASE_10.md](./plan_phases/PHASE_10.md) wherever bundle input or markdown rendering depends on the SRT Gen output path.
-6. Finish with [PHASE_11.md](./plan_phases/PHASE_11.md).
+6. Complete [PHASE_11.md](./plan_phases/PHASE_11.md) after the major feature-delivery phases and before final release work in [PHASE_12.md](./plan_phases/PHASE_12.md).
+7. Finish with [PHASE_12.md](./plan_phases/PHASE_12.md).
 
 ## Cross-Phase Dependency Map
 
