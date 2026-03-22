@@ -32,6 +32,8 @@ class TestSrtGenTabSettings:
         # Top-level keys
         expected_keys = {
             "input_files",
+            "script_paths",
+            "existing_srt_paths",
             "output_dir",
             "format",
             "model",
@@ -291,6 +293,64 @@ class TestSrtGenJobShellIntegration:
 
         assert len(captured_workers) == 1
         assert "model_manager" not in captured_workers[0].captured_kwargs
+
+
+class TestSrtGenTabScriptPaths:
+    def test_script_path_in_collect_settings(self):
+        tab = SrtGenTab()
+        tab._add_input_path("/tmp/test.mp3")
+        tab._script_paths["/tmp/test.mp3"] = "/tmp/script.txt"
+        settings = tab.collect_settings()
+        assert settings["script_paths"] == {"/tmp/test.mp3": "/tmp/script.txt"}
+
+    def test_existing_srt_path_in_collect_settings(self):
+        tab = SrtGenTab()
+        tab._add_input_path("/tmp/test.mp3")
+        tab._existing_srt_paths["/tmp/test.mp3"] = "/tmp/existing.srt"
+        settings = tab.collect_settings()
+        assert settings["existing_srt_paths"] == {"/tmp/test.mp3": "/tmp/existing.srt"}
+
+    def test_apply_settings_restores_script_paths(self):
+        tab = SrtGenTab()
+        custom = {
+            "input_files": ["/tmp/test.mp3"],
+            "script_paths": {"/tmp/test.mp3": "/tmp/script.txt"},
+            "existing_srt_paths": {},
+            "output_dir": "",
+            "format": "srt",
+            "model": "base",
+            "device": "auto",
+            "mode": "general",
+            "language": "",
+            "word_level": True,
+            "preset": "(none)",
+            "formatting": {},
+            "transcription": {},
+            "silence": {},
+            "side_outputs": {},
+            "diarize": False,
+            "hf_token": "",
+            "diagnostics": {},
+            "advanced_visible": False,
+        }
+        tab.apply_settings(custom)
+        assert tab._script_paths == {"/tmp/test.mp3": "/tmp/script.txt"}
+
+    def test_clear_removes_script_paths(self):
+        tab = SrtGenTab()
+        tab._add_input_path("/tmp/test.mp3")
+        tab._script_paths["/tmp/test.mp3"] = "/tmp/script.txt"
+        tab._on_clear_queue()
+        assert tab._script_paths == {}
+        assert tab._existing_srt_paths == {}
+
+    def test_input_item_display_shows_script_tag(self):
+        tab = SrtGenTab()
+        tab._add_input_path("/tmp/test.mp3")
+        tab._script_paths["/tmp/test.mp3"] = "/tmp/script.txt"
+        item = tab._input_list.item(0)
+        tab._update_input_item_display(item)
+        assert "script: script.txt" in item.text()
 
 
 class TestSrtGenTabDeviceInfo:

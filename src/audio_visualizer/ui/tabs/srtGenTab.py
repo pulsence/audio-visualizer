@@ -60,6 +60,12 @@ _INPUT_FILTERS = (
     "All files (*)"
 )
 
+_SCRIPT_FILTERS = "Script files (*.txt *.docx);;Text files (*.txt);;Word documents (*.docx);;All files (*)"
+_SRT_IMPORT_FILTERS = (
+    "Subtitle files (*.srt *.vtt *.ass *.ssa);;SRT files (*.srt);;VTT files (*.vtt);;"
+    "ASS files (*.ass *.ssa);;All files (*)"
+)
+
 # Display name -> internal model identifier mapping
 _MODEL_MAP: dict[str, str] = {
     "tiny": "tiny",
@@ -180,6 +186,10 @@ class SrtGenTab(BaseTab):
         self._model_manager = ModelManager()
         self._model_loaded = False
         self._loaded_model_name: str | None = None
+        # Per-file script paths: maps input path -> script path
+        self._script_paths: dict[str, str] = {}
+        # Per-file existing SRT paths for bundle-from-SRT mode
+        self._existing_srt_paths: dict[str, str] = {}
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(8, 8, 8, 8)
@@ -242,6 +252,20 @@ class SrtGenTab(BaseTab):
         self._add_session_btn = QPushButton("Add from Session")
         self._add_session_btn.clicked.connect(self._on_add_session_files)
         btn_row.addWidget(self._add_session_btn)
+
+        self._attach_script_btn = QPushButton("Attach Script...")
+        self._attach_script_btn.setToolTip(
+            "Attach a .txt or .docx script to the selected input file to guide transcription"
+        )
+        self._attach_script_btn.clicked.connect(self._on_attach_script)
+        btn_row.addWidget(self._attach_script_btn)
+
+        self._attach_srt_btn = QPushButton("Attach SRT...")
+        self._attach_srt_btn.setToolTip(
+            "Attach an existing subtitle file for bundle-from-SRT mode"
+        )
+        self._attach_srt_btn.clicked.connect(self._on_attach_existing_srt)
+        btn_row.addWidget(self._attach_srt_btn)
 
         self._remove_btn = QPushButton("Remove Selected")
         self._remove_btn.clicked.connect(self._on_remove_selected)
@@ -708,12 +732,78 @@ class SrtGenTab(BaseTab):
         for asset in audio_assets:
             self._add_input_path(str(asset.path))
 
+    def _on_attach_script(self) -> None:
+        """Attach a script file to the currently selected input item."""
+        items = self._input_list.selectedItems()
+        if not items:
+            QMessageBox.information(
+                self, "No Selection", "Select an input file first."
+            )
+            return
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+
+        start_dir = resolve_browse_directory(
+            workspace_context=self.workspace_context
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select script file", start_dir, _SCRIPT_FILTERS,
+        )
+        if not path:
+            return
+        for item in items:
+            input_path = item.text().split("  [")[0]
+            self._script_paths[input_path] = path
+            self._update_input_item_display(item)
+
+    def _on_attach_existing_srt(self) -> None:
+        """Attach an existing subtitle file for bundle-from-SRT mode."""
+        items = self._input_list.selectedItems()
+        if not items:
+            QMessageBox.information(
+                self, "No Selection", "Select an input file first."
+            )
+            return
+        from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+
+        start_dir = resolve_browse_directory(
+            workspace_context=self.workspace_context
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select existing subtitle file", start_dir, _SRT_IMPORT_FILTERS,
+        )
+        if not path:
+            return
+        for item in items:
+            input_path = item.text().split("  [")[0]
+            self._existing_srt_paths[input_path] = path
+            self._update_input_item_display(item)
+
+    def _update_input_item_display(self, item) -> None:
+        """Update the display text of a list item to show attached files."""
+        input_path = item.text().split("  [")[0]
+        tags: list[str] = []
+        if input_path in self._script_paths:
+            script_name = Path(self._script_paths[input_path]).name
+            tags.append(f"script: {script_name}")
+        if input_path in self._existing_srt_paths:
+            srt_name = Path(self._existing_srt_paths[input_path]).name
+            tags.append(f"srt: {srt_name}")
+        if tags:
+            item.setText(f"{input_path}  [{', '.join(tags)}]")
+        else:
+            item.setText(input_path)
+
     def _on_remove_selected(self) -> None:
         for item in self._input_list.selectedItems():
+            input_path = item.text().split("  [")[0]
+            self._script_paths.pop(input_path, None)
+            self._existing_srt_paths.pop(input_path, None)
             self._input_list.takeItem(self._input_list.row(item))
 
     def _on_clear_queue(self) -> None:
         self._input_list.clear()
+        self._script_paths.clear()
+        self._existing_srt_paths.clear()
 
     def _on_browse_output_dir(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
@@ -859,15 +949,19 @@ class SrtGenTab(BaseTab):
 
     def _add_input_path(self, path: str) -> None:
         """Add a file path to the input queue if not already present."""
+        clean = path.split("  [")[0]
         for i in range(self._input_list.count()):
-            if self._input_list.item(i).text() == path:
+            if self._input_list.item(i).text().split("  [")[0] == clean:
                 return
-        self._input_list.addItem(path)
+        self._input_list.addItem(clean)
+        # Apply display annotations if script/srt attached
+        item = self._input_list.item(self._input_list.count() - 1)
+        self._update_input_item_display(item)
 
     def _get_input_paths(self) -> list[str]:
         """Return all paths currently in the input queue."""
         return [
-            self._input_list.item(i).text()
+            self._input_list.item(i).text().split("  [")[0]
             for i in range(self._input_list.count())
         ]
 
@@ -983,6 +1077,8 @@ class SrtGenTab(BaseTab):
     def collect_settings(self) -> dict[str, Any]:
         return {
             "input_files": self._get_input_paths(),
+            "script_paths": dict(self._script_paths),
+            "existing_srt_paths": dict(self._existing_srt_paths),
             "output_dir": self._output_dir_edit.text(),
             "format": self._format_combo.currentText(),
             "model": self._model_combo.currentText(),
@@ -1033,8 +1129,10 @@ class SrtGenTab(BaseTab):
     def apply_settings(self, data: dict[str, Any]) -> None:
         # Input files
         self._input_list.clear()
+        self._script_paths = dict(data.get("script_paths", {}))
+        self._existing_srt_paths = dict(data.get("existing_srt_paths", {}))
         for p in data.get("input_files", []):
-            self._input_list.addItem(p)
+            self._add_input_path(p)
 
         # Output
         self._output_dir_edit.setText(data.get("output_dir", ""))
@@ -1184,11 +1282,18 @@ class SrtGenTab(BaseTab):
         jobs: list[SrtGenJobSpec] = []
         for p_str in input_paths:
             inp = Path(p_str)
-            out = self._resolve_output_path(inp, fmt)
+            # For bundle-from-SRT mode, force JSON output and bundle side output
+            has_existing_srt = p_str in self._existing_srt_paths
+            job_fmt = "json" if has_existing_srt else fmt
+            out = self._resolve_output_path(inp, job_fmt)
+            script_path_str = self._script_paths.get(p_str)
+            existing_srt_str = self._existing_srt_paths.get(p_str)
+            # Always enable JSON bundle for bundle-from-SRT
+            json_bundle_enabled = self._out_json_bundle.isChecked() or has_existing_srt
             jobs.append(SrtGenJobSpec(
                 input_path=inp,
                 output_path=out,
-                fmt=fmt,
+                fmt=job_fmt,
                 cfg=dataclasses.replace(
                     cfg,
                     formatting=dataclasses.replace(cfg.formatting),
@@ -1202,12 +1307,14 @@ class SrtGenTab(BaseTab):
                 mode=mode,
                 transcript_path=self._resolve_side_output(inp, ".transcript.txt", self._out_transcript.isChecked()),
                 segments_path=self._resolve_side_output(inp, ".segments.json", self._out_segments.isChecked()),
-                json_bundle_path=self._resolve_side_output(inp, ".bundle.json", self._out_json_bundle.isChecked()),
+                json_bundle_path=self._resolve_side_output(inp, ".bundle.json", json_bundle_enabled),
                 diarize=diarize,
                 hf_token=hf_token,
                 dry_run=dry_run,
                 keep_wav=keep_wav,
                 lora_name=lora_name,
+                script_path=Path(script_path_str) if script_path_str else None,
+                existing_srt_path=Path(existing_srt_str) if existing_srt_str else None,
             ))
 
         emitter = AppEventEmitter()

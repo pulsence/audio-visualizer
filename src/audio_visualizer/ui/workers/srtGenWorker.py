@@ -65,6 +65,8 @@ class SrtGenJobSpec:
     dry_run: bool = False
     keep_wav: bool = False
     lora_name: Optional[str] = None
+    script_path: Optional[Path] = None
+    existing_srt_path: Optional[Path] = None
 
 
 class SrtGenWorker(QRunnable):
@@ -220,6 +222,7 @@ class SrtGenWorker(QRunnable):
                     hf_token=job.hf_token,
                     dry_run=job.dry_run,
                     keep_wav=job.keep_wav,
+                    script_path=job.script_path,
                     emitter=self._emitter,
                 )
                 self._results.append(result)

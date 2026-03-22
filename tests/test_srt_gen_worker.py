@@ -184,6 +184,55 @@ class TestSrtGenWorkerUsesLoadModelDirectly:
         assert completed[0]["total"] == 1
 
 
+class TestSrtGenJobSpecFields:
+    def test_script_path_field_defaults_to_none(self):
+        job = _make_job()
+        assert job.script_path is None
+
+    def test_script_path_can_be_set(self):
+        job = _make_job(script_path=Path("/tmp/script.txt"))
+        assert job.script_path == Path("/tmp/script.txt")
+
+    def test_existing_srt_path_defaults_to_none(self):
+        job = _make_job()
+        assert job.existing_srt_path is None
+
+    def test_existing_srt_path_can_be_set(self):
+        job = _make_job(existing_srt_path=Path("/tmp/existing.srt"))
+        assert job.existing_srt_path == Path("/tmp/existing.srt")
+
+
+class TestSrtGenWorkerPassesScriptPath:
+    """The worker passes script_path to transcribe_file."""
+
+    @patch("audio_visualizer.ui.workers.srtGenWorker.load_model")
+    @patch("audio_visualizer.ui.workers.srtGenWorker.transcribe_file")
+    def test_script_path_forwarded(self, mock_transcribe, mock_load):
+        mock_load.return_value = (MagicMock(), "cpu", "int8")
+        mock_transcribe.return_value = MagicMock(
+            success=True,
+            input_path=Path("/tmp/test.mp3"),
+            output_path=Path("/tmp/test.srt"),
+            error=None,
+            transcript_path=None,
+            segments_path=None,
+            json_bundle_path=None,
+            elapsed=1.0,
+        )
+
+        emitter = AppEventEmitter()
+        job = _make_job(script_path=Path("/tmp/script.txt"))
+        worker = SrtGenWorker(jobs=[job], emitter=emitter)
+
+        completed = []
+        worker.signals.completed.connect(lambda data: completed.append(data))
+        worker.run()
+
+        assert mock_transcribe.call_count == 1
+        call_kwargs = mock_transcribe.call_args[1]
+        assert call_kwargs["script_path"] == Path("/tmp/script.txt")
+
+
 class TestSrtGenWorkerDeviceMetadata:
     """Completed payload must include device_used and compute_type_used."""
 
