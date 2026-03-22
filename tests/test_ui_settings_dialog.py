@@ -1,12 +1,17 @@
 """Tests for audio_visualizer.ui.settingsDialog module."""
 
 import pytest
+from unittest.mock import MagicMock, patch
 
 from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
 
-from audio_visualizer.ui.settingsDialog import SettingsDialog, _THEME_OPTIONS
+from audio_visualizer.ui.settingsDialog import (
+    SettingsDialog,
+    _THEME_OPTIONS,
+    _ModelActionWorker,
+)
 
 
 # ------------------------------------------------------------------
@@ -90,3 +95,107 @@ class TestSettingsDialogAccept:
         dialog._project_folder_edit.setText("/tmp/project")
         dialog._on_accept()
         assert dialog.result_settings["project_folder"] == "/tmp/project"
+
+
+# ------------------------------------------------------------------
+# Whisper model management section
+# ------------------------------------------------------------------
+
+
+class TestSettingsDialogModelManagement:
+    def test_model_table_exists(self):
+        """The dialog should have a model management table."""
+        dialog = SettingsDialog({})
+        assert hasattr(dialog, "_model_table")
+        assert dialog._model_table.columnCount() == 4
+
+    def test_model_table_headers(self):
+        dialog = SettingsDialog({})
+        headers = []
+        for col in range(dialog._model_table.columnCount()):
+            item = dialog._model_table.horizontalHeaderItem(col)
+            headers.append(item.text() if item else "")
+        assert headers == ["Model", "Size", "Status", "Action"]
+
+    def test_model_refresh_button_exists(self):
+        dialog = SettingsDialog({})
+        assert hasattr(dialog, "_model_refresh_btn")
+        assert dialog._model_refresh_btn.text() == "Refresh"
+
+    def test_model_progress_hidden_initially(self):
+        dialog = SettingsDialog({})
+        assert dialog._model_progress.isVisible() is False
+
+    @patch("audio_visualizer.ui.settingsDialog._ModelActionWorker")
+    def test_set_model_actions_enabled(self, _mock_worker):
+        dialog = SettingsDialog({})
+        # Disable all action buttons
+        dialog._set_model_actions_enabled(False)
+        assert dialog._model_refresh_btn.isEnabled() is False
+        # Re-enable
+        dialog._set_model_actions_enabled(True)
+        assert dialog._model_refresh_btn.isEnabled() is True
+
+
+class TestModelActionWorker:
+    @patch("audio_visualizer.srt.modelManagement.download_model")
+    def test_download_worker_emits_completed(self, mock_download):
+        mock_download.return_value = "/tmp/models/small"
+        worker = _ModelActionWorker("download", "small")
+
+        completed_msgs = []
+        worker.signals.completed.connect(lambda msg: completed_msgs.append(msg))
+
+        worker.run()
+
+        assert len(completed_msgs) == 1
+        assert "Downloaded" in completed_msgs[0]
+        assert "small" in completed_msgs[0]
+
+    @patch("audio_visualizer.srt.modelManagement.download_model")
+    def test_download_worker_emits_failed_on_error(self, mock_download):
+        mock_download.side_effect = RuntimeError("Network error")
+        worker = _ModelActionWorker("download", "small")
+
+        failed_msgs = []
+        worker.signals.failed.connect(lambda msg: failed_msgs.append(msg))
+
+        worker.run()
+
+        assert len(failed_msgs) == 1
+        assert "Network error" in failed_msgs[0]
+
+    @patch("audio_visualizer.srt.modelManagement.delete_model")
+    def test_delete_worker_emits_completed(self, mock_delete):
+        mock_delete.return_value = "/tmp/models/small"
+        worker = _ModelActionWorker("delete", "small")
+
+        completed_msgs = []
+        worker.signals.completed.connect(lambda msg: completed_msgs.append(msg))
+
+        worker.run()
+
+        assert len(completed_msgs) == 1
+        assert "Deleted" in completed_msgs[0]
+        assert "small" in completed_msgs[0]
+
+
+class TestModelManagementHelpers:
+    def test_get_model_size_label_known(self):
+        from audio_visualizer.srt.modelManagement import get_model_size_label
+
+        label = get_model_size_label("small")
+        assert "244M" in label
+
+    def test_get_model_size_label_unknown(self):
+        from audio_visualizer.srt.modelManagement import get_model_size_label
+
+        label = get_model_size_label("nonexistent_model")
+        assert label == "unknown"
+
+    def test_model_info_dataclass(self):
+        from audio_visualizer.srt.modelManagement import ModelInfo
+
+        info = ModelInfo(name="small", size_label="244M params", is_downloaded=True)
+        assert info.name == "small"
+        assert info.is_downloaded is True
