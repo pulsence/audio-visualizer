@@ -12,7 +12,6 @@ unavailable.  Tests can instantiate the engine with
 from __future__ import annotations
 
 import logging
-import math
 import queue
 import threading
 import time
@@ -20,9 +19,9 @@ from typing import Any
 
 import numpy as np
 
-from PySide6.QtCore import QObject, QTimer, Signal, Qt
+from PySide6.QtCore import QObject, QTimer, Signal, Qt, QRect, QRectF
 from PySide6.QtGui import QImage, QPainter, QColor
-from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QWidget
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +30,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _HAS_OPENGL_WIDGET = False
+_HAS_OPENGL_BLITTER = False
 _HAS_SOUNDDEVICE = False
 _HAS_PYAV = False
 
@@ -40,6 +40,14 @@ try:
     _HAS_OPENGL_WIDGET = True
 except ImportError:
     QOpenGLWidget = None  # type: ignore[assignment,misc]
+
+try:
+    from PySide6.QtOpenGL import QOpenGLTexture, QOpenGLTextureBlitter
+
+    _HAS_OPENGL_BLITTER = True
+except ImportError:
+    QOpenGLTexture = None  # type: ignore[assignment,misc]
+    QOpenGLTextureBlitter = None  # type: ignore[assignment,misc]
 
 try:
     import sounddevice as sd
@@ -64,6 +72,11 @@ _AUDIO_BLOCK_SIZE = 1024
 _AUDIO_SAMPLE_RATE = 44100
 _AUDIO_CHANNELS = 2
 _DISPLAY_FPS = 30
+_MAX_FRAME_HISTORY = 12
+_OPENGL_COLOR_BUFFER_BIT = 0x00004000
+_OPENGL_BLEND = 0x0BE2
+_OPENGL_SRC_ALPHA = 0x0302
+_OPENGL_ONE_MINUS_SRC_ALPHA = 0x0303
 
 
 # ---------------------------------------------------------------------------
@@ -81,14 +94,14 @@ class _VideoDecodeWorker(threading.Thread):
         self,
         source_path: str,
         frame_queue: queue.Queue,
-        start_ms: int = 0,
+        start_source_ms: int = 0,
         *,
         layer_id: str = "",
     ) -> None:
         super().__init__(daemon=True, name=f"VideoDecode-{layer_id[:8]}")
         self.source_path = source_path
         self.frame_queue = frame_queue
-        self.start_ms = start_ms
+        self.start_source_ms = start_source_ms
         self.layer_id = layer_id
 
         self._stop_event = threading.Event()
@@ -110,9 +123,13 @@ class _VideoDecodeWorker(threading.Thread):
                 container.close()
                 return
 
-            # Seek to start offset
-            if self.start_ms > 0:
-                container.seek(int(self.start_ms * 1000), stream=video_stream)
+            # Seek to the initial source-time offset for this layer.
+            if self.start_source_ms > 0:
+                container.seek(
+                    int(self.start_source_ms * 1000),
+                    stream=video_stream,
+                    backward=True,
+                )
 
             for frame in container.decode(video_stream):
                 if self._stop_event.is_set():
@@ -129,7 +146,7 @@ class _VideoDecodeWorker(threading.Thread):
                             self.frame_queue.get_nowait()
                         except queue.Empty:
                             break
-                    container.seek(int(seek_ms * 1000), stream=video_stream)
+                    container.seek(int(seek_ms * 1000), stream=video_stream, backward=True)
                     continue
 
                 pts_ms = int(frame.pts * float(frame.time_base) * 1000) if frame.pts is not None else 0
@@ -155,11 +172,11 @@ class _VideoDecodeWorker(threading.Thread):
     @staticmethod
     def _frame_to_qimage(frame) -> QImage | None:
         try:
-            rgb_frame = frame.reformat(format="rgb24")
-            arr = rgb_frame.to_ndarray()
+            rgba_frame = frame.reformat(format="rgba")
+            arr = rgba_frame.to_ndarray()
             h, w, _ = arr.shape
             return QImage(
-                arr.tobytes(), w, h, w * 3, QImage.Format.Format_RGB888
+                arr.tobytes(), w, h, w * 4, QImage.Format.Format_RGBA8888
             ).copy()
         except Exception:
             return None
@@ -188,6 +205,8 @@ class _AudioPlayer:
         self._decoded_audio: dict[str, np.ndarray] = {}
         self._sample_rate = _AUDIO_SAMPLE_RATE
         self._channels = _AUDIO_CHANNELS
+        self._clock_started_at: float | None = None
+        self._clock_base_ms: float = 0.0
 
         # Pre-decode all audio layers
         self._decode_all()
@@ -237,6 +256,8 @@ class _AudioPlayer:
         with self._lock:
             self._position_ms = position_ms
             self._playing = True
+            self._clock_base_ms = position_ms
+            self._clock_started_at = time.monotonic()
 
         if not self._allow_device:
             return
@@ -255,8 +276,12 @@ class _AudioPlayer:
             self._stream = None
 
     def stop(self) -> None:
+        current_ms = self.current_ms()
         with self._lock:
             self._playing = False
+            self._position_ms = current_ms
+            self._clock_base_ms = current_ms
+            self._clock_started_at = None
         if self._stream is not None:
             try:
                 self._stream.stop()
@@ -268,9 +293,14 @@ class _AudioPlayer:
     def seek(self, ms: float) -> None:
         with self._lock:
             self._position_ms = ms
+            self._clock_base_ms = ms
+            self._clock_started_at = time.monotonic()
 
     def current_ms(self) -> float:
         with self._lock:
+            if self._playing and self._stream is None and self._clock_started_at is not None:
+                elapsed_ms = (time.monotonic() - self._clock_started_at) * 1000.0
+                return self._clock_base_ms + elapsed_ms
             return self._position_ms
 
     @property
@@ -337,12 +367,16 @@ class _AudioPlayer:
 # ---------------------------------------------------------------------------
 
 
-class CompositorWidget(QWidget):
+_CompositorBase = QOpenGLWidget if _HAS_OPENGL_WIDGET else QWidget
+
+
+class CompositorWidget(_CompositorBase):
     """Lightweight compositor that draws decoded frames as layered images.
 
-    When QOpenGLWidget is available and ``use_opengl=True``, this widget
-    inherits from QOpenGLWidget for GPU-accelerated blitting.  Otherwise
-    it falls back to a plain QWidget with QPainter compositing.
+    When Qt OpenGL support is available and ``use_opengl=True``, the widget
+    uploads frames into ``QOpenGLTexture`` objects and composites them with
+    ``QOpenGLTextureBlitter``. A QWidget/QPainter fallback remains available
+    for environments that cannot host a valid OpenGL context.
     """
 
     def __init__(
@@ -353,16 +387,19 @@ class CompositorWidget(QWidget):
         *,
         use_opengl: bool = True,
     ) -> None:
-        # We always use QPainter compositing here — the OpenGL path would
-        # require a full texture-blit pipeline.  This keeps the widget
-        # testable without a real GPU.
         super().__init__(parent)
         self._comp_width = width
         self._comp_height = height
         self._layers: list[dict] = []  # [{id, qimage, x, y, w, h, z_order, opacity}]
         self.setMinimumSize(320, 180)
         self.setAutoFillBackground(True)
-        self._use_opengl = use_opengl and _HAS_OPENGL_WIDGET
+        self._use_opengl = use_opengl and _HAS_OPENGL_WIDGET and _HAS_OPENGL_BLITTER
+        self._gl_ready = False
+        self._gl_error = ""
+        self._blitter: QOpenGLTextureBlitter | None = None
+        self._textures: dict[str, QOpenGLTexture] = {}
+        self._texture_cache_keys: dict[str, int] = {}
+        self._texture_sizes: dict[str, tuple[int, int]] = {}
 
     def set_composition_size(self, w: int, h: int) -> None:
         self._comp_width = w
@@ -383,6 +420,92 @@ class CompositorWidget(QWidget):
         self.update()
 
     def paintEvent(self, event) -> None:
+        if self._use_opengl and _HAS_OPENGL_WIDGET:
+            return super().paintEvent(event)
+        self._paint_with_qpainter()
+
+    def initializeGL(self) -> None:
+        if not self._use_opengl:
+            return
+        try:
+            self._blitter = QOpenGLTextureBlitter()
+            if not self._blitter.create():
+                raise RuntimeError("Qt OpenGL texture blitter could not be created.")
+            self._gl_ready = True
+            self._gl_error = ""
+            context = self.context() if hasattr(self, "context") else None
+            if context is not None:
+                try:
+                    context.aboutToBeDestroyed.connect(self._cleanup_gl_resources)
+                except Exception:
+                    logger.debug("Failed to connect GL cleanup hook.", exc_info=True)
+        except Exception as exc:
+            logger.warning("OpenGL compositor initialization failed.", exc_info=True)
+            self._gl_ready = False
+            self._gl_error = str(exc)
+
+    def paintGL(self) -> None:
+        if not self._use_opengl or not self._gl_ready or self._blitter is None:
+            self._paint_with_qpainter()
+            return
+
+        context = self.context() if hasattr(self, "context") else None
+        functions = context.functions() if context is not None else None
+        if functions is None:
+            self._paint_with_qpainter()
+            return
+
+        dpr = self.devicePixelRatioF()
+        viewport = QRect(0, 0, int(self.width() * dpr), int(self.height() * dpr))
+
+        functions.glViewport(0, 0, viewport.width(), viewport.height())
+        functions.glClearColor(0.0, 0.0, 0.0, 1.0)
+        functions.glClear(_OPENGL_COLOR_BUFFER_BIT)
+
+        if not self._layers:
+            self._destroy_orphan_textures(set())
+            painter = QPainter(self)
+            painter.setPen(QColor(120, 120, 120))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No preview")
+            painter.end()
+            return
+
+        functions.glEnable(_OPENGL_BLEND)
+        functions.glBlendFunc(_OPENGL_SRC_ALPHA, _OPENGL_ONE_MINUS_SRC_ALPHA)
+
+        active_ids: set[str] = set()
+        self._blitter.bind()
+        try:
+            for index, layer in enumerate(self._layers):
+                img: QImage | None = layer.get("qimage")
+                if img is None or img.isNull():
+                    continue
+
+                layer_id = str(layer.get("id") or f"layer-{index}")
+                texture = self._ensure_texture(layer_id, img)
+                active_ids.add(layer_id)
+
+                opacity = float(layer.get("opacity", 1.0))
+                lx = float(layer.get("x", 0.0))
+                ly = float(layer.get("y", 0.0))
+                lw = float(layer.get("w", img.width()))
+                lh = float(layer.get("h", img.height()))
+                dx, dy, dw, dh = self._composition_rect_in_widget(lx, ly, lw, lh)
+                target_rect = QRectF(dx * dpr, dy * dpr, dw * dpr, dh * dpr)
+                target_transform = QOpenGLTextureBlitter.targetTransform(target_rect, viewport)
+
+                self._blitter.setOpacity(opacity)
+                self._blitter.blit(
+                    texture.textureId(),
+                    target_transform,
+                    QOpenGLTextureBlitter.Origin.OriginTopLeft,
+                )
+        finally:
+            self._blitter.release()
+
+        self._destroy_orphan_textures(active_ids)
+
+    def _paint_with_qpainter(self) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
@@ -391,16 +514,13 @@ class CompositorWidget(QWidget):
 
         if not self._layers:
             painter.setPen(QColor(120, 120, 120))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No preview")
+            text = "No preview"
+            fallback_reason = self._build_fallback_reason()
+            if fallback_reason:
+                text = f"{text}\n{fallback_reason}"
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, text)
             painter.end()
             return
-
-        # Scale composition to widget
-        widget_w = self.width()
-        widget_h = self.height()
-        scale = min(widget_w / self._comp_width, widget_h / self._comp_height)
-        offset_x = (widget_w - self._comp_width * scale) / 2
-        offset_y = (widget_h - self._comp_height * scale) / 2
 
         for layer in self._layers:
             img: QImage | None = layer.get("qimage")
@@ -415,18 +535,127 @@ class CompositorWidget(QWidget):
             lw = layer.get("w", img.width())
             lh = layer.get("h", img.height())
 
-            # Map composition coords to widget coords
-            dx = offset_x + lx * scale
-            dy = offset_y + ly * scale
-            dw = lw * scale
-            dh = lh * scale
-
-            from PySide6.QtCore import QRectF
-
+            dx, dy, dw, dh = self._composition_rect_in_widget(lx, ly, lw, lh)
             painter.drawImage(QRectF(dx, dy, dw, dh), img)
 
         painter.setOpacity(1.0)
         painter.end()
+
+    def _composition_rect_in_widget(
+        self,
+        lx: float,
+        ly: float,
+        lw: float,
+        lh: float,
+    ) -> tuple[float, float, float, float]:
+        """Map composition-space coordinates into the widget viewport."""
+        widget_w = max(1.0, float(self.width()))
+        widget_h = max(1.0, float(self.height()))
+        scale = min(widget_w / max(1, self._comp_width), widget_h / max(1, self._comp_height))
+        offset_x = (widget_w - self._comp_width * scale) / 2.0
+        offset_y = (widget_h - self._comp_height * scale) / 2.0
+        return (
+            offset_x + lx * scale,
+            offset_y + ly * scale,
+            lw * scale,
+            lh * scale,
+        )
+
+    def is_live_compositing_available(self) -> bool:
+        """Return True when the OpenGL compositor path is available for playback."""
+        if not self._use_opengl:
+            return False
+        if self._gl_error:
+            return False
+        if hasattr(self, "isValid"):
+            try:
+                return bool(self.isValid())
+            except Exception:
+                return self._gl_ready
+        return self._gl_ready
+
+    def unavailable_reason(self) -> str:
+        """Return a human-readable reason when live compositing is unavailable."""
+        return self._build_fallback_reason()
+
+    def _build_fallback_reason(self) -> str:
+        if self._gl_error:
+            return f"OpenGL compositor failed: {self._gl_error}"
+        if not _HAS_OPENGL_WIDGET:
+            return "OpenGL preview unavailable: QOpenGLWidget is not installed."
+        if not _HAS_OPENGL_BLITTER:
+            return "OpenGL preview unavailable: QOpenGLTextureBlitter is not installed."
+        if self._use_opengl and hasattr(self, "isValid"):
+            try:
+                if not self.isValid():
+                    return "OpenGL preview unavailable: Qt could not create a valid OpenGL context."
+            except Exception:
+                pass
+        if self._use_opengl:
+            return ""
+        return "OpenGL compositing is disabled."
+
+    def _ensure_texture(self, layer_id: str, image: QImage) -> QOpenGLTexture:
+        """Return an uploaded texture for *layer_id*, refreshing data when needed."""
+        if QOpenGLTexture is None:
+            raise RuntimeError("QOpenGLTexture is unavailable")
+
+        normalized = image.convertToFormat(QImage.Format.Format_RGBA8888)
+        texture = self._textures.get(layer_id)
+        image_size = (normalized.width(), normalized.height())
+        image_key = int(normalized.cacheKey())
+
+        if texture is None or self._texture_sizes.get(layer_id) != image_size:
+            if texture is not None:
+                texture.destroy()
+            texture = QOpenGLTexture(
+                normalized,
+                QOpenGLTexture.MipMapGeneration.DontGenerateMipMaps,
+            )
+            texture.setMinMagFilters(
+                QOpenGLTexture.Filter.Linear,
+                QOpenGLTexture.Filter.Linear,
+            )
+            texture.setWrapMode(QOpenGLTexture.WrapMode.ClampToEdge)
+            self._textures[layer_id] = texture
+        elif self._texture_cache_keys.get(layer_id) != image_key:
+            texture.setData(
+                normalized,
+                QOpenGLTexture.MipMapGeneration.DontGenerateMipMaps,
+            )
+
+        self._texture_cache_keys[layer_id] = image_key
+        self._texture_sizes[layer_id] = image_size
+        return texture
+
+    def _destroy_orphan_textures(self, active_ids: set[str]) -> None:
+        stale_ids = [layer_id for layer_id in self._textures if layer_id not in active_ids]
+        for layer_id in stale_ids:
+            texture = self._textures.pop(layer_id)
+            texture.destroy()
+            self._texture_cache_keys.pop(layer_id, None)
+            self._texture_sizes.pop(layer_id, None)
+
+    def _cleanup_gl_resources(self) -> None:
+        if not self._use_opengl:
+            return
+        try:
+            if hasattr(self, "makeCurrent"):
+                self.makeCurrent()
+        except Exception:
+            logger.debug("Failed to make GL context current for cleanup.", exc_info=True)
+
+        self._destroy_orphan_textures(set())
+        if self._blitter is not None and self._blitter.isCreated():
+            self._blitter.destroy()
+        self._blitter = None
+        self._gl_ready = False
+
+        try:
+            if hasattr(self, "doneCurrent"):
+                self.doneCurrent()
+        except Exception:
+            logger.debug("Failed to release GL context after cleanup.", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -471,9 +700,10 @@ class PlaybackEngine(QObject):
         self._audio_layers: list[dict] = []
 
         # Decode workers
-        self._video_workers: list[_VideoDecodeWorker] = []
+        self._video_workers: dict[str, _VideoDecodeWorker] = {}
         self._frame_queues: dict[str, queue.Queue] = {}
-        self._latest_frames: dict[str, tuple[int, QImage]] = {}
+        self._frame_buffers: dict[str, list[tuple[int, QImage]]] = {}
+        self._static_images: dict[str, QImage] = {}
 
         # Audio
         self._audio_player: _AudioPlayer | None = None
@@ -497,6 +727,14 @@ class PlaybackEngine(QObject):
     @property
     def duration_ms(self) -> int:
         return self._duration_ms
+
+    def availability(self) -> tuple[bool, str]:
+        """Return whether real-time playback is currently available."""
+        if av is None:
+            return (False, "Real-time playback unavailable: PyAV is not installed.")
+        if not self._compositor.is_live_compositing_available():
+            return (False, self._compositor.unavailable_reason())
+        return (True, "")
 
     def load(
         self,
@@ -522,17 +760,23 @@ class PlaybackEngine(QObject):
         self._compositor.set_composition_size(output_width, output_height)
         self._position_ms = 0.0
 
-    def play(self) -> None:
+    def play(self) -> bool:
         if self._state == "playing":
-            return
+            return True
         if not self._visual_layers and not self._audio_layers:
-            return
+            return False
+
+        available, _reason = self.availability()
+        if not available:
+            return False
 
         self._start_decode_workers()
         self._start_audio()
+        self._render_frame_at(int(self._position_ms))
         self._state = "playing"
         self._display_timer.start()
         self.state_changed.emit("playing")
+        return True
 
     def pause(self) -> None:
         if self._state != "playing":
@@ -564,8 +808,11 @@ class PlaybackEngine(QObject):
             self._audio_player.seek(float(ms))
 
         # Seek video workers
-        for w in self._video_workers:
-            w.seek(ms)
+        for layer_id, worker in self._video_workers.items():
+            layer = self._visual_layer_by_id(layer_id)
+            if layer is None:
+                continue
+            worker.seek(self._worker_seek_ms(layer, ms))
 
         # If paused or stopped, render the frame at this position
         if self._state != "playing":
@@ -581,16 +828,19 @@ class PlaybackEngine(QObject):
         self._position_ms = float(ms)
         if self._audio_player:
             self._audio_player.seek(float(ms))
-        for w in self._video_workers:
-            w.seek(ms)
+        for layer_id, worker in self._video_workers.items():
+            layer = self._visual_layer_by_id(layer_id)
+            if layer is None:
+                continue
+            worker.seek(self._worker_seek_ms(layer, ms))
         if self._state != "playing":
             self._render_frame_at(ms)
 
-    def toggle_play_pause(self) -> None:
+    def toggle_play_pause(self) -> bool:
         if self._state == "playing":
             self.pause()
-        else:
-            self.play()
+            return True
+        return self.play()
 
     def jump_to_start(self) -> None:
         self.seek(0)
@@ -605,30 +855,37 @@ class PlaybackEngine(QObject):
     def _start_decode_workers(self) -> None:
         self._stop_workers()
         self._frame_queues.clear()
-        self._latest_frames.clear()
+        self._frame_buffers.clear()
+        self._static_images.clear()
 
         for vl in self._visual_layers:
             if not vl.get("enabled", True) or not vl.get("path"):
                 continue
             layer_id = vl.get("id", "")
+            if vl.get("source_kind") == "image":
+                image = QImage(vl["path"])
+                if not image.isNull():
+                    self._static_images[layer_id] = image
+                continue
             q: queue.Queue = queue.Queue(maxsize=_MAX_FRAME_QUEUE)
             self._frame_queues[layer_id] = q
             worker = _VideoDecodeWorker(
                 vl["path"],
                 q,
-                start_ms=int(self._position_ms),
+                start_source_ms=self._worker_seek_ms(vl, int(self._position_ms)),
                 layer_id=layer_id,
             )
-            self._video_workers.append(worker)
+            self._video_workers[layer_id] = worker
             worker.start()
 
     def _stop_workers(self) -> None:
-        for w in self._video_workers:
+        for w in self._video_workers.values():
             w.stop()
         # Don't join — they are daemon threads
         self._video_workers.clear()
         self._frame_queues.clear()
-        self._latest_frames.clear()
+        self._frame_buffers.clear()
+        self._static_images.clear()
 
     def _start_audio(self) -> None:
         if self._audio_player:
@@ -671,32 +928,20 @@ class PlaybackEngine(QObject):
 
     def _render_frame_at(self, pos_ms: int) -> None:
         """Composite and display all visible layers at *pos_ms*."""
-        # Drain frame queues and update latest frames
-        for layer_id, q in self._frame_queues.items():
-            while True:
-                try:
-                    pts_ms, img = q.get_nowait()
-                    self._latest_frames[layer_id] = (pts_ms, img)
-                except queue.Empty:
-                    break
+        self._drain_frame_queues()
 
         comp_layers: list[dict] = []
         for vl in self._visual_layers:
             if not vl.get("enabled", True):
                 continue
             layer_id = vl.get("id", "")
-            start_ms = vl.get("start_ms", 0)
-            end_ms = vl.get("end_ms", 0)
-
-            if pos_ms < start_ms or pos_ms > end_ms:
+            source_ms = self._layer_source_position_ms(vl, pos_ms)
+            if source_ms is None:
                 continue
 
-            # Get frame
-            frame_data = self._latest_frames.get(layer_id)
-            if frame_data is None:
+            img = self._image_for_layer_at(vl, source_ms)
+            if img is None or img.isNull():
                 continue
-
-            _, img = frame_data
 
             # Convert center-origin coords to top-left for compositing
             comp_w = self._compositor._comp_width
@@ -709,6 +954,7 @@ class PlaybackEngine(QObject):
             tl_y = (comp_h / 2) + cy - (lh / 2)
 
             comp_layers.append({
+                "id": layer_id,
                 "qimage": img,
                 "x": tl_x,
                 "y": tl_y,
@@ -719,3 +965,116 @@ class PlaybackEngine(QObject):
             })
 
         self._compositor.set_layers(comp_layers)
+
+    def _drain_frame_queues(self) -> None:
+        """Drain decoded frames into per-layer rolling frame buffers."""
+        for layer_id, q in self._frame_queues.items():
+            buffer = self._frame_buffers.setdefault(layer_id, [])
+            while True:
+                try:
+                    buffer.append(q.get_nowait())
+                except queue.Empty:
+                    break
+            if len(buffer) > _MAX_FRAME_HISTORY:
+                del buffer[:-_MAX_FRAME_HISTORY]
+
+    def _image_for_layer_at(self, layer: dict, source_ms: int) -> QImage | None:
+        """Return the best frame/image for *layer* at *source_ms*."""
+        layer_id = layer.get("id", "")
+        if layer.get("source_kind") == "image":
+            image = self._static_images.get(layer_id)
+            if image is None and layer.get("path"):
+                image = QImage(layer["path"])
+                if not image.isNull():
+                    self._static_images[layer_id] = image
+            return image
+
+        buffered = self._select_buffered_frame(layer_id, source_ms)
+        if buffered is not None:
+            return buffered
+
+        if self._state != "playing":
+            return self._decode_frame_at(layer.get("path", ""), source_ms)
+        return None
+
+    def _select_buffered_frame(self, layer_id: str, source_ms: int) -> QImage | None:
+        """Return the best buffered frame for *layer_id* at *source_ms*."""
+        frames = self._frame_buffers.get(layer_id)
+        if not frames:
+            return None
+
+        candidate: tuple[int, QImage] | None = None
+        for pts_ms, image in frames:
+            if pts_ms <= source_ms:
+                candidate = (pts_ms, image)
+            else:
+                break
+
+        if candidate is not None:
+            self._frame_buffers[layer_id] = [
+                frame for frame in frames
+                if frame[0] >= max(0, candidate[0] - 1000)
+            ][-_MAX_FRAME_HISTORY:]
+            return candidate[1]
+
+        return frames[0][1]
+
+    def _decode_frame_at(self, source_path: str, source_ms: int) -> QImage | None:
+        """Synchronously decode the closest frame at *source_ms* for paused seeking."""
+        if av is None or not source_path:
+            return None
+        try:
+            container = av.open(source_path)
+            video_stream = next((stream for stream in container.streams if stream.type == "video"), None)
+            if video_stream is None:
+                container.close()
+                return None
+            if source_ms > 0:
+                container.seek(int(source_ms * 1000), stream=video_stream, backward=True)
+
+            best_image: QImage | None = None
+            for frame in container.decode(video_stream):
+                pts_ms = int(frame.pts * float(frame.time_base) * 1000) if frame.pts is not None else 0
+                best_image = _VideoDecodeWorker._frame_to_qimage(frame)
+                if pts_ms >= source_ms:
+                    break
+            container.close()
+            return best_image
+        except Exception:
+            logger.debug("Synchronous frame decode failed for %s", source_path, exc_info=True)
+            return None
+
+    def _layer_source_position_ms(self, layer: dict, composition_ms: int) -> int | None:
+        """Map composition time to source time for a visual layer."""
+        start_ms = int(layer.get("start_ms", 0))
+        end_ms = int(layer.get("end_ms", 0))
+        if composition_ms < start_ms:
+            return None
+        if end_ms > start_ms and composition_ms >= end_ms:
+            return None
+
+        source_ms = max(0, composition_ms - start_ms)
+        source_duration_ms = int(layer.get("source_duration_ms", 0))
+        behavior = layer.get("behavior_after_end", "hide")
+
+        if source_duration_ms > 0 and source_ms >= source_duration_ms:
+            if behavior == "loop":
+                return source_ms % source_duration_ms
+            if behavior == "freeze_last_frame":
+                return max(0, source_duration_ms - 1)
+            return None
+        return source_ms
+
+    def _worker_seek_ms(self, layer: dict, composition_ms: int) -> int:
+        """Return the source seek target for a decode worker."""
+        source_ms = self._layer_source_position_ms(layer, composition_ms)
+        if source_ms is None:
+            return 0
+        return source_ms
+
+    def _visual_layer_by_id(self, layer_id: str) -> dict | None:
+        """Return the visual-layer dict for *layer_id*, if any."""
+        for layer in self._visual_layers:
+            if layer.get("id") == layer_id:
+                return layer
+        return None

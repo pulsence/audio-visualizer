@@ -21,6 +21,28 @@ from audio_visualizer.ui.tabs.renderComposition.model import (
 logger = logging.getLogger(__name__)
 
 
+class CompositeCommand(QUndoCommand):
+    """Bundle multiple undo commands into one undo stack entry."""
+
+    def __init__(
+        self,
+        text: str,
+        commands: list[QUndoCommand],
+        parent: QUndoCommand | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._commands = commands
+        self.setText(text)
+
+    def redo(self) -> None:
+        for command in self._commands:
+            command.redo()
+
+    def undo(self) -> None:
+        for command in reversed(self._commands):
+            command.undo()
+
+
 class AddLayerCommand(QUndoCommand):
     """Add a new layer to the composition model."""
 
@@ -208,6 +230,35 @@ class ChangeSourceCommand(QUndoCommand):
             "source_duration_ms": self._old_source_duration_ms,
         }
         self._model.update_layer(self._layer_id, **updates)
+
+
+class EditLayerCommand(QUndoCommand):
+    """Edit one or more fields on a visual layer."""
+
+    def __init__(
+        self,
+        model: CompositionModel,
+        layer_id: str,
+        parent: QUndoCommand | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._layer_id = layer_id
+        self._new_values = kwargs
+        self._old_values: dict[str, Any] = {}
+        layer = model.get_layer(layer_id)
+        if layer is not None:
+            for key in kwargs:
+                if hasattr(layer, key):
+                    self._old_values[key] = getattr(layer, key)
+        self.setText("Edit layer")
+
+    def redo(self) -> None:
+        self._model.update_layer(self._layer_id, **self._new_values)
+
+    def undo(self) -> None:
+        self._model.update_layer(self._layer_id, **self._old_values)
 
 
 class ApplyPresetCommand(QUndoCommand):

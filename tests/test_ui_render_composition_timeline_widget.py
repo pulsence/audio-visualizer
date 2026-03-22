@@ -397,6 +397,32 @@ class TestVisualTrackReorder:
         assert reordered == [("high", 1)]
 
 
+class TestAudioMuteToggle:
+    def test_audio_toggle_click_emits_signal_and_flips_state(self, widget):
+        item = TimelineItem("a1", "Audio", 0, 5000, "audio", muted=False)
+        widget.set_items([item])
+
+        item_rect = widget._get_item_rect(item, 25 + (_TRACK_HEIGHT + _TRACK_SPACING) + 10)
+        toggle_rect = widget._audio_toggle_rect(item_rect)
+        click_pos = toggle_rect.center()
+
+        received = []
+        widget.audio_mute_toggled.connect(lambda item_id, muted: received.append((item_id, muted)))
+
+        press_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(click_pos.x(), click_pos.y()),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        with patch.object(widget, "update"):
+            widget.mousePressEvent(press_event)
+
+        assert item.muted is True
+        assert received == [("a1", True)]
+
+
 # ---------------------------------------------------------------------------
 # Waveform cache tests
 # ---------------------------------------------------------------------------

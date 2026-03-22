@@ -1,5 +1,6 @@
 """Tests for RenderCompositionTab, composition model, undo/redo, and presets."""
 
+import time
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox, QStackedWidget, QWidget
@@ -7,7 +8,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QStackedWidget, QWidget
 app = QApplication.instance() or QApplication([])
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from audio_visualizer.ui.workspaceContext import SessionAsset, WorkspaceContext
 from audio_visualizer.ui.tabs.renderCompositionTab import RenderCompositionTab
@@ -1884,6 +1885,75 @@ class TestUnifiedLayerList:
 
 
 # ------------------------------------------------------------------
+# Linked layer cleanup
+# ------------------------------------------------------------------
+
+
+class TestLinkedLayerCleanup:
+    def test_delete_visual_only_clears_surviving_audio_link(self):
+        tab = RenderCompositionTab()
+        visual = CompositionLayer(display_name="Video")
+        audio = CompositionAudioLayer(display_name="Audio")
+        visual.linked_layer_id = audio.id
+        audio.linked_layer_id = visual.id
+        tab._model.layers.append(visual)
+        tab._model.audio_layers.append(audio)
+        tab._refresh_layer_list()
+
+        with patch.object(tab, "_linked_delete_dialog", return_value="only"):
+            tab._layer_list.setCurrentRow(0)
+            tab._on_remove_layer()
+
+        assert len(tab._model.layers) == 0
+        assert tab._model.audio_layers[0].linked_layer_id is None
+
+        tab._undo_stack.undo()
+        assert len(tab._model.layers) == 1
+        assert tab._model.audio_layers[0].linked_layer_id == visual.id
+
+    def test_delete_audio_only_clears_surviving_visual_link(self):
+        tab = RenderCompositionTab()
+        visual = CompositionLayer(display_name="Video")
+        audio = CompositionAudioLayer(display_name="Audio")
+        visual.linked_layer_id = audio.id
+        audio.linked_layer_id = visual.id
+        tab._model.layers.append(visual)
+        tab._model.audio_layers.append(audio)
+        tab._refresh_layer_list()
+
+        with patch.object(tab, "_linked_delete_dialog", return_value="only"):
+            tab._layer_list.setCurrentRow(1)
+            tab._on_remove_layer()
+
+        assert len(tab._model.audio_layers) == 0
+        assert tab._model.layers[0].linked_layer_id is None
+
+        tab._undo_stack.undo()
+        assert len(tab._model.audio_layers) == 1
+        assert tab._model.layers[0].linked_layer_id == audio.id
+
+
+# ------------------------------------------------------------------
+# Timeline audio controls
+# ------------------------------------------------------------------
+
+
+class TestTimelineAudioControls:
+    def test_timeline_audio_mute_toggle_updates_model_and_undo(self):
+        tab = RenderCompositionTab()
+        audio = CompositionAudioLayer(display_name="Audio", muted=False)
+        tab._model.audio_layers.append(audio)
+        tab._refresh_layer_list()
+
+        tab._on_timeline_audio_mute_toggled(audio.id, True)
+
+        assert tab._model.audio_layers[0].muted is True
+
+        tab._undo_stack.undo()
+        assert tab._model.audio_layers[0].muted is False
+
+
+# ------------------------------------------------------------------
 # Stacked widget page switching
 # ------------------------------------------------------------------
 
@@ -2109,6 +2179,17 @@ class TestTransportControls:
         tab = RenderCompositionTab()
         tab._on_transport_play_pause()
 
+    def test_play_pause_reports_fallback_when_runtime_stack_missing(self, monkeypatch):
+        monkeypatch.setattr("audio_visualizer.capabilities.has_opengl_widget", lambda: False)
+        monkeypatch.setattr("audio_visualizer.capabilities.has_pyav", lambda: False)
+        monkeypatch.setattr("audio_visualizer.capabilities.has_sounddevice", lambda: False)
+
+        tab = RenderCompositionTab()
+        tab._model.add_layer(CompositionLayer(display_name="Preview Layer", start_ms=0, end_ms=1000))
+        tab._on_transport_play_pause()
+
+        assert "Real-time playback unavailable" in tab._preview_status_label.text()
+
     def test_engine_state_changed_updates_button(self):
         """State change signal updates the play button text."""
         tab = RenderCompositionTab()
@@ -2176,6 +2257,16 @@ class TestPlaybackEngine:
         widget = CompositorWidget(1920, 1080)
         assert widget._comp_width == 1920
         assert widget._comp_height == 1080
+
+    def test_compositor_widget_uses_qopenglwidget_base_when_available(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+            _HAS_OPENGL_WIDGET,
+        )
+        widget = CompositorWidget(1920, 1080)
+        if _HAS_OPENGL_WIDGET:
+            from PySide6.QtOpenGLWidgets import QOpenGLWidget
+            assert isinstance(widget, QOpenGLWidget)
 
     def test_compositor_widget_set_layers(self):
         from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
@@ -2272,6 +2363,52 @@ class TestPlaybackEngine:
         engine.stop()
         assert engine.state == "stopped"
         assert engine._position_ms == 0
+
+    def test_audio_player_without_device_advances_clock(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import _AudioPlayer
+
+        player = _AudioPlayer([], allow_device=False)
+        player.start(250.0)
+        time.sleep(0.03)
+        assert player.current_ms() > 250.0
+        player.stop()
+
+    def test_layer_source_position_uses_composition_relative_time(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+            PlaybackEngine,
+        )
+
+        widget = CompositorWidget(1920, 1080)
+        engine = PlaybackEngine(widget, allow_audio=False)
+        layer = {
+            "id": "layer-1",
+            "start_ms": 5000,
+            "end_ms": 15000,
+            "source_duration_ms": 0,
+            "behavior_after_end": "hide",
+        }
+
+        assert engine._layer_source_position_ms(layer, 4000) is None
+        assert engine._layer_source_position_ms(layer, 6000) == 1000
+
+    def test_loop_behavior_wraps_source_time(self):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+            PlaybackEngine,
+        )
+
+        widget = CompositorWidget(1920, 1080)
+        engine = PlaybackEngine(widget, allow_audio=False)
+        layer = {
+            "id": "layer-1",
+            "start_ms": 0,
+            "end_ms": 10000,
+            "source_duration_ms": 3000,
+            "behavior_after_end": "loop",
+        }
+
+        assert engine._layer_source_position_ms(layer, 6500) == 500
 
 
 # ------------------------------------------------------------------

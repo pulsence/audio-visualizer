@@ -53,6 +53,8 @@ from audio_visualizer.ui.tabs.renderComposition.commands import (
     AddLayerCommand,
     ApplyPresetCommand,
     ChangeSourceCommand,
+    CompositeCommand,
+    EditLayerCommand,
     EditAudioLayerCommand,
     MoveLayerCommand,
     RemoveAudioLayerCommand,
@@ -126,6 +128,7 @@ class RenderCompositionTab(BaseTab):
         self._picking_key_color = False
         self._playback_engine = None  # lazy init in _build_ui
         self._playback_position_from_engine = False  # feedback loop guard
+        self._playback_unavailable_reason = ""
 
         self._init_undo_stack(100)
         self._build_ui()
@@ -607,6 +610,7 @@ class RenderCompositionTab(BaseTab):
         self._timeline.item_moved.connect(self._on_timeline_item_moved)
         self._timeline.item_trimmed.connect(self._on_timeline_item_trimmed)
         self._timeline.item_reordered.connect(self._on_timeline_item_reordered)
+        self._timeline.audio_mute_toggled.connect(self._on_timeline_audio_mute_toggled)
         self._timeline.playhead_changed.connect(self._on_playhead_changed)
         layout.addWidget(self._timeline)
 
@@ -797,6 +801,18 @@ class RenderCompositionTab(BaseTab):
         self._refresh_layer_list()
         self.settings_changed.emit()
 
+    def _on_timeline_audio_mute_toggled(self, item_id: str, muted: bool) -> None:
+        """Apply timeline mute toggles to the backing audio layer model."""
+        al = self._model.get_audio_layer(item_id)
+        if al is None or al.muted == muted:
+            return
+        cmd = EditAudioLayerCommand(self._model, item_id, muted=muted)
+        self._push_command(cmd)
+        if self._selected_audio_layer() is al:
+            self._load_audio_layer_properties(al)
+        self._refresh_timeline()
+        self.settings_changed.emit()
+
     def _on_timeline_scroll(self, value: int) -> None:
         self._timeline.set_scroll_offset(value)
 
@@ -896,12 +912,24 @@ class RenderCompositionTab(BaseTab):
         """Create and wire the playback engine to the compositor widget."""
         from audio_visualizer.ui.tabs.renderComposition.playbackEngine import PlaybackEngine
 
-        # Detect audio capability — allow_audio=False in test/headless environments
+        missing_runtime: list[str] = []
         try:
-            from audio_visualizer.capabilities import has_sounddevice
+            from audio_visualizer.capabilities import has_opengl_widget, has_pyav, has_sounddevice
+            if not has_opengl_widget():
+                missing_runtime.append("QOpenGLWidget")
+            if not has_pyav():
+                missing_runtime.append("PyAV")
             allow_audio = has_sounddevice()
         except Exception:
+            missing_runtime = ["runtime capability checks"]
             allow_audio = False
+
+        if missing_runtime:
+            self._playback_unavailable_reason = (
+                "Real-time playback unavailable: missing "
+                + ", ".join(missing_runtime)
+                + ". Use Refresh Preview for static previews."
+            )
 
         self._playback_engine = PlaybackEngine(
             self._compositor_widget,
@@ -915,6 +943,14 @@ class RenderCompositionTab(BaseTab):
     # Transport controls
     # ------------------------------------------------------------------
 
+    def _playback_availability(self) -> tuple[bool, str]:
+        """Return whether real-time playback should be used in the current UI."""
+        if self._playback_unavailable_reason:
+            return (False, self._playback_unavailable_reason)
+        if self._playback_engine is None:
+            return (False, "")
+        return self._playback_engine.availability()
+
     def _on_transport_play_pause(self) -> None:
         """Toggle play/pause on the playback engine."""
         if self._playback_engine is None:
@@ -922,19 +958,33 @@ class RenderCompositionTab(BaseTab):
         if self._playback_engine.state == "stopped":
             # Load composition data into engine before first play
             self._load_engine_data()
-        self._playback_engine.toggle_play_pause()
+        if not self._playback_engine.toggle_play_pause():
+            _available, reason = self._playback_availability()
+            fallback_reason = reason
+            if fallback_reason:
+                self._preview_status_label.setText(fallback_reason)
 
     def _on_transport_stop(self) -> None:
         if self._playback_engine:
             self._playback_engine.stop()
 
     def _on_transport_jump_start(self) -> None:
+        if self._playback_engine is None:
+            return
+        if not self._playback_availability()[0]:
+            self._preview_time_spin.setValue(0)
+            return
         if self._playback_engine:
             if self._playback_engine.state == "stopped":
                 self._load_engine_data()
             self._playback_engine.jump_to_start()
 
     def _on_transport_jump_end(self) -> None:
+        if self._playback_engine is None:
+            return
+        if not self._playback_availability()[0]:
+            self._preview_time_spin.setValue(self._model.get_duration_ms())
+            return
         if self._playback_engine:
             if self._playback_engine.state == "stopped":
                 self._load_engine_data()
@@ -952,8 +1002,11 @@ class RenderCompositionTab(BaseTab):
             visual_layers.append({
                 "id": layer.id,
                 "path": str(layer.asset_path) if layer.asset_path else "",
+                "source_kind": layer.source_kind,
+                "source_duration_ms": layer.source_duration_ms,
                 "start_ms": layer.start_ms,
                 "end_ms": layer.start_ms + layer.effective_duration_ms(),
+                "behavior_after_end": layer.behavior_after_end,
                 "center_x": layer.center_x,
                 "center_y": layer.center_y,
                 "width": layer.width,
@@ -1005,6 +1058,7 @@ class RenderCompositionTab(BaseTab):
         if state == "playing":
             self._transport_play_btn.setText("\u23F8")  # pause symbol
             self._transport_play_btn.setToolTip("Pause  (Space)")
+            self._preview_status_label.setText("")
         else:
             self._transport_play_btn.setText("\u25B6")  # play symbol
             self._transport_play_btn.setToolTip("Play  (Space)")
@@ -1320,13 +1374,14 @@ class RenderCompositionTab(BaseTab):
                     linked_layer_id=layer.id,
                 )
                 layer.linked_layer_id = audio_layer.id
-                # Use a parent command so both add+audio are one undo step
-                from PySide6.QtGui import QUndoCommand as _QUC
-                parent_cmd = _QUC()
-                parent_cmd.setText(f"Add video+audio '{path.name}'")
-                AddLayerCommand(self._model, layer, parent=parent_cmd)
-                AddAudioLayerCommand(self._model, audio_layer, parent=parent_cmd)
-                self._push_command(parent_cmd)
+                cmd = CompositeCommand(
+                    f"Add video+audio '{path.name}'",
+                    [
+                        AddLayerCommand(self._model, layer),
+                        AddAudioLayerCommand(self._model, audio_layer),
+                    ],
+                )
+                self._push_command(cmd)
             else:
                 cmd = AddLayerCommand(self._model, layer)
                 self._push_command(cmd)
@@ -1376,15 +1431,26 @@ class RenderCompositionTab(BaseTab):
                 if action == "cancel":
                     return
                 if action == "both":
-                    from PySide6.QtGui import QUndoCommand as _QUC
-                    parent_cmd = _QUC()
-                    parent_cmd.setText("Remove linked video+audio")
-                    RemoveLayerCommand(self._model, row_id, parent=parent_cmd)
-                    RemoveAudioLayerCommand(self._model, linked_id, parent=parent_cmd)
-                    self._push_command(parent_cmd)
+                    cmd = CompositeCommand(
+                        "Remove linked video+audio",
+                        [
+                            RemoveLayerCommand(self._model, row_id),
+                            RemoveAudioLayerCommand(self._model, linked_id),
+                        ],
+                    )
+                    self._push_command(cmd)
                 else:
-                    # Only this
-                    cmd = RemoveLayerCommand(self._model, row_id)
+                    cmd = CompositeCommand(
+                        "Remove visual layer",
+                        [
+                            EditAudioLayerCommand(
+                                self._model,
+                                linked_id,
+                                linked_layer_id=None,
+                            ),
+                            RemoveLayerCommand(self._model, row_id),
+                        ],
+                    )
                     self._push_command(cmd)
             else:
                 cmd = RemoveLayerCommand(self._model, row_id)
@@ -1399,14 +1465,26 @@ class RenderCompositionTab(BaseTab):
                 if action == "cancel":
                     return
                 if action == "both":
-                    from PySide6.QtGui import QUndoCommand as _QUC
-                    parent_cmd = _QUC()
-                    parent_cmd.setText("Remove linked video+audio")
-                    RemoveAudioLayerCommand(self._model, row_id, parent=parent_cmd)
-                    RemoveLayerCommand(self._model, linked_id, parent=parent_cmd)
-                    self._push_command(parent_cmd)
+                    cmd = CompositeCommand(
+                        "Remove linked video+audio",
+                        [
+                            RemoveAudioLayerCommand(self._model, row_id),
+                            RemoveLayerCommand(self._model, linked_id),
+                        ],
+                    )
+                    self._push_command(cmd)
                 else:
-                    cmd = RemoveAudioLayerCommand(self._model, row_id)
+                    cmd = CompositeCommand(
+                        "Remove audio layer",
+                        [
+                            EditLayerCommand(
+                                self._model,
+                                linked_id,
+                                linked_layer_id=None,
+                            ),
+                            RemoveAudioLayerCommand(self._model, row_id),
+                        ],
+                    )
                     self._push_command(cmd)
             else:
                 cmd = RemoveAudioLayerCommand(self._model, row_id)

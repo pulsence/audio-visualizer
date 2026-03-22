@@ -37,6 +37,7 @@ _HEADER_WIDTH = 100
 _SNAP_THRESHOLD_MS = 200
 _PLAYHEAD_HIT_PX = 8  # pixel tolerance for playhead scrub grab
 _WAVEFORM_BINS = 1024  # max RMS bins per cached envelope
+_AUDIO_TOGGLE_WIDTH = 24
 
 
 # ------------------------------------------------------------------
@@ -148,6 +149,7 @@ class TimelineWidget(QWidget):
     item_moved = Signal(str, int, int)
     item_trimmed = Signal(str, str, int)
     item_reordered = Signal(str, int)  # (item_id, new_visual_index)
+    audio_mute_toggled = Signal(str, bool)
     scroll_state_changed = Signal(int, int, int, int)
     playhead_changed = Signal(int)
 
@@ -364,6 +366,8 @@ class TimelineWidget(QWidget):
         # Draw name
         painter.setPen(QPen(QColor(255, 255, 255)))
         text_rect = rect.adjusted(4, 0, -4, 0)
+        if item.track_type == "audio":
+            text_rect = text_rect.adjusted(0, 0, -_AUDIO_TOGGLE_WIDTH - 4, 0)
         painter.drawText(text_rect.toRect(), Qt.AlignmentFlag.AlignVCenter, item.display_name)
 
         # Draw loop markers (grey dashed lines at source duration boundaries)
@@ -387,6 +391,9 @@ class TimelineWidget(QWidget):
         # Draw waveform overlay for audio items with a source path
         if item.track_type == "audio" and item.source_path:
             self._draw_waveform(painter, item, rect)
+
+        if item.track_type == "audio":
+            self._draw_audio_toggle(painter, item, rect)
 
         # Draw trim handles
         if item.item_id == self._selected_id:
@@ -455,8 +462,33 @@ class TimelineWidget(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawPath(path)
 
+    def _draw_audio_toggle(self, painter: QPainter, item: TimelineItem, rect: QRectF) -> None:
+        """Draw the mute toggle affordance on an audio item."""
+        toggle_rect = self._audio_toggle_rect(rect)
+        fill = QColor(180, 70, 70, 210) if item.muted else QColor(30, 30, 30, 180)
+        border = QColor(255, 255, 255, 160)
+        painter.setBrush(QBrush(fill))
+        painter.setPen(QPen(border, 1))
+        painter.drawRoundedRect(toggle_rect, 3, 3)
+        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.drawText(toggle_rect.toRect(), Qt.AlignmentFlag.AlignCenter, "M")
+
+    def _audio_toggle_rect(self, rect: QRectF) -> QRectF:
+        """Return the audio mute toggle rect inside a track item."""
+        return QRectF(
+            rect.right() - _AUDIO_TOGGLE_WIDTH - 4,
+            rect.top() + 4,
+            _AUDIO_TOGGLE_WIDTH,
+            max(12.0, rect.height() - 8),
+        )
+
     def _item_at(self, x: float, y: float) -> tuple[TimelineItem | None, str]:
-        """Find item at position. Returns (item, hit_type) where hit_type is 'body', 'handle_start', 'handle_end', or ''."""
+        """Find item at position.
+
+        Returns ``(item, hit_type)`` where ``hit_type`` is one of
+        ``"body"``, ``"handle_start"``, ``"handle_end"``, ``"mute_toggle"``,
+        or ``""``.
+        """
         visual_items = self._visual_items_in_display_order()
         audio_items = [i for i in self._items if i.track_type == "audio"]
 
@@ -474,6 +506,8 @@ class TimelineWidget(QWidget):
         for i, item in enumerate(audio_items):
             rect = self._get_item_rect(item, y_offset + i * (_TRACK_HEIGHT + _TRACK_SPACING))
             if rect.contains(x, y):
+                if self._audio_toggle_rect(rect).contains(x, y):
+                    return item, "mute_toggle"
                 if x <= rect.left() + _HANDLE_WIDTH:
                     return item, "handle_start"
                 elif x >= rect.right() - _HANDLE_WIDTH:
@@ -509,6 +543,11 @@ class TimelineWidget(QWidget):
 
         item, hit_type = self._item_at(event.position().x(), event.position().y())
         if item is not None:
+            if hit_type == "mute_toggle" and item.track_type == "audio":
+                item.muted = not item.muted
+                self.audio_mute_toggled.emit(item.item_id, item.muted)
+                self.update()
+                return
             self._selected_id = item.item_id
             self.item_selected.emit(item.item_id)
 
@@ -555,7 +594,9 @@ class TimelineWidget(QWidget):
                 self.setCursor(Qt.CursorShape.SizeHorCursor)
                 return
             item, hit_type = self._item_at(x, event.position().y())
-            if hit_type in ("handle_start", "handle_end"):
+            if hit_type == "mute_toggle":
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+            elif hit_type in ("handle_start", "handle_end"):
                 self.setCursor(Qt.CursorShape.SizeHorCursor)
             elif hit_type == "body":
                 self.setCursor(Qt.CursorShape.OpenHandCursor)
