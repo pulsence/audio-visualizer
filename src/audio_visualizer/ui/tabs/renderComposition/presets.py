@@ -81,8 +81,8 @@ def save_preset(name: str, layers: list[CompositionLayer]) -> Path:
     for layer in layers:
         data.append({
             "display_name": layer.display_name,
-            "x": layer.x,
-            "y": layer.y,
+            "center_x": layer.center_x,
+            "center_y": layer.center_y,
             "width": layer.width,
             "height": layer.height,
             "z_order": layer.z_order,
@@ -125,8 +125,8 @@ def load_preset(name: str) -> list[CompositionLayer] | None:
     for ld in data["layers"]:
         layers.append(CompositionLayer(
             display_name=ld.get("display_name", ""),
-            x=ld.get("x", 0),
-            y=ld.get("y", 0),
+            center_x=ld.get("center_x", 0),
+            center_y=ld.get("center_y", 0),
             width=ld.get("width", 1920),
             height=ld.get("height", 1080),
             z_order=ld.get("z_order", 0),
@@ -146,31 +146,32 @@ def load_preset(name: str) -> list[CompositionLayer] | None:
 def _fullscreen_bg_centered_viz(width: int, height: int) -> list[CompositionLayer]:
     viz_w = int(width * 0.8)
     viz_h = int(height * 0.8)
-    viz_x = (width - viz_w) // 2
-    viz_y = (height - viz_h) // 2
+    # center_x=0, center_y=0 means perfectly centred
     return [
         CompositionLayer(
             display_name="Background",
-            x=0, y=0, width=width, height=height, z_order=0,
+            center_x=0, center_y=0, width=width, height=height, z_order=0,
         ),
         CompositionLayer(
             display_name="Visualizer",
-            x=viz_x, y=viz_y, width=viz_w, height=viz_h, z_order=1,
+            center_x=0, center_y=0, width=viz_w, height=viz_h, z_order=1,
         ),
     ]
 
 
 def _fullscreen_bg_bottom_captions(width: int, height: int) -> list[CompositionLayer]:
     cap_h = int(height * 0.2)
-    cap_y = height - cap_h
+    # Place captions at the bottom:
+    # center_y offset = (height/2) - (cap_h/2) = half-output minus half-layer
+    cap_center_y = (height - cap_h) // 2
     return [
         CompositionLayer(
             display_name="Background",
-            x=0, y=0, width=width, height=height, z_order=0,
+            center_x=0, center_y=0, width=width, height=height, z_order=0,
         ),
         CompositionLayer(
             display_name="Captions",
-            x=0, y=cap_y, width=width, height=cap_h, z_order=1,
+            center_x=0, center_y=cap_center_y, width=width, height=cap_h, z_order=1,
         ),
     ]
 
@@ -179,16 +180,19 @@ def _pip_overlay(width: int, height: int) -> list[CompositionLayer]:
     pip_w = int(width * 0.25)
     pip_h = int(height * 0.25)
     margin = int(width * 0.02)
-    pip_x = width - pip_w - margin
-    pip_y = height - pip_h - margin
+    # PiP in bottom-right corner:
+    # center_x = (width/2) - (pip_w/2) - margin
+    # center_y = (height/2) - (pip_h/2) - margin
+    pip_center_x = (width - pip_w) // 2 - margin
+    pip_center_y = (height - pip_h) // 2 - margin
     return [
         CompositionLayer(
             display_name="Background",
-            x=0, y=0, width=width, height=height, z_order=0,
+            center_x=0, center_y=0, width=width, height=height, z_order=0,
         ),
         CompositionLayer(
             display_name="PiP Visualizer",
-            x=pip_x, y=pip_y, width=pip_w, height=pip_h, z_order=1,
+            center_x=pip_center_x, center_y=pip_center_y, width=pip_w, height=pip_h, z_order=1,
         ),
     ]
 

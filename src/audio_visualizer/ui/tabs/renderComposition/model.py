@@ -42,6 +42,28 @@ RESOLUTION_PRESET_LABELS: list[tuple[str, str]] = [
     ("custom", "Custom"),
 ]
 
+# ------------------------------------------------------------------
+# Coordinate helpers
+# ------------------------------------------------------------------
+
+
+def center_to_ffmpeg(
+    center_x: int,
+    center_y: int,
+    layer_width: int,
+    layer_height: int,
+    output_width: int,
+    output_height: int,
+) -> tuple[int, int]:
+    """Convert center-origin coordinates to FFmpeg top-left coordinates.
+
+    ``(0, 0)`` in center-origin maps to a perfectly centred layer.
+    """
+    ffmpeg_x = (output_width // 2) + center_x - (layer_width // 2)
+    ffmpeg_y = (output_height // 2) + center_y - (layer_height // 2)
+    return ffmpeg_x, ffmpeg_y
+
+
 DEFAULT_MATTE_SETTINGS: dict[str, Any] = {
     "mode": "none",  # none, colorkey, chromakey, lumakey
     "key_target": "#00FF00",
@@ -79,8 +101,9 @@ class CompositionLayer:
         One of ``""``, ``"image"``, ``"video"``.
     source_duration_ms : int
         Duration of the source media in milliseconds (0 for images/unknown).
-    x, y : int
-        Top-left position in output coordinates.
+    center_x, center_y : int
+        Center-origin position.  ``(0, 0)`` means the layer is centred on
+        the output canvas.  Positive X is right, positive Y is down.
     width, height : int
         Size in output coordinates.
     z_order : int
@@ -95,6 +118,9 @@ class CompositionLayer:
         Whether this layer participates in the render.
     matte_settings : dict
         Keying/matte parameters for this layer.
+    linked_layer_id : str | None
+        ID of the linked counterpart layer (audio for visual, visual for
+        audio) created when a video-with-audio file is ingested.
     """
 
     id: str = ""
@@ -103,8 +129,8 @@ class CompositionLayer:
     asset_path: Path | None = None
     source_kind: str = ""  # "", "image", "video"
     source_duration_ms: int = 0
-    x: int = 0
-    y: int = 0
+    center_x: int = 0
+    center_y: int = 0
     width: int = 1920
     height: int = 1080
     z_order: int = 0
@@ -113,6 +139,7 @@ class CompositionLayer:
     behavior_after_end: str = "freeze_last_frame"
     enabled: bool = True
     matte_settings: dict[str, Any] = field(default_factory=lambda: copy.deepcopy(DEFAULT_MATTE_SETTINGS))
+    linked_layer_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -147,8 +174,15 @@ class CompositionAudioLayer:
         Trimmed duration in milliseconds. 0 means full length.
     use_full_length : bool
         When True, ignore *duration_ms* and use the full source length.
+    volume : float
+        Playback volume multiplier (1.0 = unity gain).
+    muted : bool
+        When True the layer is omitted from the audio mix.
     enabled : bool
         Whether this audio layer participates in the render.
+    linked_layer_id : str | None
+        ID of the linked visual layer when this audio was extracted
+        from a video-with-audio source.
     """
 
     id: str = ""
@@ -159,7 +193,10 @@ class CompositionAudioLayer:
     duration_ms: int = 0  # 0 means full length
     use_full_length: bool = True
     source_duration_ms: int = 0
+    volume: float = 1.0
+    muted: bool = False
     enabled: bool = True
+    linked_layer_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -225,12 +262,12 @@ class CompositionModel:
                 return al
         return None
 
-    def move_layer(self, layer_id: str, x: int, y: int) -> None:
-        """Update position of the layer with *layer_id*."""
+    def move_layer(self, layer_id: str, center_x: int, center_y: int) -> None:
+        """Update center-origin position of the layer with *layer_id*."""
         layer = self.get_layer(layer_id)
         if layer is not None:
-            layer.x = x
-            layer.y = y
+            layer.center_x = center_x
+            layer.center_y = center_y
 
     def resize_layer(self, layer_id: str, width: int, height: int) -> None:
         """Update size of the layer with *layer_id*."""
@@ -290,8 +327,8 @@ class CompositionModel:
                 "asset_path": str(layer.asset_path) if layer.asset_path else None,
                 "source_kind": layer.source_kind,
                 "source_duration_ms": layer.source_duration_ms,
-                "x": layer.x,
-                "y": layer.y,
+                "center_x": layer.center_x,
+                "center_y": layer.center_y,
                 "width": layer.width,
                 "height": layer.height,
                 "z_order": layer.z_order,
@@ -300,6 +337,7 @@ class CompositionModel:
                 "behavior_after_end": layer.behavior_after_end,
                 "enabled": layer.enabled,
                 "matte_settings": copy.deepcopy(layer.matte_settings),
+                "linked_layer_id": layer.linked_layer_id,
             }
             layers_out.append(layer_dict)
 
@@ -314,7 +352,10 @@ class CompositionModel:
                 "duration_ms": al.duration_ms,
                 "use_full_length": al.use_full_length,
                 "source_duration_ms": al.source_duration_ms,
+                "volume": al.volume,
+                "muted": al.muted,
                 "enabled": al.enabled,
+                "linked_layer_id": al.linked_layer_id,
             })
 
         return {
@@ -359,8 +400,8 @@ class CompositionModel:
                 asset_path=Path(asset_path) if asset_path else None,
                 source_kind=layer_dict.get("source_kind", ""),
                 source_duration_ms=layer_dict.get("source_duration_ms", 0),
-                x=layer_dict.get("x", 0),
-                y=layer_dict.get("y", 0),
+                center_x=layer_dict.get("center_x", 0),
+                center_y=layer_dict.get("center_y", 0),
                 width=layer_dict.get("width", 1920),
                 height=layer_dict.get("height", 1080),
                 z_order=layer_dict.get("z_order", 0),
@@ -369,6 +410,7 @@ class CompositionModel:
                 behavior_after_end=layer_dict.get("behavior_after_end", "freeze_last_frame"),
                 enabled=layer_dict.get("enabled", True),
                 matte_settings=layer_dict.get("matte_settings", copy.deepcopy(DEFAULT_MATTE_SETTINGS)),
+                linked_layer_id=layer_dict.get("linked_layer_id"),
             )
             model.layers.append(layer)
 
@@ -383,7 +425,10 @@ class CompositionModel:
                 duration_ms=al_dict.get("duration_ms", 0),
                 use_full_length=al_dict.get("use_full_length", True),
                 source_duration_ms=al_dict.get("source_duration_ms", 0),
+                volume=al_dict.get("volume", 1.0),
+                muted=al_dict.get("muted", False),
                 enabled=al_dict.get("enabled", True),
+                linked_layer_id=al_dict.get("linked_layer_id"),
             )
             model.audio_layers.append(al)
 

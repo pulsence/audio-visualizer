@@ -87,7 +87,7 @@ class TestRenderCompositionTabSettings:
         # Add a layer through the model and set output settings
         tab._model.add_layer(CompositionLayer(
             display_name="Test BG",
-            x=0, y=0, width=1920, height=1080,
+            center_x=0, center_y=0, width=1920, height=1080,
             z_order=0, start_ms=0, end_ms=10000,
         ))
         tab._model.output_width = 1280
@@ -199,11 +199,11 @@ class TestCompositionModel:
 
     def test_move_layer(self):
         model = CompositionModel()
-        layer = CompositionLayer(display_name="Move", x=0, y=0)
+        layer = CompositionLayer(display_name="Move", center_x=0, center_y=0)
         model.add_layer(layer)
         model.move_layer(layer.id, 100, 200)
-        assert layer.x == 100
-        assert layer.y == 200
+        assert layer.center_x == 100
+        assert layer.center_y == 200
 
     def test_resize_layer(self):
         model = CompositionModel()
@@ -254,7 +254,7 @@ class TestCompositionModel:
         model.add_layer(CompositionLayer(
             display_name="BG",
             asset_path=Path("/tmp/bg.mp4"),
-            x=10, y=20, width=1280, height=720,
+            center_x=10, center_y=20, width=1280, height=720,
             z_order=0, start_ms=0, end_ms=5000,
             behavior_after_end="loop",
         ))
@@ -269,8 +269,8 @@ class TestCompositionModel:
         layer = restored.layers[0]
         assert layer.display_name == "BG"
         assert layer.asset_path == Path("/tmp/bg.mp4")
-        assert layer.x == 10
-        assert layer.y == 20
+        assert layer.center_x == 10
+        assert layer.center_y == 20
         assert layer.behavior_after_end == "loop"
 
 
@@ -334,17 +334,17 @@ class TestUndoCommands:
 
     def test_move_layer_command(self):
         model = CompositionModel()
-        layer = CompositionLayer(display_name="Movable", x=0, y=0)
+        layer = CompositionLayer(display_name="Movable", center_x=0, center_y=0)
         model.add_layer(layer)
 
         cmd = MoveLayerCommand(model, layer.id, 100, 200)
         cmd.redo()
-        assert layer.x == 100
-        assert layer.y == 200
+        assert layer.center_x == 100
+        assert layer.center_y == 200
 
         cmd.undo()
-        assert layer.x == 0
-        assert layer.y == 0
+        assert layer.center_x == 0
+        assert layer.center_y == 0
 
     def test_resize_layer_command(self):
         model = CompositionModel()
@@ -451,8 +451,9 @@ class TestPresets:
         # Visualizer should be centered and smaller
         assert viz.width < 1920
         assert viz.height < 1080
-        assert viz.x > 0
-        assert viz.y > 0
+        # (0,0) means centered in center-origin coordinates
+        assert viz.center_x == 0
+        assert viz.center_y == 0
 
     def test_fullscreen_bg_bottom_captions(self):
         layers = get_preset("fullscreen_bg_bottom_captions", 1920, 1080)
@@ -461,8 +462,8 @@ class TestPresets:
         cap = layers[1]
         assert bg.display_name == "Background"
         assert cap.display_name == "Captions"
-        # Captions should be at the bottom
-        assert cap.y > 0
+        # Captions should be at the bottom (positive center_y)
+        assert cap.center_y > 0
         assert cap.width == 1920
         assert cap.height < 1080
 
@@ -473,11 +474,11 @@ class TestPresets:
         pip = layers[1]
         assert bg.display_name == "Background"
         assert pip.display_name == "PiP Visualizer"
-        # PiP should be small and in corner
+        # PiP should be small and in bottom-right corner
         assert pip.width < 1920 // 2
         assert pip.height < 1080 // 2
-        assert pip.x > 0
-        assert pip.y > 0
+        assert pip.center_x > 0
+        assert pip.center_y > 0
 
     def test_preset_scales_to_resolution(self):
         layers_1080 = get_preset("fullscreen_bg_centered_viz", 1920, 1080)
@@ -965,6 +966,218 @@ class TestTimelineWidget:
         widget.set_selected("v1")
         widget.resize(800, 200)
         widget.repaint()
+
+    def test_paint_with_muted_audio(self):
+        """Muted audio items should paint without error."""
+        widget = TimelineWidget()
+        items = [
+            TimelineItem("a1", "Muted Audio", 0, 5000, "audio", muted=True),
+        ]
+        widget.set_items(items)
+        widget.resize(800, 200)
+        widget.repaint()
+
+    def test_visual_items_sorted_by_z_descending(self):
+        """Visual items should be rendered top-to-bottom by descending Z."""
+        widget = TimelineWidget()
+        items = [
+            TimelineItem("v1", "Low Z", 0, 5000, "visual", z_order=0),
+            TimelineItem("v2", "High Z", 0, 5000, "visual", z_order=10),
+            TimelineItem("v3", "Mid Z", 0, 5000, "visual", z_order=5),
+        ]
+        widget.set_items(items)
+        widget.resize(800, 200)
+        # Should not crash and painting should be fine
+        widget.repaint()
+
+
+# ------------------------------------------------------------------
+# Center-origin serialization
+# ------------------------------------------------------------------
+
+
+class TestCenterOriginSerialization:
+    def test_center_x_y_serialized(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="Test",
+            center_x=50, center_y=-30,
+            width=800, height=600,
+        ))
+        data = model.to_dict()
+        assert data["layers"][0]["center_x"] == 50
+        assert data["layers"][0]["center_y"] == -30
+        assert "x" not in data["layers"][0]
+        assert "y" not in data["layers"][0]
+
+    def test_center_x_y_deserialized(self):
+        data = {
+            "composition_schema_version": 2,
+            "layers": [{
+                "id": "test-id",
+                "display_name": "Test",
+                "center_x": 100,
+                "center_y": -50,
+                "width": 800,
+                "height": 600,
+            }],
+        }
+        model = CompositionModel.from_dict(data)
+        assert model.layers[0].center_x == 100
+        assert model.layers[0].center_y == -50
+
+
+# ------------------------------------------------------------------
+# Audio volume and mute persistence
+# ------------------------------------------------------------------
+
+
+class TestAudioVolumeMutePersistence:
+    def test_volume_muted_serialized(self):
+        model = CompositionModel()
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Audio",
+            asset_path=Path("/tmp/a.mp3"),
+            volume=0.75,
+            muted=True,
+            enabled=True,
+        ))
+        data = model.to_dict()
+        assert data["audio_layers"][0]["volume"] == 0.75
+        assert data["audio_layers"][0]["muted"] is True
+
+    def test_volume_muted_deserialized(self):
+        data = {
+            "composition_schema_version": 2,
+            "audio_layers": [{
+                "id": "aud-1",
+                "display_name": "Audio",
+                "asset_path": "/tmp/a.mp3",
+                "volume": 0.5,
+                "muted": True,
+                "enabled": True,
+            }],
+        }
+        model = CompositionModel.from_dict(data)
+        al = model.audio_layers[0]
+        assert al.volume == 0.5
+        assert al.muted is True
+
+    def test_volume_muted_defaults(self):
+        data = {
+            "composition_schema_version": 2,
+            "audio_layers": [{
+                "id": "aud-2",
+                "display_name": "Audio",
+                "enabled": True,
+            }],
+        }
+        model = CompositionModel.from_dict(data)
+        al = model.audio_layers[0]
+        assert al.volume == 1.0
+        assert al.muted is False
+
+
+# ------------------------------------------------------------------
+# Linked layer persistence
+# ------------------------------------------------------------------
+
+
+class TestLinkedLayerPersistence:
+    def test_linked_layer_id_serialized(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="Video",
+            linked_layer_id="aud-linked",
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Audio",
+            linked_layer_id=model.layers[0].id,
+            enabled=True,
+        ))
+        data = model.to_dict()
+        assert data["layers"][0]["linked_layer_id"] == "aud-linked"
+        assert data["audio_layers"][0]["linked_layer_id"] == model.layers[0].id
+
+    def test_linked_layer_id_deserialized(self):
+        data = {
+            "composition_schema_version": 2,
+            "layers": [{
+                "id": "vid-1",
+                "display_name": "Video",
+                "linked_layer_id": "aud-1",
+            }],
+            "audio_layers": [{
+                "id": "aud-1",
+                "display_name": "Audio",
+                "linked_layer_id": "vid-1",
+                "enabled": True,
+            }],
+        }
+        model = CompositionModel.from_dict(data)
+        assert model.layers[0].linked_layer_id == "aud-1"
+        assert model.audio_layers[0].linked_layer_id == "vid-1"
+
+
+# ------------------------------------------------------------------
+# Volume/mute undo commands
+# ------------------------------------------------------------------
+
+
+class TestAudioVolumeUndoCommands:
+    def test_volume_change_undo(self):
+        model = CompositionModel()
+        al = CompositionAudioLayer(display_name="Audio", volume=1.0, muted=False)
+        model.audio_layers.append(al)
+
+        cmd = EditAudioLayerCommand(model, al.id, volume=0.5)
+        cmd.redo()
+        assert al.volume == 0.5
+
+        cmd.undo()
+        assert al.volume == 1.0
+
+    def test_mute_toggle_undo(self):
+        model = CompositionModel()
+        al = CompositionAudioLayer(display_name="Audio", volume=1.0, muted=False)
+        model.audio_layers.append(al)
+
+        cmd = EditAudioLayerCommand(model, al.id, muted=True)
+        cmd.redo()
+        assert al.muted is True
+
+        cmd.undo()
+        assert al.muted is False
+
+
+# ------------------------------------------------------------------
+# Visual resize controls
+# ------------------------------------------------------------------
+
+
+class TestVisualResizeControls:
+    def test_lock_ratio_checkbox_exists(self):
+        tab = RenderCompositionTab()
+        assert hasattr(tab, "_lock_ratio_cb")
+        assert tab._lock_ratio_cb.isChecked() is True
+
+    def test_original_size_button_exists(self):
+        tab = RenderCompositionTab()
+        assert hasattr(tab, "_original_size_btn")
+
+    def test_fit_to_output_button_exists(self):
+        tab = RenderCompositionTab()
+        assert hasattr(tab, "_fit_to_output_btn")
+
+    def test_audio_volume_slider_exists(self):
+        tab = RenderCompositionTab()
+        assert hasattr(tab, "_audio_volume_slider")
+        assert tab._audio_volume_slider.value() == 100
+
+    def test_audio_mute_checkbox_exists(self):
+        tab = RenderCompositionTab()
+        assert hasattr(tab, "_audio_mute_cb")
+        assert tab._audio_mute_cb.isChecked() is False
 
 
 class TestTimelineItem:

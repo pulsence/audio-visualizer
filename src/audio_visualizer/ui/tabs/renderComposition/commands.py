@@ -78,7 +78,7 @@ class RemoveLayerCommand(QUndoCommand):
 
 
 class MoveLayerCommand(QUndoCommand):
-    """Change position (x, y) of a layer."""
+    """Change center-origin position of a layer."""
 
     def __init__(
         self,
@@ -94,8 +94,8 @@ class MoveLayerCommand(QUndoCommand):
         self._new_x = new_x
         self._new_y = new_y
         layer = model.get_layer(layer_id)
-        self._old_x = layer.x if layer else 0
-        self._old_y = layer.y if layer else 0
+        self._old_x = layer.center_x if layer else 0
+        self._old_y = layer.center_y if layer else 0
         self.setText("Move layer")
 
     def redo(self) -> None:

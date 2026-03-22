@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -33,6 +35,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollBar,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -316,41 +319,56 @@ class RenderCompositionTab(BaseTab):
 
     def _build_position_section(self, parent_layout: QVBoxLayout) -> None:
         group = QGroupBox("Position && Size")
-        layout = QHBoxLayout()
+        grid = QGridLayout()
 
-        layout.addWidget(QLabel("X:"))
+        # Row 0: X, Y
+        grid.addWidget(QLabel("X:"), 0, 0)
         self._x_spin = QSpinBox()
         self._x_spin.setRange(-9999, 9999)
         self._x_spin.editingFinished.connect(self._on_position_changed)
-        layout.addWidget(self._x_spin)
+        grid.addWidget(self._x_spin, 0, 1)
 
-        layout.addWidget(QLabel("Y:"))
+        grid.addWidget(QLabel("Y:"), 0, 2)
         self._y_spin = QSpinBox()
         self._y_spin.setRange(-9999, 9999)
         self._y_spin.editingFinished.connect(self._on_position_changed)
-        layout.addWidget(self._y_spin)
+        grid.addWidget(self._y_spin, 0, 3)
 
-        layout.addWidget(QLabel("W:"))
+        # Row 1: W, H, Lock Ratio
+        grid.addWidget(QLabel("W:"), 1, 0)
         self._w_spin = QSpinBox()
         self._w_spin.setRange(1, 9999)
         self._w_spin.setValue(1920)
         self._w_spin.editingFinished.connect(self._on_size_changed)
-        layout.addWidget(self._w_spin)
+        grid.addWidget(self._w_spin, 1, 1)
 
-        layout.addWidget(QLabel("H:"))
+        grid.addWidget(QLabel("H:"), 1, 2)
         self._h_spin = QSpinBox()
         self._h_spin.setRange(1, 9999)
         self._h_spin.setValue(1080)
         self._h_spin.editingFinished.connect(self._on_size_changed)
-        layout.addWidget(self._h_spin)
+        grid.addWidget(self._h_spin, 1, 3)
 
-        layout.addWidget(QLabel("Z:"))
+        self._lock_ratio_cb = QCheckBox("Lock Ratio")
+        self._lock_ratio_cb.setChecked(True)
+        grid.addWidget(self._lock_ratio_cb, 1, 4)
+
+        # Row 2: Z, Original Size, Fit to Output
+        grid.addWidget(QLabel("Z:"), 2, 0)
         self._z_spin = QSpinBox()
         self._z_spin.setRange(0, 999)
         self._z_spin.editingFinished.connect(self._on_z_order_changed)
-        layout.addWidget(self._z_spin)
+        grid.addWidget(self._z_spin, 2, 1)
 
-        group.setLayout(layout)
+        self._original_size_btn = QPushButton("Original Size")
+        self._original_size_btn.clicked.connect(self._on_original_size)
+        grid.addWidget(self._original_size_btn, 2, 2)
+
+        self._fit_to_output_btn = QPushButton("Fit to Output")
+        self._fit_to_output_btn.clicked.connect(self._on_fit_to_output)
+        grid.addWidget(self._fit_to_output_btn, 2, 3)
+
+        group.setLayout(grid)
         parent_layout.addWidget(group)
 
     def _build_timing_section(self, parent_layout: QVBoxLayout) -> None:
@@ -477,48 +495,59 @@ class RenderCompositionTab(BaseTab):
     def _build_audio_settings_page(self, parent_layout: QVBoxLayout) -> None:
         """Build the audio settings controls for page 1 of the stacked widget."""
         group = QGroupBox("Audio Layer Settings")
-        layout = QVBoxLayout()
+        form = QFormLayout()
 
-        # Name row
-        name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("Name:"))
+        # Name
         self._audio_name_edit = QLineEdit()
         self._audio_name_edit.editingFinished.connect(self._on_audio_name_changed)
-        name_row.addWidget(self._audio_name_edit, 1)
-        layout.addLayout(name_row)
+        form.addRow("Name:", self._audio_name_edit)
 
-        # Source row
+        # Source
         source_row = QHBoxLayout()
-        source_row.addWidget(QLabel("Source:"))
         self._audio_source_label = QLabel("(none)")
         source_row.addWidget(self._audio_source_label, 1)
-
         self._browse_audio_btn = QPushButton("Browse...")
         self._browse_audio_btn.clicked.connect(self._on_browse_audio)
         source_row.addWidget(self._browse_audio_btn)
-        layout.addLayout(source_row)
+        form.addRow("Source:", source_row)
 
-        # Editor row
-        editor_row = QHBoxLayout()
-        editor_row.addWidget(QLabel("Start (ms):"))
+        # Start
         self._audio_start_spin = QSpinBox()
         self._audio_start_spin.setRange(0, 999999999)
         self._audio_start_spin.editingFinished.connect(self._on_audio_layer_edited)
-        editor_row.addWidget(self._audio_start_spin)
+        form.addRow("Start (ms):", self._audio_start_spin)
 
-        editor_row.addWidget(QLabel("Duration (ms):"))
+        # Duration + Full Length
+        dur_row = QHBoxLayout()
         self._audio_duration_spin = QSpinBox()
         self._audio_duration_spin.setRange(0, 999999999)
         self._audio_duration_spin.editingFinished.connect(self._on_audio_layer_edited)
-        editor_row.addWidget(self._audio_duration_spin)
-
+        dur_row.addWidget(self._audio_duration_spin)
         self._audio_full_length_cb = QCheckBox("Full Length")
         self._audio_full_length_cb.setChecked(True)
         self._audio_full_length_cb.toggled.connect(self._on_audio_full_length_toggled)
-        editor_row.addWidget(self._audio_full_length_cb)
-        layout.addLayout(editor_row)
+        dur_row.addWidget(self._audio_full_length_cb)
+        form.addRow("Duration (ms):", dur_row)
 
-        group.setLayout(layout)
+        # Volume
+        vol_row = QHBoxLayout()
+        self._audio_volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self._audio_volume_slider.setRange(0, 200)
+        self._audio_volume_slider.setValue(100)
+        self._audio_volume_slider.setTickInterval(10)
+        self._audio_volume_slider.valueChanged.connect(self._on_audio_volume_changed)
+        vol_row.addWidget(self._audio_volume_slider, 1)
+        self._audio_volume_label = QLabel("100%")
+        self._audio_volume_label.setMinimumWidth(40)
+        vol_row.addWidget(self._audio_volume_label)
+        form.addRow("Volume:", vol_row)
+
+        # Mute
+        self._audio_mute_cb = QCheckBox("Mute")
+        self._audio_mute_cb.toggled.connect(self._on_audio_mute_toggled)
+        form.addRow("", self._audio_mute_cb)
+
+        group.setLayout(form)
         parent_layout.addWidget(group)
 
     def _build_timeline_section(self, parent_layout: QVBoxLayout) -> None:
@@ -628,6 +657,7 @@ class RenderCompositionTab(BaseTab):
                 track_type="visual",
                 enabled=layer.enabled,
                 source_duration_ms=layer.source_duration_ms,
+                z_order=layer.z_order,
             ))
         for al in self._model.audio_layers:
             items.append(TimelineItem(
@@ -638,6 +668,7 @@ class RenderCompositionTab(BaseTab):
                 track_type="audio",
                 enabled=al.enabled,
                 source_duration_ms=al.source_duration_ms,
+                muted=al.muted,
             ))
         if hasattr(self, "_timeline"):
             self._timeline.set_items(items)
@@ -965,9 +996,9 @@ class RenderCompositionTab(BaseTab):
             # Enabled
             self._layer_enabled_cb.setChecked(layer.enabled)
 
-            # Position & size
-            self._x_spin.setValue(layer.x)
-            self._y_spin.setValue(layer.y)
+            # Position & size (center-origin)
+            self._x_spin.setValue(layer.center_x)
+            self._y_spin.setValue(layer.center_y)
             self._w_spin.setValue(layer.width)
             self._h_spin.setValue(layer.height)
             self._z_spin.setValue(layer.z_order)
@@ -1033,6 +1064,11 @@ class RenderCompositionTab(BaseTab):
             else:
                 self._audio_duration_spin.setValue(al.duration_ms)
                 self._audio_duration_spin.setEnabled(True)
+
+            # Volume and mute
+            self._audio_volume_slider.setValue(int(al.volume * 100))
+            self._audio_volume_label.setText(f"{int(al.volume * 100)}%")
+            self._audio_mute_cb.setChecked(al.muted)
         finally:
             self._updating_ui = False
 
@@ -1073,8 +1109,6 @@ class RenderCompositionTab(BaseTab):
             source_kind, source_duration_ms = resolved
             # Use native video dimensions centered in output
             native_w, native_h = self._probe_media_dimensions(path)
-            center_x = (self._model.output_width - native_w) // 2
-            center_y = (self._model.output_height - native_h) // 2
             layer = CompositionLayer(
                 display_name=path.name,
                 asset_path=path,
@@ -1082,14 +1116,37 @@ class RenderCompositionTab(BaseTab):
                 source_duration_ms=source_duration_ms,
                 start_ms=0,
                 end_ms=source_duration_ms,
-                x=center_x, y=center_y,
+                center_x=0, center_y=0,
                 width=native_w,
                 height=native_h,
                 z_order=len(self._model.layers),
                 enabled=True,
             )
-            cmd = AddLayerCommand(self._model, layer)
-            self._push_command(cmd)
+            # Check for audio streams and create linked audio layer
+            has_audio = self._probe_has_audio(path)
+            if has_audio:
+                audio_dur = source_duration_ms or self._probe_media_duration(path)
+                audio_layer = CompositionAudioLayer(
+                    display_name=f"{path.name} (Audio)",
+                    asset_path=path,
+                    start_ms=0,
+                    duration_ms=0,
+                    use_full_length=True,
+                    source_duration_ms=audio_dur,
+                    enabled=True,
+                    linked_layer_id=layer.id,
+                )
+                layer.linked_layer_id = audio_layer.id
+                # Use a parent command so both add+audio are one undo step
+                from PySide6.QtGui import QUndoCommand as _QUC
+                parent_cmd = _QUC()
+                parent_cmd.setText(f"Add video+audio '{path.name}'")
+                AddLayerCommand(self._model, layer, parent=parent_cmd)
+                AddAudioLayerCommand(self._model, audio_layer, parent=parent_cmd)
+                self._push_command(parent_cmd)
+            else:
+                cmd = AddLayerCommand(self._model, layer)
+                self._push_command(cmd)
             self._refresh_layer_list()
             new_row = len(self._model.layers) - 1
             self._layer_list.setCurrentRow(new_row)
@@ -1105,7 +1162,7 @@ class RenderCompositionTab(BaseTab):
                 source_duration_ms=source_duration_ms,
                 start_ms=0,
                 end_ms=5000,
-                x=0, y=0,
+                center_x=0, center_y=0,
                 width=self._model.output_width,
                 height=self._model.output_height,
                 z_order=len(self._model.layers),
@@ -1122,18 +1179,81 @@ class RenderCompositionTab(BaseTab):
         self.settings_changed.emit()
 
     def _on_remove_layer(self) -> None:
-        """Remove the selected item (visual or audio) from the unified list."""
+        """Remove the selected item (visual or audio) from the unified list.
+
+        When the layer has a linked counterpart, show a three-way dialog:
+        Delete both / Delete only this / Cancel.
+        """
         row_type, row_id = self._unified_row_type(self._layer_list.currentRow())
         if row_type == "visual" and row_id:
-            cmd = RemoveLayerCommand(self._model, row_id)
-            self._push_command(cmd)
+            layer = self._model.get_layer(row_id)
+            linked_id = layer.linked_layer_id if layer else None
+            if linked_id and self._model.get_audio_layer(linked_id):
+                action = self._linked_delete_dialog("visual")
+                if action == "cancel":
+                    return
+                if action == "both":
+                    from PySide6.QtGui import QUndoCommand as _QUC
+                    parent_cmd = _QUC()
+                    parent_cmd.setText("Remove linked video+audio")
+                    RemoveLayerCommand(self._model, row_id, parent=parent_cmd)
+                    RemoveAudioLayerCommand(self._model, linked_id, parent=parent_cmd)
+                    self._push_command(parent_cmd)
+                else:
+                    # Only this
+                    cmd = RemoveLayerCommand(self._model, row_id)
+                    self._push_command(cmd)
+            else:
+                cmd = RemoveLayerCommand(self._model, row_id)
+                self._push_command(cmd)
             self._refresh_layer_list()
             self.settings_changed.emit()
         elif row_type == "audio" and row_id:
-            cmd = RemoveAudioLayerCommand(self._model, row_id)
-            self._push_command(cmd)
+            al = self._model.get_audio_layer(row_id)
+            linked_id = al.linked_layer_id if al else None
+            if linked_id and self._model.get_layer(linked_id):
+                action = self._linked_delete_dialog("audio")
+                if action == "cancel":
+                    return
+                if action == "both":
+                    from PySide6.QtGui import QUndoCommand as _QUC
+                    parent_cmd = _QUC()
+                    parent_cmd.setText("Remove linked video+audio")
+                    RemoveAudioLayerCommand(self._model, row_id, parent=parent_cmd)
+                    RemoveLayerCommand(self._model, linked_id, parent=parent_cmd)
+                    self._push_command(parent_cmd)
+                else:
+                    cmd = RemoveAudioLayerCommand(self._model, row_id)
+                    self._push_command(cmd)
+            else:
+                cmd = RemoveAudioLayerCommand(self._model, row_id)
+                self._push_command(cmd)
             self._refresh_layer_list()
             self.settings_changed.emit()
+
+    def _linked_delete_dialog(self, current_type: str) -> str:
+        """Show a 3-way dialog for linked layer deletion.
+
+        Returns ``"both"``, ``"only"``, or ``"cancel"``.
+        """
+        other = "audio" if current_type == "visual" else "visual"
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Delete Linked Layer")
+        msg_box.setText(
+            f"This {current_type} layer has a linked {other} layer.\n"
+            "What would you like to do?"
+        )
+        delete_both = msg_box.addButton("Delete Both", QMessageBox.ButtonRole.AcceptRole)
+        delete_only = msg_box.addButton("Delete Only This", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = msg_box.addButton(QMessageBox.StandardButton.Cancel)
+        msg_box.setDefaultButton(cancel_btn)
+        msg_box.exec()
+        clicked = msg_box.clickedButton()
+        if clicked == delete_both:
+            return "both"
+        elif clicked == delete_only:
+            return "only"
+        return "cancel"
 
     def _probe_media_duration(self, path: Path) -> int:
         """Probe media file and return duration in milliseconds, or 0 on failure."""
@@ -1145,6 +1265,20 @@ class RenderCompositionTab(BaseTab):
         except Exception:
             logger.debug("Media probe failed for %s", path, exc_info=True)
         return 0
+
+    def _probe_has_audio(self, path: Path) -> bool:
+        """Return True if *path* contains at least one audio stream."""
+        try:
+            from audio_visualizer.ui.mediaProbe import probe_media
+            info = probe_media(str(path))
+            if info and info.get("has_audio"):
+                return True
+            # Fallback: check if 'audio_streams' count > 0
+            if info and info.get("audio_streams", 0) > 0:
+                return True
+        except Exception:
+            logger.debug("Audio stream probe failed for %s", path, exc_info=True)
+        return False
 
     def _probe_media_dimensions(self, path: Path) -> tuple[int, int]:
         """Probe media file and return (width, height), falling back to output dimensions."""
@@ -1314,8 +1448,8 @@ class RenderCompositionTab(BaseTab):
             native_w, native_h = self._probe_media_dimensions(asset_path)
             layer.width = native_w
             layer.height = native_h
-            layer.x = (self._model.output_width - native_w) // 2
-            layer.y = (self._model.output_height - native_h) // 2
+            layer.center_x = 0
+            layer.center_y = 0
             if source_duration_ms > 0:
                 layer.end_ms = layer.start_ms + source_duration_ms
         self._refresh_layer_list()
@@ -1347,8 +1481,8 @@ class RenderCompositionTab(BaseTab):
                 native_w, native_h = self._probe_media_dimensions(path)
                 layer.width = native_w
                 layer.height = native_h
-                layer.x = (self._model.output_width - native_w) // 2
-                layer.y = (self._model.output_height - native_h) // 2
+                layer.center_x = 0
+                layer.center_y = 0
                 layer.end_ms = layer.start_ms + source_duration_ms
 
             self._load_layer_properties(layer)
@@ -1377,7 +1511,7 @@ class RenderCompositionTab(BaseTab):
             return
         new_x = self._x_spin.value()
         new_y = self._y_spin.value()
-        if new_x != layer.x or new_y != layer.y:
+        if new_x != layer.center_x or new_y != layer.center_y:
             cmd = MoveLayerCommand(self._model, layer.id, new_x, new_y)
             self._push_command(cmd)
             self.settings_changed.emit()
@@ -1390,6 +1524,17 @@ class RenderCompositionTab(BaseTab):
             return
         new_w = self._w_spin.value()
         new_h = self._h_spin.value()
+        # Apply ratio lock
+        if self._lock_ratio_cb.isChecked() and layer.width > 0 and layer.height > 0:
+            aspect = layer.width / layer.height
+            if new_w != layer.width:
+                new_h = max(1, int(new_w / aspect))
+            elif new_h != layer.height:
+                new_w = max(1, int(new_h * aspect))
+            self._updating_ui = True
+            self._w_spin.setValue(new_w)
+            self._h_spin.setValue(new_h)
+            self._updating_ui = False
         if new_w != layer.width or new_h != layer.height:
             cmd = ResizeLayerCommand(self._model, layer.id, new_w, new_h)
             self._push_command(cmd)
@@ -1406,6 +1551,49 @@ class RenderCompositionTab(BaseTab):
             cmd = ReorderLayerCommand(self._model, layer.id, new_z)
             self._push_command(cmd)
             self._refresh_layer_list()
+            self.settings_changed.emit()
+
+    def _on_original_size(self) -> None:
+        """Restore the selected layer to its source media dimensions."""
+        layer = self._selected_layer()
+        if layer is None or not layer.asset_path:
+            return
+        native_w, native_h = self._probe_media_dimensions(layer.asset_path)
+        if native_w != layer.width or native_h != layer.height:
+            cmd = ResizeLayerCommand(self._model, layer.id, native_w, native_h)
+            self._push_command(cmd)
+            self._updating_ui = True
+            self._w_spin.setValue(native_w)
+            self._h_spin.setValue(native_h)
+            self._updating_ui = False
+            self.settings_changed.emit()
+
+    def _on_fit_to_output(self) -> None:
+        """Scale the selected layer to fill the output resolution, respecting ratio lock."""
+        layer = self._selected_layer()
+        if layer is None:
+            return
+        out_w = self._model.output_width
+        out_h = self._model.output_height
+        if self._lock_ratio_cb.isChecked() and layer.width > 0 and layer.height > 0:
+            aspect = layer.width / layer.height
+            # Fit inside output while keeping aspect ratio
+            if out_w / out_h > aspect:
+                new_h = out_h
+                new_w = max(1, int(new_h * aspect))
+            else:
+                new_w = out_w
+                new_h = max(1, int(new_w / aspect))
+        else:
+            new_w = out_w
+            new_h = out_h
+        if new_w != layer.width or new_h != layer.height:
+            cmd = ResizeLayerCommand(self._model, layer.id, new_w, new_h)
+            self._push_command(cmd)
+            self._updating_ui = True
+            self._w_spin.setValue(new_w)
+            self._h_spin.setValue(new_h)
+            self._updating_ui = False
             self.settings_changed.emit()
 
     # ------------------------------------------------------------------
@@ -1624,6 +1812,33 @@ class RenderCompositionTab(BaseTab):
         self._load_audio_layer_properties(al)
         self._refresh_timeline()
         self.settings_changed.emit()
+
+    def _on_audio_volume_changed(self, value: int) -> None:
+        """Handle volume slider change for audio layers."""
+        if self._updating_ui:
+            return
+        al = self._selected_audio_layer()
+        if al is None:
+            return
+        volume = value / 100.0
+        self._audio_volume_label.setText(f"{value}%")
+        if abs(volume - al.volume) > 0.001:
+            cmd = EditAudioLayerCommand(self._model, al.id, volume=volume)
+            self._push_command(cmd)
+            self.settings_changed.emit()
+
+    def _on_audio_mute_toggled(self, checked: bool) -> None:
+        """Handle mute checkbox toggle for audio layers."""
+        if self._updating_ui:
+            return
+        al = self._selected_audio_layer()
+        if al is None:
+            return
+        if checked != al.muted:
+            cmd = EditAudioLayerCommand(self._model, al.id, muted=checked)
+            self._push_command(cmd)
+            self._refresh_timeline()
+            self.settings_changed.emit()
 
     def _on_browse_audio(self) -> None:
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory

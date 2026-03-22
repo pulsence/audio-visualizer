@@ -29,7 +29,8 @@ class TimelineItem:
     """Represents a single item on the timeline."""
     def __init__(self, item_id: str, display_name: str, start_ms: int,
                  end_ms: int, track_type: str = "visual", enabled: bool = True,
-                 source_duration_ms: int = 0):
+                 source_duration_ms: int = 0, z_order: int = 0,
+                 muted: bool = False):
         self.item_id = item_id
         self.display_name = display_name
         self.start_ms = start_ms
@@ -37,6 +38,8 @@ class TimelineItem:
         self.track_type = track_type  # "visual" or "audio"
         self.enabled = enabled
         self.source_duration_ms = source_duration_ms
+        self.z_order = z_order
+        self.muted = muted
 
 
 class TimelineWidget(QWidget):
@@ -190,8 +193,12 @@ class TimelineWidget(QWidget):
         # Draw time ruler
         self._draw_ruler(painter)
 
-        # Separate items by track type
-        visual_items = [i for i in self._items if i.track_type == "visual"]
+        # Separate items by track type; visual sorted by z_order descending
+        visual_items = sorted(
+            [i for i in self._items if i.track_type == "visual"],
+            key=lambda it: it.z_order,
+            reverse=True,
+        )
         audio_items = [i for i in self._items if i.track_type == "audio"]
 
         y_offset = 25  # After ruler
@@ -258,7 +265,7 @@ class TimelineWidget(QWidget):
     def _draw_item(self, painter: QPainter, item: TimelineItem, rect: QRectF) -> None:
         """Draw a single timeline item."""
         color = _VISUAL_TRACK_COLOR if item.track_type == "visual" else _AUDIO_TRACK_COLOR
-        if not item.enabled:
+        if not item.enabled or item.muted:
             color = QColor(color.red(), color.green(), color.blue(), 60)
 
         painter.setBrush(QBrush(color))
@@ -300,7 +307,11 @@ class TimelineWidget(QWidget):
 
     def _item_at(self, x: float, y: float) -> tuple[TimelineItem | None, str]:
         """Find item at position. Returns (item, hit_type) where hit_type is 'body', 'handle_start', 'handle_end', or ''."""
-        visual_items = [i for i in self._items if i.track_type == "visual"]
+        visual_items = sorted(
+            [i for i in self._items if i.track_type == "visual"],
+            key=lambda it: it.z_order,
+            reverse=True,
+        )
         audio_items = [i for i in self._items if i.track_type == "audio"]
 
         y_offset = 25

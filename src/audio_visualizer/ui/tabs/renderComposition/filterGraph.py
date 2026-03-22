@@ -14,6 +14,7 @@ from audio_visualizer.ui.tabs.renderComposition.model import (
     CompositionAudioLayer,
     CompositionLayer,
     CompositionModel,
+    center_to_ffmpeg,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,9 +52,12 @@ def build_filter_graph(model: CompositionModel) -> str:
 
         filters.append(_build_visual_stream_filter(input_idx, layer, scaled_label))
 
-        # Overlay onto current canvas
-        overlay_x = layer.x
-        overlay_y = layer.y
+        # Overlay onto current canvas — convert center-origin to FFmpeg top-left
+        overlay_x, overlay_y = center_to_ffmpeg(
+            layer.center_x, layer.center_y,
+            layer.width, layer.height,
+            model.output_width, model.output_height,
+        )
 
         enable_expr = _build_enable_expr(layer)
         overlay_params = f"x={overlay_x}:y={overlay_y}:format=auto"
@@ -115,8 +119,8 @@ def build_single_layer_preview_command(
     single_model.output_fps = model.output_fps
 
     single_layer = copy.deepcopy(layer)
-    single_layer.x = 0
-    single_layer.y = 0
+    single_layer.center_x = 0
+    single_layer.center_y = 0
     single_model.layers.append(single_layer)
 
     return build_preview_command(single_model, timestamp_s, output_path)
@@ -165,6 +169,8 @@ def build_ffmpeg_command(
             if al.start_ms > 0:
                 delay_ms = al.start_ms
                 parts.append(f"adelay={delay_ms}|{delay_ms}")
+            if al.volume != 1.0:
+                parts.append(f"volume={al.volume}")
             if parts:
                 audio_filters.append(f"[{input_idx}:a]{','.join(parts)}[{label}]")
             else:
@@ -197,6 +203,8 @@ def build_ffmpeg_command(
         if al.start_ms > 0:
             delay_ms = al.start_ms
             parts_single.append(f"adelay={delay_ms}|{delay_ms}")
+        if al.volume != 1.0:
+            parts_single.append(f"volume={al.volume}")
 
         if parts_single:
             single_label = "aud0"
@@ -278,10 +286,10 @@ def _resolve_layer_path(layer: CompositionLayer) -> Path | None:
 
 
 def _get_audio_layers(model: CompositionModel) -> list[CompositionAudioLayer]:
-    """Return enabled audio layers with resolved paths."""
+    """Return enabled, non-muted audio layers with resolved paths."""
     result: list[CompositionAudioLayer] = []
     for al in model.audio_layers:
-        if al.asset_path and al.enabled:
+        if al.asset_path and al.enabled and not al.muted:
             result.append(al)
     return result
 

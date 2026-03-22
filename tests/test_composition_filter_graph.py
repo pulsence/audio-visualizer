@@ -17,6 +17,7 @@ from audio_visualizer.ui.tabs.renderComposition.model import (
     CompositionAudioLayer,
     CompositionLayer,
     CompositionModel,
+    center_to_ffmpeg,
 )
 
 
@@ -61,14 +62,15 @@ class TestBuildFilterGraph:
         model.add_layer(CompositionLayer(
             display_name="Overlay",
             asset_path=Path("/tmp/overlay.mp4"),
-            x=100, y=100, width=800, height=600,
+            center_x=100, center_y=100, width=800, height=600,
             z_order=1, end_ms=5000,
         ))
         graph = build_filter_graph(model)
         # Should have two overlay operations
         assert "ovr0" in graph
         assert "ovr1" in graph
-        assert "x=100" in graph
+        # center_x=100 -> ffmpeg_x = (1920/2)+100-(800/2) = 660
+        assert "x=660" in graph
 
     def test_disabled_layers_excluded(self):
         model = CompositionModel()
@@ -599,4 +601,130 @@ class TestAudioLayersInFFmpegCommand:
         assert "-stream_loop" in cmd
         assert "trim=duration=6" in cmd_str
         assert "setpts=PTS-STARTPTS+1.0/TB" in cmd_str
+
+
+# ------------------------------------------------------------------
+# Center-origin coordinate math
+# ------------------------------------------------------------------
+
+
+class TestCenterOriginCoordinates:
+    def test_centered_layer(self):
+        """center_x=0, center_y=0 should place layer in the center."""
+        x, y = center_to_ffmpeg(0, 0, 800, 600, 1920, 1080)
+        assert x == (1920 // 2) - (800 // 2)
+        assert y == (1080 // 2) - (600 // 2)
+
+    def test_offset_layer(self):
+        """center_x=100, center_y=-50 should shift from center."""
+        x, y = center_to_ffmpeg(100, -50, 800, 600, 1920, 1080)
+        assert x == (1920 // 2) + 100 - (800 // 2)
+        assert y == (1080 // 2) - 50 - (600 // 2)
+
+    def test_fullscreen_layer_at_center_zero(self):
+        """A full-screen layer at (0,0) should map to FFmpeg (0,0)."""
+        x, y = center_to_ffmpeg(0, 0, 1920, 1080, 1920, 1080)
+        assert x == 0
+        assert y == 0
+
+    def test_center_origin_in_filter_graph(self):
+        """Overlay uses center-to-topleft coordinates."""
+        model = CompositionModel()
+        model.output_width = 1920
+        model.output_height = 1080
+        # center_x=0, center_y=0, smaller layer -> should be centred
+        model.add_layer(CompositionLayer(
+            display_name="Centered",
+            asset_path=Path("/tmp/vid.mp4"),
+            center_x=0, center_y=0,
+            width=800, height=600,
+            end_ms=5000,
+        ))
+        graph = build_filter_graph(model)
+        # FFmpeg x = 960-400 = 560, y = 540-300 = 240
+        assert "x=560" in graph
+        assert "y=240" in graph
+
+
+# ------------------------------------------------------------------
+# Audio volume and mute in FFmpeg command
+# ------------------------------------------------------------------
+
+
+class TestAudioVolumeAndMute:
+    def test_volume_filter_applied(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080, end_ms=5000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Quiet",
+            asset_path=Path("/tmp/music.mp3"),
+            volume=0.5,
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        cmd_str = " ".join(cmd)
+        assert "volume=0.5" in cmd_str
+
+    def test_default_volume_no_filter(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080, end_ms=5000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Normal",
+            asset_path=Path("/tmp/music.mp3"),
+            volume=1.0,
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        cmd_str = " ".join(cmd)
+        assert "volume=" not in cmd_str
+
+    def test_muted_layer_excluded(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080, end_ms=5000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Muted",
+            asset_path=Path("/tmp/music.mp3"),
+            muted=True,
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        assert str(Path("/tmp/music.mp3")) not in cmd
+        assert "-c:a" not in cmd
+
+    def test_volume_in_multi_audio_mix(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080, end_ms=10000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Music",
+            asset_path=Path("/tmp/music.mp3"),
+            volume=0.8,
+            enabled=True,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Narration",
+            asset_path=Path("/tmp/narration.wav"),
+            volume=1.5,
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        cmd_str = " ".join(cmd)
+        assert "volume=0.8" in cmd_str
+        assert "volume=1.5" in cmd_str
+        assert "amix=inputs=2" in cmd_str
 
