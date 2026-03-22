@@ -93,15 +93,16 @@ class SubtitleDocument:
         self._dirty = False
         logger.info("Loaded %d entries from %s", len(self._entries), path)
 
-    def save_srt(self, path: str) -> None:
+    def save_srt(self, path: str, *, strip_md: bool = False) -> None:
         """Write entries back to an .srt file.
 
         Args:
             path: Filesystem path for the output .srt file.
+            strip_md: If True, remove markdown markers from the output.
         """
         from audio_visualizer.ui.tabs.srtEdit.parser import write_srt_file
 
-        write_srt_file(self._entries, path)
+        write_srt_file(self._entries, path, strip_md=strip_md)
         self.mark_clean()
         logger.info("Saved %d entries to %s", len(self._entries), path)
 

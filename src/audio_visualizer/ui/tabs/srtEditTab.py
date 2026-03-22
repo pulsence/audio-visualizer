@@ -1214,7 +1214,13 @@ class SrtEditTab(BaseTab):
             QMessageBox.warning(self, "Save Error", f"Could not save bundle:\n{path}")
 
     def _on_export(self) -> None:
-        """Export SRT: plain subtitle output without bundle metadata."""
+        """Export subtitle file with optional markdown stripping.
+
+        Asks the user whether to strip ``**bold**``, ``*italic*``, and
+        ``==highlight==`` markers from the exported output.  Bundle
+        storage always preserves markdown as-is; stripping is only
+        offered on the plain-text export path (SRT/ASS/VTT).
+        """
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
             current_path=self._subtitle_path,
@@ -1229,13 +1235,34 @@ class SrtEditTab(BaseTab):
         )
         if not path:
             return
+
+        # Ask user whether to strip markdown markers
+        strip_md = self._ask_strip_markdown()
+
         try:
-            self._document.save_srt(path)
+            self._document.save_srt(path, strip_md=strip_md)
             self._publish_subtitle_asset(path)
-            logger.info("Exported to %s", path)
+            logger.info("Exported to %s (strip_md=%s)", path, strip_md)
         except Exception:
             logger.exception("Failed to export subtitle file")
             QMessageBox.warning(self, "Export Error", f"Could not export file:\n{path}")
+
+    def _ask_strip_markdown(self) -> bool:
+        """Ask the user whether to strip markdown from the export.
+
+        Returns True to strip, False to preserve.
+        """
+        result = QMessageBox.question(
+            self,
+            "Markdown in Export",
+            "Strip markdown markers (**bold**, *italic*, ==highlight==) "
+            "from the exported file?\n\n"
+            "Choose Yes to produce clean plain text, or No to keep "
+            "markdown markers in the output.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        return result == QMessageBox.StandardButton.Yes
 
     # ------------------------------------------------------------------
     # Settings persistence

@@ -2,15 +2,38 @@
 
 Provides functions to read and write subtitle files in SRT, ASS, and
 VTT formats using pysubs2, and JSON bundle files via the srt.io reader.
+Also includes a markdown-stripping helper for plain-text export paths.
 """
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import pysubs2
 
 logger = logging.getLogger(__name__)
+
+# Markdown-stripping patterns (order: bold before italic, same as highlighter)
+_BOLD_STRIP_RE = re.compile(r"\*\*(.+?)\*\*")
+_ITALIC_STRIP_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+_HIGHLIGHT_STRIP_RE = re.compile(r"==(.+?)==")
+
+
+def strip_markdown(text: str) -> str:
+    """Remove **bold**, *italic*, and ==highlight== markdown markers.
+
+    Returns the plain-text content with all delimiter characters removed.
+    This is intended for SRT/VTT/TXT export where markdown markup should
+    not appear in the output.
+
+    >>> strip_markdown("**bold** and *italic* and ==highlight==")
+    'bold and italic and highlight'
+    """
+    text = _BOLD_STRIP_RE.sub(r"\1", text)
+    text = _ITALIC_STRIP_RE.sub(r"\1", text)
+    text = _HIGHLIGHT_STRIP_RE.sub(r"\1", text)
+    return text
 
 
 def is_bundle_file(path: str) -> bool:
@@ -97,24 +120,28 @@ def parse_srt_file(path: str) -> list:
     return entries
 
 
-def write_srt_file(entries: list, path: str) -> None:
+def write_srt_file(entries: list, path: str, *, strip_md: bool = False) -> None:
     """Write a list of SubtitleEntry objects to an .srt file.
 
     Args:
         entries: Ordered list of SubtitleEntry instances.
         path: Filesystem path for the output .srt file.
+        strip_md: If True, remove markdown markers from the output text.
     """
     subs = pysubs2.SSAFile()
     subs.info["Title"] = ""
     for entry in entries:
+        text = entry.text
+        if strip_md:
+            text = strip_markdown(text)
         event = pysubs2.SSAEvent(
             start=entry.start_ms,
             end=entry.end_ms,
-            text=entry.text.replace("\n", "\\N"),
+            text=text.replace("\n", "\\N"),
         )
         subs.events.append(event)
     subs.save(path, format_="srt", encoding="utf-8")
-    logger.info("Wrote %d entries to %s", len(entries), path)
+    logger.info("Wrote %d entries to %s (strip_md=%s)", len(entries), path, strip_md)
 
 
 def parse_ass_file(path: str) -> list:

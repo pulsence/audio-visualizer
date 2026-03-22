@@ -848,3 +848,139 @@ class TestSidebarEditorSync:
 
         tab._on_inline_edit(0, COL_TEXT, "Inline change")
         assert tab._sidebar_editor.toPlainText() == "Inline change"
+
+
+class TestMarkdownStripping:
+    """Tests for the strip_markdown helper."""
+
+    def test_strip_bold(self):
+        from audio_visualizer.ui.tabs.srtEdit.parser import strip_markdown
+        assert strip_markdown("**bold**") == "bold"
+
+    def test_strip_italic(self):
+        from audio_visualizer.ui.tabs.srtEdit.parser import strip_markdown
+        assert strip_markdown("*italic*") == "italic"
+
+    def test_strip_highlight(self):
+        from audio_visualizer.ui.tabs.srtEdit.parser import strip_markdown
+        assert strip_markdown("==highlight==") == "highlight"
+
+    def test_strip_mixed(self):
+        from audio_visualizer.ui.tabs.srtEdit.parser import strip_markdown
+        result = strip_markdown("**bold** and *italic* and ==highlight==")
+        assert result == "bold and italic and highlight"
+
+    def test_strip_plain_text_unchanged(self):
+        from audio_visualizer.ui.tabs.srtEdit.parser import strip_markdown
+        assert strip_markdown("no markdown here") == "no markdown here"
+
+    def test_strip_nested_bold_italic(self):
+        from audio_visualizer.ui.tabs.srtEdit.parser import strip_markdown
+        # Bold stripping removes **, leaving content intact
+        result = strip_markdown("**bold with *italic* inside**")
+        # After bold strip: "bold with *italic* inside"
+        # After italic strip: "bold with italic inside"
+        assert result == "bold with italic inside"
+
+    def test_strip_empty_string(self):
+        from audio_visualizer.ui.tabs.srtEdit.parser import strip_markdown
+        assert strip_markdown("") == ""
+
+
+class TestMarkdownBundleRoundTrip:
+    """Tests that markdown text survives bundle save/load unchanged."""
+
+    def test_markdown_preserved_in_bundle_roundtrip(self, tmp_path):
+        """Markdown markers must survive bundle save -> load unchanged."""
+        doc = SubtitleDocument()
+        doc._entries = [
+            SubtitleEntry(
+                index=1, start_ms=0, end_ms=2000,
+                text="**bold** and *italic* and ==highlight==",
+                id="s1",
+            ),
+        ]
+
+        bundle_path = str(tmp_path / "test.bundle.json")
+        doc.save_bundle(bundle_path)
+
+        # Reload
+        doc2 = SubtitleDocument()
+        doc2.load_bundle(bundle_path)
+
+        assert len(doc2.entries) == 1
+        assert doc2.entries[0].text == "**bold** and *italic* and ==highlight=="
+
+    def test_markdown_preserved_in_original_text(self, tmp_path):
+        """original_text field should preserve markdown from initial load."""
+        doc = SubtitleDocument()
+        doc._entries = [
+            SubtitleEntry(
+                index=1, start_ms=0, end_ms=2000,
+                text="**bold** text",
+                original_text="**bold** text",
+                id="s1",
+            ),
+        ]
+
+        bundle_path = str(tmp_path / "test.bundle.json")
+        doc.save_bundle(bundle_path)
+
+        doc2 = SubtitleDocument()
+        doc2.load_bundle(bundle_path)
+
+        assert doc2.entries[0].original_text == "**bold** text"
+
+
+class TestSrtExportMarkdownStripping:
+    """Tests that SRT export correctly handles markdown stripping."""
+
+    def test_srt_export_with_strip(self, tmp_path):
+        """write_srt_file with strip_md=True should remove markdown."""
+        from audio_visualizer.ui.tabs.srtEdit.parser import write_srt_file
+
+        entries = [
+            SubtitleEntry(
+                index=1, start_ms=0, end_ms=2000,
+                text="**bold** and *italic*",
+            ),
+        ]
+        path = str(tmp_path / "stripped.srt")
+        write_srt_file(entries, path, strip_md=True)
+
+        content = Path(path).read_text(encoding="utf-8")
+        assert "bold and italic" in content
+        assert "**" not in content
+
+    def test_srt_export_without_strip(self, tmp_path):
+        """write_srt_file with strip_md=False should preserve markdown."""
+        from audio_visualizer.ui.tabs.srtEdit.parser import write_srt_file
+
+        entries = [
+            SubtitleEntry(
+                index=1, start_ms=0, end_ms=2000,
+                text="**bold** and *italic*",
+            ),
+        ]
+        path = str(tmp_path / "preserved.srt")
+        write_srt_file(entries, path, strip_md=False)
+
+        content = Path(path).read_text(encoding="utf-8")
+        assert "**bold**" in content
+        assert "*italic*" in content
+
+    def test_document_save_srt_strip_md(self, tmp_path):
+        """SubtitleDocument.save_srt with strip_md should strip markdown."""
+        doc = SubtitleDocument()
+        doc._entries = [
+            SubtitleEntry(
+                index=1, start_ms=0, end_ms=2000,
+                text="==highlighted== text",
+            ),
+        ]
+        path = str(tmp_path / "doc_stripped.srt")
+        doc.save_srt(path, strip_md=True)
+
+        content = Path(path).read_text(encoding="utf-8")
+        assert "highlighted text" in content
+        assert "==" not in content
