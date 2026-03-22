@@ -106,7 +106,15 @@ class WordItem:
         start: Start time in seconds
         end: End time in seconds
         text: The word text
+        id: Optional stable identifier for bundle round-tripping.
+        subtitle_id: Optional back-reference to the parent subtitle entry.
+        confidence: Optional transcription confidence score.
+        speaker_label: Optional speaker diarization label.
     """
     start: float
     end: float
     text: str
+    id: Optional[str] = None
+    subtitle_id: Optional[str] = None
+    confidence: Optional[float] = None
+    speaker_label: Optional[str] = None

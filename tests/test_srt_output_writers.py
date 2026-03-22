@@ -384,8 +384,9 @@ class TestWriteJsonBundle:
         assert "device_used" in data
         assert "compute_type_used" in data
         assert "config" in data
-        assert "segments" in data
         assert "subtitles" in data
+        assert "words" in data
+        assert data["bundle_version"] == 2
 
     def test_write_json_bundle_values(self, tmp_path):
         """Test JSON bundle contains correct values."""

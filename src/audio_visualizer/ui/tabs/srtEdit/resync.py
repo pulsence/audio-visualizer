@@ -212,22 +212,36 @@ def reapply_word_timing(
 ) -> list[TimingChange]:
     """Re-derive entry timing from word-level timestamps in a JSON bundle.
 
-    Expects json_bundle_data to contain a "words" key with a list of
-    {"start": float, "end": float, "text": str} dicts.
+    Accepts normalized bundle data (as returned by ``read_json_bundle``).
+    The ``words`` value may be a list of dicts with ``"start"``,
+    ``"end"``, ``"text"`` keys, or a list of :class:`WordItem` objects.
 
     For each entry, we find the words that best match the entry text
     and use their timing.
 
     Args:
         document: The subtitle document.
-        json_bundle_data: Dict with a "words" list of word-level timing data.
+        json_bundle_data: Normalized bundle dict with a ``words`` list.
 
     Returns:
         List of timing change tuples.
     """
-    words = json_bundle_data.get("words", [])
-    if not words:
+    raw_words = json_bundle_data.get("words", [])
+    if not raw_words:
         return []
+
+    # Normalize word list: accept both dicts and WordItem objects
+    words: list[dict] = []
+    for w in raw_words:
+        if isinstance(w, dict):
+            words.append(w)
+        else:
+            # WordItem or similar object with .start, .end, .text
+            words.append({
+                "start": w.start,
+                "end": w.end,
+                "text": getattr(w, "text", ""),
+            })
 
     changes: list[TimingChange] = []
     word_idx = 0

@@ -240,6 +240,82 @@ def segments_to_jsonable(segments: List[Any], *, include_words: bool) -> List[Di
     return out
 
 
+def _build_v2_subtitles(
+    subs: List[SubtitleBlock],
+    segments: List[Any],
+    *,
+    model_name: str,
+    device_used: str,
+    compute_type_used: str,
+    source_media_path: str,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Build v2 subtitle entries and a flat words list.
+
+    Returns (subtitles_list, flat_words_list).
+    """
+    import uuid as _uuid
+
+    subtitles: List[Dict[str, Any]] = []
+    flat_words: List[Dict[str, Any]] = []
+
+    # Build a segment index keyed on approximate start time for word lookup
+    seg_words_map: Dict[int, List[Any]] = {}
+    for seg in segments:
+        raw_words = getattr(seg, "words", None) or []
+        if raw_words:
+            key = int(round(float(seg.start) * 1000))
+            seg_words_map[key] = raw_words
+
+    for idx, sb in enumerate(subs):
+        sub_id = str(_uuid.uuid4())
+        text = normalize_spaces(" ".join(sb.lines))
+
+        # Try to find matching segment words for this subtitle
+        sub_key = int(round(sb.start * 1000))
+        matched_raw_words: List[Any] = []
+        # Find closest segment
+        for seg_key, seg_words in seg_words_map.items():
+            if abs(seg_key - sub_key) < 500:  # within 500ms
+                matched_raw_words = seg_words
+                break
+
+        words: List[Dict[str, Any]] = []
+        for w in matched_raw_words:
+            w_id = str(_uuid.uuid4())
+            w_text = getattr(w, "word", getattr(w, "text", ""))
+            w_entry: Dict[str, Any] = {
+                "id": w_id,
+                "subtitle_id": sub_id,
+                "text": w_text.strip(),
+                "start": float(w.start),
+                "end": float(w.end),
+            }
+            confidence = getattr(w, "probability", None)
+            if confidence is not None:
+                w_entry["confidence"] = float(confidence)
+            words.append(w_entry)
+            flat_words.append(w_entry)
+
+        sub_entry: Dict[str, Any] = {
+            "id": sub_id,
+            "start": sb.start,
+            "end": sb.end,
+            "text": text,
+            "words": words,
+            "original_text": text,
+            "source_media_path": source_media_path,
+            "model_name": model_name,
+            "device": device_used,
+            "compute_type": compute_type_used,
+        }
+        if sb.speaker:
+            sub_entry["speaker_label"] = sb.speaker
+
+        subtitles.append(sub_entry)
+
+    return subtitles, flat_words
+
+
 def write_json_bundle(
     out_path: Path,
     *,
@@ -250,8 +326,12 @@ def write_json_bundle(
     segments: List[Any],
     subs: List[SubtitleBlock],
     tool_version: str,
+    model_name: str = "",
 ) -> None:
     """Write a complete JSON bundle with metadata, segments, and subtitles.
+
+    Emits bundle v2 format by default with stable IDs, normalized field
+    names, provenance fields, and a flat convenience ``words`` list.
 
     Args:
         out_path: Output file path
@@ -262,21 +342,27 @@ def write_json_bundle(
         segments: List of transcription segments
         subs: List of SubtitleBlock objects
         tool_version: Tool version string
+        model_name: Whisper model name used for transcription
     """
-    payload = {
+    subtitles_v2, flat_words = _build_v2_subtitles(
+        subs,
+        segments,
+        model_name=model_name,
+        device_used=device_used,
+        compute_type_used=compute_type_used,
+        source_media_path=input_file,
+    )
+
+    payload: Dict[str, Any] = {
+        "bundle_version": 2,
         "tool_version": tool_version,
         "input_file": input_file,
         "device_used": device_used,
         "compute_type_used": compute_type_used,
+        "model_name": model_name,
         "config": dataclasses.asdict(cfg),
-        "segments": segments_to_jsonable(
-            segments,
-            include_words=any(getattr(seg, "words", None) for seg in segments),
-        ),
-        "subtitles": [
-            {"start": sb.start, "end": sb.end, "text": normalize_spaces(" ".join(sb.lines))}
-            for sb in subs
-        ],
+        "subtitles": subtitles_v2,
+        "words": flat_words,
     }
     ensure_parent_dir(out_path)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")

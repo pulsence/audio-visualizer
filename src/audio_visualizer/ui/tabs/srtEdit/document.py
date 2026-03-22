@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,13 @@ class SubtitleEntry:
         text: Subtitle text (may contain newlines for multi-line cues).
         speaker: Optional speaker label.
         dirty: Whether this entry has been modified since last save.
+        id: Stable identifier for bundle round-tripping.
+        words: Word-level timing data from bundle loading.
+        original_text: Original text before user edits (provenance).
+        source_media_path: Source media path from transcription.
+        model_name: Whisper model used for transcription.
+        alignment_status: Bundle-from-SRT alignment quality marker.
+        alignment_confidence: Bundle-from-SRT alignment confidence score.
     """
 
     index: int
@@ -33,6 +40,13 @@ class SubtitleEntry:
     text: str
     speaker: Optional[str] = None
     dirty: bool = False
+    id: Optional[str] = None
+    words: list = field(default_factory=list)
+    original_text: Optional[str] = None
+    source_media_path: Optional[str] = None
+    model_name: Optional[str] = None
+    alignment_status: Optional[str] = None
+    alignment_confidence: Optional[float] = None
 
 
 class SubtitleDocument:
