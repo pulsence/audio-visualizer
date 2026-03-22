@@ -48,6 +48,8 @@ from audio_visualizer.ui.tabs.srtEdit.commands import (
     EditSpeakerCommand,
     EditTextCommand,
     EditTimestampCommand,
+    EditWordTextCommand,
+    EditWordTimingCommand,
     MergeEntriesCommand,
     RemoveEntryCommand,
     SplitEntryCommand,
@@ -58,6 +60,7 @@ from audio_visualizer.ui.tabs.srtEdit.lint import (
     LintIssue,
     run_lint,
 )
+from audio_visualizer.ui.tabs.srtEdit.parser import is_bundle_file
 from audio_visualizer.ui.tabs.srtEdit.resync import (
     fps_drift_correction,
     global_shift,
@@ -71,7 +74,11 @@ from audio_visualizer.ui.tabs.srtEdit.waveformView import WaveformView
 logger = logging.getLogger(__name__)
 
 _AUDIO_FILTERS = "Audio Files (*.wav *.mp3 *.flac *.ogg *.aac *.m4a);;All Files (*)"
-_SUBTITLE_FILTERS = "Subtitle Files (*.srt *.ass *.vtt);;All Files (*)"
+_SUBTITLE_FILTERS = (
+    "Subtitle Files (*.srt *.ass *.vtt *.json);;JSON Bundles (*.json *.bundle.json)"
+    ";;SRT Files (*.srt);;All Files (*)"
+)
+_BUNDLE_FILTERS = "JSON Bundles (*.json *.bundle.json);;All Files (*)"
 
 
 class _WaveformLoadSignals(QObject):
@@ -125,6 +132,7 @@ class SrtEditTab(BaseTab):
         self._table_model = SubtitleTableModel(self._document)
         self._audio_path: Optional[str] = None
         self._subtitle_path: Optional[str] = None
+        self._bundle_path: Optional[str] = None  # Tracks loaded bundle file
         self._lint_profile_key: str = "pipeline_default"
         self._lint_issues: list[LintIssue] = []
         self._refreshing_asset_combos = False
@@ -289,8 +297,10 @@ class SrtEditTab(BaseTab):
         controls_layout.addStretch()
 
         self._save_btn = QPushButton("Save SRT")
+        self._save_bundle_btn = QPushButton("Save Bundle")
         self._export_btn = QPushButton("Export As...")
         controls_layout.addWidget(self._save_btn)
+        controls_layout.addWidget(self._save_bundle_btn)
         controls_layout.addWidget(self._export_btn)
 
         root_layout.addLayout(controls_layout)
@@ -328,17 +338,24 @@ class SrtEditTab(BaseTab):
         self._silence_snap_btn.clicked.connect(self._on_silence_snap)
 
         self._save_btn.clicked.connect(self._on_save)
+        self._save_bundle_btn.clicked.connect(self._on_save_bundle)
         self._export_btn.clicked.connect(self._on_export)
 
         self._waveform_view.seek_requested.connect(self._on_seek_requested)
         self._waveform_view.play_pause_requested.connect(self._on_play_pause_toggle)
         self._waveform_view.boundary_moved.connect(self._on_boundary_moved)
+        self._waveform_view.word_boundary_moved.connect(self._on_word_boundary_moved)
+        self._waveform_view.context_action.connect(self._on_context_action)
+        self._waveform_view.drag_select_region.connect(self._on_drag_select_create)
+        self._waveform_view.word_region_clicked.connect(self._on_word_region_clicked)
 
         self._table_view.selectionModel().selectionChanged.connect(
             self._on_table_selection_changed
         )
+        self._table_view.clicked.connect(self._on_table_clicked)
 
         self._table_model.inline_edit_requested.connect(self._on_inline_edit)
+        self._table_model.word_edit_requested.connect(self._on_word_inline_edit)
         self._table_model.dataChanged.connect(self._on_data_changed)
 
     def _setup_shortcuts(self) -> None:
@@ -425,7 +442,7 @@ class SrtEditTab(BaseTab):
             self._load_subtitle(str(path))
 
     def _load_subtitle(self, path: str) -> None:
-        """Load a subtitle file into the document."""
+        """Load a subtitle or bundle file into the document."""
         self._subtitle_path = path
         self._subtitle_combo.blockSignals(True)
         self._subtitle_combo.clear()
@@ -433,19 +450,24 @@ class SrtEditTab(BaseTab):
         self._subtitle_combo.blockSignals(False)
 
         try:
-            ext = Path(path).suffix.lower()
-            if ext == ".ass":
-                from audio_visualizer.ui.tabs.srtEdit.parser import parse_ass_file
-                entries = parse_ass_file(path)
-                self._document._entries = entries
-                self._document._dirty = False
-            elif ext == ".vtt":
-                from audio_visualizer.ui.tabs.srtEdit.parser import parse_vtt_file
-                entries = parse_vtt_file(path)
-                self._document._entries = entries
-                self._document._dirty = False
+            if is_bundle_file(path):
+                self._document.load_bundle(path)
+                self._bundle_path = path
             else:
-                self._document.load_srt(path)
+                self._bundle_path = None
+                ext = Path(path).suffix.lower()
+                if ext == ".ass":
+                    from audio_visualizer.ui.tabs.srtEdit.parser import parse_ass_file
+                    entries = parse_ass_file(path)
+                    self._document._entries = entries
+                    self._document._dirty = False
+                elif ext == ".vtt":
+                    from audio_visualizer.ui.tabs.srtEdit.parser import parse_vtt_file
+                    entries = parse_vtt_file(path)
+                    self._document._entries = entries
+                    self._document._dirty = False
+                else:
+                    self._document.load_srt(path)
         except Exception:
             logger.exception("Failed to load subtitle file %s", path)
             QMessageBox.warning(self, "Load Error", f"Could not load subtitle file:\n{path}")
@@ -489,14 +511,19 @@ class SrtEditTab(BaseTab):
             self._on_play()
 
     def _on_boundary_moved(self, index: int, which: str, ms: int) -> None:
-        """Handle a region boundary drag from the waveform."""
+        """Handle a region boundary drag from the waveform.
+
+        Applies overlap clamping via the document model before committing.
+        """
         if index < 0 or index >= len(self._document.entries):
             return
-        from audio_visualizer.ui.tabs.srtEdit.commands import EditTimestampCommand
-        if which == "start":
-            cmd = EditTimestampCommand(self._document, index, new_start_ms=ms)
-        else:
-            cmd = EditTimestampCommand(self._document, index, new_end_ms=ms)
+        entry = self._document.entries[index]
+        new_start = ms if which == "start" else entry.start_ms
+        new_end = ms if which == "end" else entry.end_ms
+        new_start, new_end = self._document.clamp_segment_bounds(index, new_start, new_end)
+        cmd = EditTimestampCommand(
+            self._document, index, new_start_ms=new_start, new_end_ms=new_end,
+        )
         self._push_command(cmd)
         self._table_model.notify_rows_changed(index, index)
         self._waveform_view.set_regions(self._document.entries)
@@ -510,16 +537,23 @@ class SrtEditTab(BaseTab):
     # ------------------------------------------------------------------
 
     def _selected_row(self) -> int:
-        """Return the currently selected row, or -1."""
+        """Return the currently selected display row, or -1."""
         indexes = self._table_view.selectionModel().selectedRows()
         if indexes:
             return indexes[0].row()
         return -1
 
-    def _on_add_entry(self) -> None:
+    def _selected_entry_index(self) -> int:
+        """Return the entry index for the current selection, or -1."""
         row = self._selected_row()
-        if row >= 0 and row < len(self._document.entries):
-            ref = self._document.entries[row]
+        if row < 0:
+            return -1
+        return self._table_model.entry_index_for_row(row)
+
+    def _on_add_entry(self) -> None:
+        idx = self._selected_entry_index()
+        if 0 <= idx < len(self._document.entries):
+            ref = self._document.entries[idx]
             start = ref.end_ms
             end = start + 2000
         elif self._document.entries:
@@ -536,19 +570,25 @@ class SrtEditTab(BaseTab):
         self._refresh_after_edit()
 
     def _on_remove_entry(self) -> None:
-        row = self._selected_row()
-        if row < 0:
+        idx = self._selected_entry_index()
+        if idx < 0:
             return
-        cmd = RemoveEntryCommand(self._document, row)
+        cmd = RemoveEntryCommand(self._document, idx)
         self._push_command(cmd)
         self._refresh_after_edit()
 
-    def _on_split_entry(self) -> None:
-        row = self._selected_row()
+    def _on_split_entry(self, row: int | None = None) -> None:
+        if row is None:
+            row = self._selected_row()
         if row < 0:
             return
         entry = self._document.entries[row]
-        split_ms = (entry.start_ms + entry.end_ms) // 2
+        # Use playhead position if it falls inside the segment
+        playhead_ms = self._waveform_view.get_cursor_ms()
+        if entry.start_ms < playhead_ms < entry.end_ms:
+            split_ms = playhead_ms
+        else:
+            split_ms = (entry.start_ms + entry.end_ms) // 2
         if split_ms <= entry.start_ms or split_ms >= entry.end_ms:
             return
         cmd = SplitEntryCommand(self._document, row, split_ms)
@@ -556,10 +596,10 @@ class SrtEditTab(BaseTab):
         self._refresh_after_edit()
 
     def _on_merge_entries(self) -> None:
-        row = self._selected_row()
-        if row < 0 or row + 1 >= len(self._document.entries):
+        idx = self._selected_entry_index()
+        if idx < 0 or idx + 1 >= len(self._document.entries):
             return
-        cmd = MergeEntriesCommand(self._document, row, row + 1)
+        cmd = MergeEntriesCommand(self._document, idx, idx + 1)
         self._push_command(cmd)
         self._refresh_after_edit()
 
@@ -581,11 +621,21 @@ class SrtEditTab(BaseTab):
 
     def _on_table_selection_changed(self) -> None:
         row = self._selected_row()
-        if row >= 0:
-            if not self._waveform_view.has_regions():
-                self._pending_highlight_row = row
-                return
-            self._waveform_view.highlight_region(row)
+        if row < 0:
+            return
+        mapping = self._table_model.row_mapping(row)
+        if mapping is None:
+            return
+        entry_idx = mapping.entry_index
+        if not self._waveform_view.has_regions():
+            self._pending_highlight_row = entry_idx
+            return
+        if mapping.is_word_row:
+            # Highlight the parent segment and also sync word selection
+            self._waveform_view.highlight_region(entry_idx)
+            self._waveform_view.highlight_word(entry_idx, mapping.word_index)
+        else:
+            self._waveform_view.highlight_region(entry_idx)
 
     def _on_inline_edit(self, row: int, col: int, value: object) -> None:
         """Handle inline table edits via undoable commands.
@@ -627,6 +677,119 @@ class SrtEditTab(BaseTab):
         for row in range(top_left.row(), bottom_right.row() + 1):
             if top_left.column() <= COL_TEXT <= bottom_right.column():
                 self._table_view.resizeRowToContents(row)
+
+    # ------------------------------------------------------------------
+    # Word-level editing
+    # ------------------------------------------------------------------
+
+    def _on_word_inline_edit(self, entry_idx: int, word_idx: int, col: int, value: object) -> None:
+        """Handle inline word row edits via undoable commands."""
+        from audio_visualizer.ui.tabs.srtEdit.tableModel import COL_END, COL_START, COL_TEXT
+
+        if col == COL_TEXT:
+            cmd = EditWordTextCommand(self._document, entry_idx, word_idx, str(value))
+            self._push_command(cmd)
+        elif col == COL_START:
+            new_start = float(value)
+            new_start, _ = self._document.clamp_word_bounds(
+                entry_idx, word_idx, new_start, self._document.entries[entry_idx].words[word_idx].end,
+            )
+            cmd = EditWordTimingCommand(self._document, entry_idx, word_idx, new_start=new_start)
+            self._push_command(cmd)
+        elif col == COL_END:
+            new_end = float(value)
+            _, new_end = self._document.clamp_word_bounds(
+                entry_idx, word_idx, self._document.entries[entry_idx].words[word_idx].start, new_end,
+            )
+            cmd = EditWordTimingCommand(self._document, entry_idx, word_idx, new_end=new_end)
+            self._push_command(cmd)
+        self._table_model.notify_rows_changed(entry_idx, entry_idx)
+        self._waveform_view.set_regions(self._document.entries)
+
+    def _on_word_boundary_moved(
+        self, entry_idx: int, word_idx: int, new_start: float, new_end: float
+    ) -> None:
+        """Handle word region drag from the waveform."""
+        if entry_idx < 0 or entry_idx >= len(self._document.entries):
+            return
+        entry = self._document.entries[entry_idx]
+        if word_idx < 0 or word_idx >= len(entry.words):
+            return
+        new_start, new_end = self._document.clamp_word_bounds(
+            entry_idx, word_idx, new_start, new_end,
+        )
+        cmd = EditWordTimingCommand(
+            self._document, entry_idx, word_idx, new_start=new_start, new_end=new_end,
+        )
+        self._push_command(cmd)
+        self._table_model.notify_rows_changed(entry_idx, entry_idx)
+        self._waveform_view.set_regions(self._document.entries)
+
+    def _on_word_region_clicked(self, entry_idx: int, word_idx: int) -> None:
+        """Handle word region click: sync selection to table."""
+        self._table_model.word_selected.emit(entry_idx, word_idx)
+        # Ensure the entry is expanded so the word row is visible
+        if not self._table_model.is_expanded(entry_idx):
+            self._table_model.toggle_expand(entry_idx)
+        display_row = self._table_model.word_row_for(entry_idx, word_idx)
+        if display_row >= 0:
+            self._table_view.selectRow(display_row)
+
+    def _on_table_clicked(self, index) -> None:
+        """Handle click on a table row -- toggle expand on index column."""
+        from audio_visualizer.ui.tabs.srtEdit.tableModel import COL_INDEX
+        if index.column() == COL_INDEX:
+            mapping = self._table_model.row_mapping(index.row())
+            if mapping is not None and not mapping.is_word_row:
+                entry = self._document.entries[mapping.entry_index]
+                if entry.words:
+                    self._table_model.toggle_expand(mapping.entry_index)
+
+    # ------------------------------------------------------------------
+    # Context menu actions (from waveform timeline)
+    # ------------------------------------------------------------------
+
+    def _on_context_action(self, action: str, entry_index: int) -> None:
+        """Route context menu actions from the waveform view."""
+        if entry_index < 0 or entry_index >= len(self._document.entries):
+            return
+        if action == "split_at_playhead":
+            self._on_split_entry(row=entry_index)
+        elif action == "merge_next":
+            if entry_index + 1 < len(self._document.entries):
+                cmd = MergeEntriesCommand(self._document, entry_index, entry_index + 1)
+                self._push_command(cmd)
+                self._refresh_after_edit()
+        elif action == "merge_prev":
+            if entry_index > 0:
+                cmd = MergeEntriesCommand(self._document, entry_index - 1, entry_index)
+                self._push_command(cmd)
+                self._refresh_after_edit()
+        elif action == "delete":
+            cmd = RemoveEntryCommand(self._document, entry_index)
+            self._push_command(cmd)
+            self._refresh_after_edit()
+        elif action == "edit_text":
+            # Select the row and start editing the text column
+            display_row = self._table_model.subtitle_row_for_entry(entry_index)
+            if display_row >= 0:
+                from audio_visualizer.ui.tabs.srtEdit.tableModel import COL_TEXT
+                self._table_view.selectRow(display_row)
+                text_index = self._table_model.index(display_row, COL_TEXT)
+                self._table_view.edit(text_index)
+
+    # ------------------------------------------------------------------
+    # Drag-to-select creation
+    # ------------------------------------------------------------------
+
+    def _on_drag_select_create(self, start_s: float, end_s: float) -> None:
+        """Create a new blank segment from a drag-selection region."""
+        start_ms = max(0, int(start_s * 1000))
+        end_ms = max(start_ms + 1, int(end_s * 1000))
+        entry = SubtitleEntry(index=0, start_ms=start_ms, end_ms=end_ms, text="New subtitle")
+        cmd = AddEntryCommand(self._document, entry)
+        self._push_command(cmd)
+        self._refresh_after_edit()
 
     # ------------------------------------------------------------------
     # Correction recording
@@ -785,8 +948,8 @@ class SrtEditTab(BaseTab):
     def _on_shift_from_cursor(self) -> None:
         from PySide6.QtWidgets import QInputDialog
 
-        row = self._selected_row()
-        if row < 0:
+        idx = self._selected_entry_index()
+        if idx < 0:
             QMessageBox.information(self, "Shift from Cursor", "Select an entry first.")
             return
         delta, ok = QInputDialog.getInt(
@@ -794,7 +957,7 @@ class SrtEditTab(BaseTab):
         )
         if not ok:
             return
-        changes = shift_from_cursor(self._document, row, delta)
+        changes = shift_from_cursor(self._document, idx, delta)
         if changes:
             cmd = BatchResyncCommand(
                 self._document, changes, f"Shift from #{row + 1} by {delta:+d} ms"
@@ -919,7 +1082,34 @@ class SrtEditTab(BaseTab):
             logger.exception("Failed to save SRT")
             QMessageBox.warning(self, "Save Error", f"Could not save file:\n{path}")
 
+    def _on_save_bundle(self) -> None:
+        """Save the document as a JSON bundle preserving word timing."""
+        if self._bundle_path:
+            path = self._bundle_path
+        else:
+            from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
+            start_dir = resolve_browse_directory(
+                current_path=self._bundle_path or self._subtitle_path,
+                workspace_context=self.workspace_context,
+                selected_asset_path=self._subtitle_combo.currentData(),
+            )
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save Bundle File", start_dir, _BUNDLE_FILTERS,
+            )
+            if not path:
+                return
+
+        try:
+            self._document.save_bundle(path)
+            self._bundle_path = path
+            self._publish_bundle_asset(path)
+            logger.info("Saved bundle to %s", path)
+        except Exception:
+            logger.exception("Failed to save bundle")
+            QMessageBox.warning(self, "Save Error", f"Could not save bundle:\n{path}")
+
     def _on_export(self) -> None:
+        """Export SRT: plain subtitle output without bundle metadata."""
         from audio_visualizer.ui.sessionFilePicker import resolve_browse_directory
         start_dir = resolve_browse_directory(
             current_path=self._subtitle_path,
@@ -953,18 +1143,23 @@ class SrtEditTab(BaseTab):
         return {
             "audio_path": self._audio_path,
             "subtitle_path": self._subtitle_path,
+            "bundle_path": self._bundle_path,
             "lint_profile": self._lint_profile_key,
         }
 
     def apply_settings(self, data: dict[str, Any]) -> None:
         audio_path = data.get("audio_path")
         subtitle_path = data.get("subtitle_path")
+        bundle_path = data.get("bundle_path")
         lint_profile = data.get("lint_profile", "pipeline_default")
 
         if audio_path and os.path.isfile(audio_path):
             self._load_audio(audio_path)
 
-        if subtitle_path and os.path.isfile(subtitle_path):
+        # Prefer bundle path over subtitle path when both are present
+        if bundle_path and os.path.isfile(bundle_path):
+            self._load_subtitle(bundle_path)
+        elif subtitle_path and os.path.isfile(subtitle_path):
             self._load_subtitle(subtitle_path)
 
         if lint_profile in BUILTIN_PROFILES:
@@ -1010,12 +1205,14 @@ class SrtEditTab(BaseTab):
                 self._audio_combo.setCurrentIndex(idx)
         self._audio_combo.blockSignals(False)
 
-        # Subtitle assets
+        # Subtitle assets (includes both subtitle and json_bundle categories)
         self._subtitle_combo.blockSignals(True)
         self._subtitle_combo.clear()
         self._subtitle_combo.addItem("(none)", None)
         for asset in ctx.list_assets(category="subtitle"):
             self._subtitle_combo.addItem(asset.display_name, str(asset.path))
+        for asset in ctx.list_assets(category="json_bundle"):
+            self._subtitle_combo.addItem(f"[Bundle] {asset.display_name}", str(asset.path))
         if current_sub:
             idx = self._subtitle_combo.findData(current_sub)
             if idx >= 0:
@@ -1100,6 +1297,35 @@ class SrtEditTab(BaseTab):
             category="subtitle",
             source_tab=self.tab_id,
             role="subtitle_source",
+        )
+        self.register_output_asset(asset)
+        return asset.id
+
+    def _publish_bundle_asset(self, path: str | Path) -> str | None:
+        """Register a saved bundle file as a json_bundle session asset."""
+        ctx = self.workspace_context
+        if ctx is None:
+            return None
+
+        bundle_path = Path(path)
+        existing = ctx.find_asset_by_path(bundle_path)
+        if existing is not None:
+            ctx.update_asset(
+                existing.id,
+                display_name=bundle_path.name,
+                category="json_bundle",
+                source_tab=self.tab_id,
+                role="bundle_source",
+            )
+            return existing.id
+
+        asset = SessionAsset(
+            id=str(uuid.uuid4()),
+            display_name=bundle_path.name,
+            path=bundle_path,
+            category="json_bundle",
+            source_tab=self.tab_id,
+            role="bundle_source",
         )
         self.register_output_asset(asset)
         return asset.id

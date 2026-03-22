@@ -6,6 +6,7 @@ file I/O via the parser module).
 """
 from __future__ import annotations
 
+import bisect
 import copy
 import logging
 from dataclasses import dataclass, field
@@ -108,16 +109,23 @@ class SubtitleDocument:
     # Mutation helpers
     # ------------------------------------------------------------------
 
-    def add_entry(self, entry: SubtitleEntry) -> None:
-        """Append a new entry and re-index.
+    def add_entry(self, entry: SubtitleEntry) -> int:
+        """Insert a new entry in sorted order by start time and re-index.
 
         Args:
             entry: The subtitle entry to add.
+
+        Returns:
+            The 0-based index where the entry was inserted.
         """
         entry.dirty = True
-        self._entries.append(entry)
+        # Find insertion point to keep entries sorted by start_ms
+        starts = [e.start_ms for e in self._entries]
+        pos = bisect.bisect_right(starts, entry.start_ms)
+        self._entries.insert(pos, entry)
         self._reindex()
         self._dirty = True
+        return pos
 
     def remove_entry(self, index: int) -> SubtitleEntry:
         """Remove the entry at the given list position and re-index.
@@ -159,16 +167,22 @@ class SubtitleDocument:
         if index < 0 or index >= len(self._entries):
             raise IndexError(f"Entry index {index} out of range.")
         entry = self._entries[index]
-        if start_ms is not None:
+        timing_changed = False
+        if start_ms is not None and start_ms != entry.start_ms:
             entry.start_ms = start_ms
-        if end_ms is not None:
+            timing_changed = True
+        if end_ms is not None and end_ms != entry.end_ms:
             entry.end_ms = end_ms
+            timing_changed = True
         if text is not None:
             entry.text = text
         if speaker is not ...:
             entry.speaker = speaker  # type: ignore[assignment]
         entry.dirty = True
         self._dirty = True
+        # Re-sort when start time changes break ordering
+        if timing_changed:
+            self._ensure_sorted()
 
     def split_entry(self, index: int, split_ms: int) -> None:
         """Split the entry at *index* into two entries at *split_ms*.
@@ -285,6 +299,209 @@ class SubtitleDocument:
             entry.dirty = False
 
     # ------------------------------------------------------------------
+    # Word-level helpers
+    # ------------------------------------------------------------------
+
+    def update_word(
+        self,
+        entry_index: int,
+        word_index: int,
+        *,
+        text: str | None = None,
+        start: float | None = None,
+        end: float | None = None,
+    ) -> None:
+        """Update a word within a subtitle entry.
+
+        Args:
+            entry_index: 0-based subtitle index.
+            word_index: 0-based word index within the entry's words list.
+            text: New word text, or None to keep current.
+            start: New start time in seconds, or None to keep current.
+            end: New end time in seconds, or None to keep current.
+        """
+        if entry_index < 0 or entry_index >= len(self._entries):
+            raise IndexError(f"Entry index {entry_index} out of range.")
+        entry = self._entries[entry_index]
+        if word_index < 0 or word_index >= len(entry.words):
+            raise IndexError(f"Word index {word_index} out of range for entry {entry_index}.")
+        word = entry.words[word_index]
+        if text is not None:
+            word.text = text
+        if start is not None:
+            word.start = start
+        if end is not None:
+            word.end = end
+        entry.dirty = True
+        self._dirty = True
+
+    def clamp_segment_bounds(self, index: int, new_start_ms: int, new_end_ms: int) -> tuple[int, int]:
+        """Clamp proposed segment bounds so they do not overlap neighbors.
+
+        Args:
+            index: 0-based entry index.
+            new_start_ms: Proposed start time in milliseconds.
+            new_end_ms: Proposed end time in milliseconds.
+
+        Returns:
+            (clamped_start_ms, clamped_end_ms) that respect neighbor bounds.
+        """
+        # Clamp against previous entry's end
+        if index > 0:
+            prev_end = self._entries[index - 1].end_ms
+            if new_start_ms < prev_end:
+                new_start_ms = prev_end
+        # Clamp against next entry's start
+        if index < len(self._entries) - 1:
+            next_start = self._entries[index + 1].start_ms
+            if new_end_ms > next_start:
+                new_end_ms = next_start
+        # Ensure min duration
+        if new_end_ms <= new_start_ms:
+            new_end_ms = new_start_ms + 1
+        return new_start_ms, new_end_ms
+
+    def clamp_word_bounds(
+        self,
+        entry_index: int,
+        word_index: int,
+        new_start: float,
+        new_end: float,
+    ) -> tuple[float, float]:
+        """Clamp proposed word bounds within its parent segment and neighbors.
+
+        Args:
+            entry_index: 0-based subtitle index.
+            word_index: 0-based word index.
+            new_start: Proposed start time in seconds.
+            new_end: Proposed end time in seconds.
+
+        Returns:
+            (clamped_start, clamped_end).
+        """
+        entry = self._entries[entry_index]
+        seg_start = entry.start_ms / 1000.0
+        seg_end = entry.end_ms / 1000.0
+        words = entry.words
+        # Clamp within parent segment
+        new_start = max(new_start, seg_start)
+        new_end = min(new_end, seg_end)
+        # Clamp against previous word
+        if word_index > 0:
+            prev_end = words[word_index - 1].end
+            new_start = max(new_start, prev_end)
+        # Clamp against next word
+        if word_index < len(words) - 1:
+            next_start = words[word_index + 1].start
+            new_end = min(new_end, next_start)
+        # Ensure minimum duration
+        if new_end <= new_start:
+            new_end = new_start + 0.001
+        return new_start, new_end
+
+    # ------------------------------------------------------------------
+    # Bundle I/O
+    # ------------------------------------------------------------------
+
+    def load_bundle(self, path: str) -> None:
+        """Load a JSON bundle file and populate entries with word data.
+
+        Uses the normalized bundle reader as the single entry point.
+
+        Args:
+            path: Filesystem path to the .json or .bundle.json file.
+        """
+        from audio_visualizer.srt.io import read_json_bundle
+
+        bundle = read_json_bundle(path)
+        entries: list[SubtitleEntry] = []
+        for i, sub in enumerate(bundle.get("subtitles", []), start=1):
+            entry = SubtitleEntry(
+                index=i,
+                start_ms=int(round(sub["start"] * 1000)),
+                end_ms=int(round(sub["end"] * 1000)),
+                text=sub.get("text", ""),
+                speaker=sub.get("speaker_label"),
+                dirty=False,
+                id=sub.get("id"),
+                words=list(sub.get("words", [])),
+                original_text=sub.get("original_text"),
+                source_media_path=sub.get("source_media_path"),
+                model_name=sub.get("model_name"),
+                alignment_status=sub.get("alignment_status"),
+                alignment_confidence=sub.get("alignment_confidence"),
+            )
+            entries.append(entry)
+        self._entries = entries
+        self._dirty = False
+        logger.info("Loaded bundle with %d entries from %s", len(self._entries), path)
+
+    def save_bundle(self, path: str) -> None:
+        """Save the current document as a JSON bundle v2.
+
+        Preserves word timing data and provenance fields.
+
+        Args:
+            path: Filesystem path for the output .json file.
+        """
+        import json
+        import os
+        from pathlib import Path as _Path
+
+        subtitles = []
+        flat_words = []
+        for entry in self._entries:
+            words_data = []
+            for w in entry.words:
+                w_dict = {
+                    "id": getattr(w, "id", None) or "",
+                    "subtitle_id": getattr(w, "subtitle_id", None) or entry.id or "",
+                    "text": getattr(w, "text", ""),
+                    "start": float(getattr(w, "start", 0)),
+                    "end": float(getattr(w, "end", 0)),
+                }
+                conf = getattr(w, "confidence", None)
+                if conf is not None:
+                    w_dict["confidence"] = float(conf)
+                speaker = getattr(w, "speaker_label", None)
+                if speaker is not None:
+                    w_dict["speaker_label"] = speaker
+                words_data.append(w_dict)
+                flat_words.append(w_dict)
+
+            sub_entry = {
+                "id": entry.id or "",
+                "start": entry.start_ms / 1000.0,
+                "end": entry.end_ms / 1000.0,
+                "text": entry.text,
+                "original_text": entry.original_text or entry.text,
+                "words": words_data,
+                "source_media_path": entry.source_media_path or "",
+                "model_name": entry.model_name or "",
+            }
+            if entry.speaker:
+                sub_entry["speaker_label"] = entry.speaker
+            if entry.alignment_status:
+                sub_entry["alignment_status"] = entry.alignment_status
+            if entry.alignment_confidence is not None:
+                sub_entry["alignment_confidence"] = entry.alignment_confidence
+            subtitles.append(sub_entry)
+
+        payload = {
+            "bundle_version": 2,
+            "subtitles": subtitles,
+            "words": flat_words,
+        }
+
+        out = _Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        tmp = out.with_suffix(out.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, out)
+        self.mark_clean()
+        logger.info("Saved bundle with %d entries to %s", len(self._entries), path)
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -292,3 +509,11 @@ class SubtitleDocument:
         """Re-number entries starting from 1."""
         for i, entry in enumerate(self._entries):
             entry.index = i + 1
+
+    def _ensure_sorted(self) -> None:
+        """Re-sort entries by start_ms if ordering has been violated."""
+        for i in range(len(self._entries) - 1):
+            if self._entries[i].start_ms > self._entries[i + 1].start_ms:
+                self._entries.sort(key=lambda e: e.start_ms)
+                self._reindex()
+                return

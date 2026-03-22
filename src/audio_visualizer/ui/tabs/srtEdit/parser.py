@@ -1,15 +1,67 @@
 """Parser helpers for subtitle file I/O.
 
 Provides functions to read and write subtitle files in SRT, ASS, and
-VTT formats using pysubs2.
+VTT formats using pysubs2, and JSON bundle files via the srt.io reader.
 """
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pysubs2
 
 logger = logging.getLogger(__name__)
+
+
+def is_bundle_file(path: str) -> bool:
+    """Return True if the path looks like a JSON bundle file.
+
+    Recognizes ``.json`` and ``.bundle.json`` extensions.
+    """
+    p = Path(path)
+    if p.suffix.lower() == ".json":
+        return True
+    # Handle .bundle.json (double suffix)
+    if p.name.lower().endswith(".bundle.json"):
+        return True
+    return False
+
+
+def parse_bundle_file(path: str) -> list:
+    """Parse a JSON bundle file into a list of SubtitleEntry objects.
+
+    Uses ``read_json_bundle()`` as the single bundle entry point and
+    populates entries with word-level data and provenance fields.
+
+    Args:
+        path: Filesystem path to the .json bundle file.
+
+    Returns:
+        Ordered list of SubtitleEntry instances with words populated.
+    """
+    from audio_visualizer.srt.io import read_json_bundle
+    from audio_visualizer.ui.tabs.srtEdit.document import SubtitleEntry
+
+    bundle = read_json_bundle(path)
+    entries: list[SubtitleEntry] = []
+    for i, sub in enumerate(bundle.get("subtitles", []), start=1):
+        entry = SubtitleEntry(
+            index=i,
+            start_ms=int(round(sub["start"] * 1000)),
+            end_ms=int(round(sub["end"] * 1000)),
+            text=sub.get("text", ""),
+            speaker=sub.get("speaker_label"),
+            dirty=False,
+            id=sub.get("id"),
+            words=list(sub.get("words", [])),
+            original_text=sub.get("original_text"),
+            source_media_path=sub.get("source_media_path"),
+            model_name=sub.get("model_name"),
+            alignment_status=sub.get("alignment_status"),
+            alignment_confidence=sub.get("alignment_confidence"),
+        )
+        entries.append(entry)
+    return entries
 
 
 def parse_srt_file(path: str) -> list:

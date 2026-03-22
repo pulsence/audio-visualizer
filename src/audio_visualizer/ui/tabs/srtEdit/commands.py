@@ -116,8 +116,7 @@ class AddEntryCommand(QUndoCommand):
         self.setText("Add subtitle entry")
 
     def redo(self) -> None:
-        self._document.add_entry(copy.deepcopy(self._entry))
-        self._inserted_index = len(self._document.entries) - 1
+        self._inserted_index = self._document.add_entry(copy.deepcopy(self._entry))
 
     def undo(self) -> None:
         if self._inserted_index is not None:
@@ -239,6 +238,72 @@ class MoveRegionCommand(QUndoCommand):
             self._index,
             start_ms=self._old_start_ms,
             end_ms=self._old_end_ms,
+        )
+
+
+class EditWordTextCommand(QUndoCommand):
+    """Change the text of a word within a subtitle entry."""
+
+    def __init__(
+        self,
+        document: SubtitleDocument,
+        entry_index: int,
+        word_index: int,
+        new_text: str,
+        parent: QUndoCommand | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._document = document
+        self._entry_index = entry_index
+        self._word_index = word_index
+        self._old_text = document.entries[entry_index].words[word_index].text
+        self._new_text = new_text
+        self.setText(f"Edit word text at #{entry_index + 1}:{word_index}")
+
+    def redo(self) -> None:
+        self._document.update_word(self._entry_index, self._word_index, text=self._new_text)
+
+    def undo(self) -> None:
+        self._document.update_word(self._entry_index, self._word_index, text=self._old_text)
+
+
+class EditWordTimingCommand(QUndoCommand):
+    """Change the timing of a word within a subtitle entry."""
+
+    def __init__(
+        self,
+        document: SubtitleDocument,
+        entry_index: int,
+        word_index: int,
+        new_start: float | None = None,
+        new_end: float | None = None,
+        parent: QUndoCommand | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._document = document
+        self._entry_index = entry_index
+        self._word_index = word_index
+        word = document.entries[entry_index].words[word_index]
+        self._old_start = word.start
+        self._old_end = word.end
+        self._new_start = new_start if new_start is not None else word.start
+        self._new_end = new_end if new_end is not None else word.end
+        self.setText(f"Edit word timing at #{entry_index + 1}:{word_index}")
+
+    def redo(self) -> None:
+        self._document.update_word(
+            self._entry_index,
+            self._word_index,
+            start=self._new_start,
+            end=self._new_end,
+        )
+
+    def undo(self) -> None:
+        self._document.update_word(
+            self._entry_index,
+            self._word_index,
+            start=self._old_start,
+            end=self._old_end,
         )
 
 

@@ -3,14 +3,19 @@
 Provides SubtitleTableModel (QAbstractTableModel) that exposes subtitle
 entries as an editable table with columns for index, start, end,
 duration, text, and speaker.
+
+Supports expand/collapse per subtitle row to show inline word rows
+below the parent entry.  Word rows display indented word text, start
+time, and end time with inline editing.
 """
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QEvent, QModelIndex, Qt, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QFont, QKeyEvent
 from PySide6.QtWidgets import QPlainTextEdit, QStyledItemDelegate, QWidget
 
 from audio_visualizer.ui.tabs.srtEdit.document import SubtitleDocument
@@ -41,6 +46,11 @@ def _ms_to_timestamp(ms: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}"
 
 
+def _seconds_to_timestamp(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS.mmm display string."""
+    return _ms_to_timestamp(int(round(seconds * 1000)))
+
+
 def _timestamp_to_ms(text: str) -> int | None:
     """Parse a HH:MM:SS.mmm or HH:MM:SS,mmm timestamp to milliseconds.
 
@@ -66,18 +76,43 @@ def _timestamp_to_ms(text: str) -> int | None:
     return None
 
 
+@dataclass
+class _RowMapping:
+    """Mapping from a display row to underlying data.
+
+    For subtitle rows: entry_index is set, word_index is -1.
+    For word rows: both entry_index and word_index are set.
+    """
+
+    entry_index: int
+    word_index: int = -1  # -1 means subtitle row
+
+    @property
+    def is_word_row(self) -> bool:
+        return self.word_index >= 0
+
+
 class SubtitleTableModel(QAbstractTableModel):
     """Table model that exposes SubtitleDocument entries.
 
     Editable columns: Start, End, Text, Speaker.
     Read-only columns: #, Duration.
+
+    Supports expand/collapse per subtitle row to show inline word rows
+    below the parent, with a stable mapping from display rows to
+    subtitle/word indices.
     """
 
     inline_edit_requested = Signal(int, int, object)  # row, column, value
+    word_edit_requested = Signal(int, int, int, object)  # entry_idx, word_idx, column, value
+    word_selected = Signal(int, int)  # entry_index, word_index
 
     def __init__(self, document: SubtitleDocument, parent: Any = None) -> None:
         super().__init__(parent)
         self._document = document
+        self._expanded: set[int] = set()  # set of expanded entry indices
+        self._row_map: list[_RowMapping] = []
+        self._rebuild_row_map()
 
     @property
     def document(self) -> SubtitleDocument:
@@ -88,7 +123,74 @@ class SubtitleTableModel(QAbstractTableModel):
         """Replace the backing document and refresh the view."""
         self.beginResetModel()
         self._document = document
+        self._expanded.clear()
+        self._rebuild_row_map()
         self.endResetModel()
+
+    # ------------------------------------------------------------------
+    # Expand / collapse
+    # ------------------------------------------------------------------
+
+    def toggle_expand(self, entry_index: int) -> None:
+        """Toggle expand/collapse for the given subtitle entry index."""
+        if entry_index in self._expanded:
+            self._expanded.discard(entry_index)
+        else:
+            self._expanded.add(entry_index)
+        self.beginResetModel()
+        self._rebuild_row_map()
+        self.endResetModel()
+
+    def is_expanded(self, entry_index: int) -> bool:
+        """Return True if the given entry has its word rows expanded."""
+        return entry_index in self._expanded
+
+    def collapse_all(self) -> None:
+        """Collapse all expanded entries."""
+        self.beginResetModel()
+        self._expanded.clear()
+        self._rebuild_row_map()
+        self.endResetModel()
+
+    # ------------------------------------------------------------------
+    # Row mapping
+    # ------------------------------------------------------------------
+
+    def row_mapping(self, row: int) -> _RowMapping | None:
+        """Return the row mapping for a display row, or None."""
+        if 0 <= row < len(self._row_map):
+            return self._row_map[row]
+        return None
+
+    def entry_index_for_row(self, row: int) -> int:
+        """Return the subtitle entry index for a display row, or -1."""
+        mapping = self.row_mapping(row)
+        if mapping is not None:
+            return mapping.entry_index
+        return -1
+
+    def subtitle_row_for_entry(self, entry_index: int) -> int:
+        """Return the display row for a subtitle entry, or -1."""
+        for i, m in enumerate(self._row_map):
+            if m.entry_index == entry_index and not m.is_word_row:
+                return i
+        return -1
+
+    def word_row_for(self, entry_index: int, word_index: int) -> int:
+        """Return the display row for a specific word, or -1."""
+        for i, m in enumerate(self._row_map):
+            if m.entry_index == entry_index and m.word_index == word_index:
+                return i
+        return -1
+
+    def _rebuild_row_map(self) -> None:
+        """Rebuild the flat row map from document entries and expansion state."""
+        self._row_map.clear()
+        for i, entry in enumerate(self._document.entries):
+            self._row_map.append(_RowMapping(entry_index=i))
+            if i in self._expanded and entry.words:
+                for wi in range(len(entry.words)):
+                    self._row_map.append(_RowMapping(entry_index=i, word_index=wi))
 
     # ------------------------------------------------------------------
     # QAbstractTableModel interface
@@ -97,7 +199,7 @@ class SubtitleTableModel(QAbstractTableModel):
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.isValid():
             return 0
-        return len(self._document.entries)
+        return len(self._row_map)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.isValid():
@@ -120,14 +222,29 @@ class SubtitleTableModel(QAbstractTableModel):
             return None
         row = index.row()
         col = index.column()
-        if row < 0 or row >= len(self._document.entries):
+        if row < 0 or row >= len(self._row_map):
             return None
 
-        entry = self._document.entries[row]
+        mapping = self._row_map[row]
 
-        if role == Qt.ItemDataRole.DisplayRole or role == Qt.ItemDataRole.EditRole:
+        if mapping.is_word_row:
+            return self._word_data(mapping, col, role)
+        return self._entry_data(mapping, col, role)
+
+    def _entry_data(self, mapping: _RowMapping, col: int, role: int) -> Any:
+        """Return data for a subtitle entry row."""
+        entry_idx = mapping.entry_index
+        if entry_idx < 0 or entry_idx >= len(self._document.entries):
+            return None
+        entry = self._document.entries[entry_idx]
+
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             if col == COL_INDEX:
-                return entry.index
+                # Show expand indicator when words are available
+                prefix = ""
+                if entry.words:
+                    prefix = "- " if entry_idx in self._expanded else "+ "
+                return f"{prefix}{entry.index}"
             elif col == COL_START:
                 return _ms_to_timestamp(entry.start_ms)
             elif col == COL_END:
@@ -145,13 +262,54 @@ class SubtitleTableModel(QAbstractTableModel):
                 from PySide6.QtWidgets import QApplication
                 palette = QApplication.palette()
                 base = palette.color(QPalette.ColorRole.Base)
-                # Palette-safe dirty indicator: subtle tint relative to base
                 if base.lightness() < 128:
-                    # Dark mode: slightly lighter warm tint
                     return QColor(60, 55, 40)
                 else:
-                    # Light mode: soft warm tint
                     return QColor(255, 255, 220)
+
+        return None
+
+    def _word_data(self, mapping: _RowMapping, col: int, role: int) -> Any:
+        """Return data for an inline word row."""
+        entry_idx = mapping.entry_index
+        word_idx = mapping.word_index
+        if entry_idx < 0 or entry_idx >= len(self._document.entries):
+            return None
+        entry = self._document.entries[entry_idx]
+        if word_idx < 0 or word_idx >= len(entry.words):
+            return None
+        word = entry.words[word_idx]
+
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
+            if col == COL_INDEX:
+                return ""  # No index for word rows
+            elif col == COL_START:
+                return _seconds_to_timestamp(word.start)
+            elif col == COL_END:
+                return _seconds_to_timestamp(word.end)
+            elif col == COL_DURATION:
+                dur = max(0.0, word.end - word.start)
+                return _ms_to_timestamp(int(round(dur * 1000)))
+            elif col == COL_TEXT:
+                return f"    {word.text}"  # Indented for visual hierarchy
+            elif col == COL_SPEAKER:
+                return ""
+
+        if role == Qt.ItemDataRole.FontRole:
+            if col == COL_TEXT:
+                font = QFont()
+                font.setItalic(True)
+                return font
+
+        if role == Qt.ItemDataRole.BackgroundRole:
+            from PySide6.QtGui import QColor, QPalette
+            from PySide6.QtWidgets import QApplication
+            palette = QApplication.palette()
+            base = palette.color(QPalette.ColorRole.Base)
+            if base.lightness() < 128:
+                return QColor(45, 45, 55)
+            else:
+                return QColor(235, 235, 245)
 
         return None
 
@@ -159,7 +317,20 @@ class SubtitleTableModel(QAbstractTableModel):
         base_flags = super().flags(index)
         if not index.isValid():
             return base_flags
+        row = index.row()
         col = index.column()
+        if row < 0 or row >= len(self._row_map):
+            return base_flags
+
+        mapping = self._row_map[row]
+
+        if mapping.is_word_row:
+            # Word rows: start, end, text editable
+            if col in (COL_START, COL_END, COL_TEXT):
+                return base_flags | Qt.ItemFlag.ItemIsEditable
+            return base_flags
+
+        # Subtitle entry rows
         if col in (COL_START, COL_END, COL_TEXT, COL_SPEAKER):
             return base_flags | Qt.ItemFlag.ItemIsEditable
         return base_flags
@@ -169,24 +340,60 @@ class SubtitleTableModel(QAbstractTableModel):
             return False
         row = index.row()
         col = index.column()
-        if row < 0 or row >= len(self._document.entries):
+        if row < 0 or row >= len(self._row_map):
+            return False
+
+        mapping = self._row_map[row]
+
+        if mapping.is_word_row:
+            return self._set_word_data(mapping, col, value)
+
+        return self._set_entry_data(mapping, col, value)
+
+    def _set_entry_data(self, mapping: _RowMapping, col: int, value: Any) -> bool:
+        """Handle setData for a subtitle entry row."""
+        entry_idx = mapping.entry_index
+        if entry_idx < 0 or entry_idx >= len(self._document.entries):
             return False
 
         if col == COL_START:
             ms = _timestamp_to_ms(str(value))
             if ms is None:
                 return False
-            self.inline_edit_requested.emit(row, col, ms)
+            self.inline_edit_requested.emit(entry_idx, col, ms)
         elif col == COL_END:
             ms = _timestamp_to_ms(str(value))
             if ms is None:
                 return False
-            self.inline_edit_requested.emit(row, col, ms)
+            self.inline_edit_requested.emit(entry_idx, col, ms)
         elif col == COL_TEXT:
-            self.inline_edit_requested.emit(row, col, str(value))
+            self.inline_edit_requested.emit(entry_idx, col, str(value))
         elif col == COL_SPEAKER:
             val = str(value).strip()
-            self.inline_edit_requested.emit(row, col, val if val else None)
+            self.inline_edit_requested.emit(entry_idx, col, val if val else None)
+        else:
+            return False
+
+        return True
+
+    def _set_word_data(self, mapping: _RowMapping, col: int, value: Any) -> bool:
+        """Handle setData for a word row."""
+        entry_idx = mapping.entry_index
+        word_idx = mapping.word_index
+
+        if col == COL_START:
+            ms = _timestamp_to_ms(str(value))
+            if ms is None:
+                return False
+            self.word_edit_requested.emit(entry_idx, word_idx, col, ms / 1000.0)
+        elif col == COL_END:
+            ms = _timestamp_to_ms(str(value))
+            if ms is None:
+                return False
+            self.word_edit_requested.emit(entry_idx, word_idx, col, ms / 1000.0)
+        elif col == COL_TEXT:
+            text = str(value).strip()
+            self.word_edit_requested.emit(entry_idx, word_idx, col, text)
         else:
             return False
 
@@ -198,25 +405,45 @@ class SubtitleTableModel(QAbstractTableModel):
 
     def get_entry(self, row: int):
         """Return the SubtitleEntry at *row*, or None."""
-        if 0 <= row < len(self._document.entries):
-            return self._document.entries[row]
+        if 0 <= row < len(self._row_map):
+            mapping = self._row_map[row]
+            if not mapping.is_word_row:
+                idx = mapping.entry_index
+                if 0 <= idx < len(self._document.entries):
+                    return self._document.entries[idx]
         return None
 
     def refresh(self) -> None:
         """Emit a full model reset so the view redraws."""
         self.beginResetModel()
+        self._rebuild_row_map()
         self.endResetModel()
 
     def notify_rows_changed(self, first: int, last: int) -> None:
-        """Emit dataChanged for a range of rows."""
+        """Emit dataChanged for a range of rows.
+
+        The arguments are *entry indices* (not display rows).  This
+        method translates them to the display row range, accounting
+        for any expanded word rows in between.
+        """
         if first < 0:
             first = 0
         if last >= len(self._document.entries):
             last = len(self._document.entries) - 1
         if first > last:
             return
-        top_left = self.index(first, 0)
-        bottom_right = self.index(last, COLUMN_COUNT - 1)
+        # Find display row range covering these entry indices
+        first_display = None
+        last_display = None
+        for i, m in enumerate(self._row_map):
+            if m.entry_index >= first and first_display is None:
+                first_display = i
+            if m.entry_index <= last:
+                last_display = i
+        if first_display is None or last_display is None:
+            return
+        top_left = self.index(first_display, 0)
+        bottom_right = self.index(last_display, COLUMN_COUNT - 1)
         self.dataChanged.emit(top_left, bottom_right)
 
 

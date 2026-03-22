@@ -1,6 +1,7 @@
 """Tests for the SRT Edit document model."""
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 
@@ -83,6 +84,31 @@ class TestAddEntry:
         assert len(doc.entries) == 5
         for i, entry in enumerate(doc.entries):
             assert entry.index == i + 1
+
+    def test_add_entry_sorted_insert(self):
+        """New entries are inserted in sorted order by start_ms."""
+        doc = SubtitleDocument()
+        doc.add_entry(SubtitleEntry(index=0, start_ms=1000, end_ms=2000, text="First"))
+        doc.add_entry(SubtitleEntry(index=0, start_ms=5000, end_ms=6000, text="Third"))
+        # This should be inserted between the other two
+        pos = doc.add_entry(SubtitleEntry(index=0, start_ms=3000, end_ms=4000, text="Second"))
+
+        assert pos == 1
+        assert len(doc.entries) == 3
+        assert doc.entries[0].text == "First"
+        assert doc.entries[1].text == "Second"
+        assert doc.entries[2].text == "Third"
+
+    def test_add_entry_returns_insertion_index(self):
+        """add_entry returns the 0-based index of the inserted entry."""
+        doc = SubtitleDocument()
+        pos0 = doc.add_entry(SubtitleEntry(index=0, start_ms=0, end_ms=1000, text="A"))
+        pos1 = doc.add_entry(SubtitleEntry(index=0, start_ms=5000, end_ms=6000, text="C"))
+        pos2 = doc.add_entry(SubtitleEntry(index=0, start_ms=2000, end_ms=3000, text="B"))
+
+        assert pos0 == 0
+        assert pos1 == 1
+        assert pos2 == 1  # inserted between A and C
 
 
 class TestRemoveEntry:
@@ -266,3 +292,220 @@ class TestDirtyTracking:
         doc.save_srt(str(path))
 
         assert doc.is_dirty is False
+
+
+class TestSortedInsertAndAutoOrdering:
+    """Test that entries maintain sorted order."""
+
+    def test_entries_inserted_in_sorted_order(self):
+        doc = SubtitleDocument()
+        doc.add_entry(SubtitleEntry(index=0, start_ms=5000, end_ms=6000, text="C"))
+        doc.add_entry(SubtitleEntry(index=0, start_ms=1000, end_ms=2000, text="A"))
+        doc.add_entry(SubtitleEntry(index=0, start_ms=3000, end_ms=4000, text="B"))
+
+        assert [e.text for e in doc.entries] == ["A", "B", "C"]
+        assert [e.index for e in doc.entries] == [1, 2, 3]
+
+    def test_update_start_time_re_sorts(self):
+        """Moving an entry's start_ms past another entry triggers re-sort."""
+        doc = SubtitleDocument()
+        doc.add_entry(SubtitleEntry(index=0, start_ms=1000, end_ms=2000, text="A"))
+        doc.add_entry(SubtitleEntry(index=0, start_ms=3000, end_ms=4000, text="B"))
+        doc.add_entry(SubtitleEntry(index=0, start_ms=5000, end_ms=6000, text="C"))
+
+        # Move A after C
+        doc.update_entry(0, start_ms=7000, end_ms=8000)
+
+        assert [e.text for e in doc.entries] == ["B", "C", "A"]
+        assert [e.index for e in doc.entries] == [1, 2, 3]
+
+
+class TestSegmentOverlapClamping:
+    """Test segment boundary clamping."""
+
+    def test_clamp_segment_bounds_against_neighbors(self):
+        doc = SubtitleDocument()
+        doc.add_entry(SubtitleEntry(index=0, start_ms=0, end_ms=2000, text="A"))
+        doc.add_entry(SubtitleEntry(index=0, start_ms=3000, end_ms=5000, text="B"))
+        doc.add_entry(SubtitleEntry(index=0, start_ms=6000, end_ms=8000, text="C"))
+
+        # Try to expand B to overlap A and C
+        start, end = doc.clamp_segment_bounds(1, 1000, 7000)
+        assert start >= 2000  # must not go before A's end
+        assert end <= 6000    # must not go past C's start
+
+    def test_clamp_segment_bounds_first_entry(self):
+        doc = SubtitleDocument()
+        doc.add_entry(SubtitleEntry(index=0, start_ms=1000, end_ms=3000, text="A"))
+        doc.add_entry(SubtitleEntry(index=0, start_ms=4000, end_ms=6000, text="B"))
+
+        # First entry has no predecessor
+        start, end = doc.clamp_segment_bounds(0, 500, 5000)
+        assert start == 500  # No constraint from previous
+        assert end <= 4000   # Must not pass B's start
+
+    def test_clamp_segment_bounds_last_entry(self):
+        doc = SubtitleDocument()
+        doc.add_entry(SubtitleEntry(index=0, start_ms=1000, end_ms=3000, text="A"))
+        doc.add_entry(SubtitleEntry(index=0, start_ms=4000, end_ms=6000, text="B"))
+
+        # Last entry has no successor
+        start, end = doc.clamp_segment_bounds(1, 2000, 9000)
+        assert start >= 3000  # Must not go before A's end
+        assert end == 9000    # No constraint from next
+
+
+class TestWordLevelHelpers:
+    """Test word-level update and clamping."""
+
+    def _make_doc_with_words(self):
+        """Create a doc with one entry that has 3 words."""
+        from audio_visualizer.srt.models import WordItem
+        doc = SubtitleDocument()
+        words = [
+            WordItem(start=1.0, end=1.5, text="Hello", id="w1", subtitle_id="s1"),
+            WordItem(start=1.5, end=2.0, text="beautiful", id="w2", subtitle_id="s1"),
+            WordItem(start=2.0, end=2.5, text="world", id="w3", subtitle_id="s1"),
+        ]
+        entry = SubtitleEntry(
+            index=1, start_ms=1000, end_ms=3000, text="Hello beautiful world",
+            id="s1", words=words,
+        )
+        doc._entries = [entry]
+        doc._dirty = False
+        return doc
+
+    def test_update_word_text(self):
+        doc = self._make_doc_with_words()
+        doc.update_word(0, 1, text="wonderful")
+        assert doc.entries[0].words[1].text == "wonderful"
+        assert doc.entries[0].dirty is True
+
+    def test_update_word_timing(self):
+        doc = self._make_doc_with_words()
+        doc.update_word(0, 0, start=1.1, end=1.4)
+        assert doc.entries[0].words[0].start == 1.1
+        assert doc.entries[0].words[0].end == 1.4
+
+    def test_update_word_out_of_range(self):
+        doc = self._make_doc_with_words()
+        with pytest.raises(IndexError):
+            doc.update_word(0, 5, text="oops")
+        with pytest.raises(IndexError):
+            doc.update_word(5, 0, text="oops")
+
+    def test_clamp_word_bounds_within_segment(self):
+        doc = self._make_doc_with_words()
+        # Try to move word beyond segment boundary
+        start, end = doc.clamp_word_bounds(0, 2, 0.5, 4.0)
+        assert start >= 2.0   # Must not go before previous word's end
+        assert end <= 3.0     # Must not exceed segment end (3000ms = 3.0s)
+
+    def test_clamp_word_bounds_against_neighbors(self):
+        doc = self._make_doc_with_words()
+        # Middle word: bounded by neighbors
+        start, end = doc.clamp_word_bounds(0, 1, 0.5, 2.8)
+        assert start >= 1.5  # Must not go before word[0].end
+        assert end <= 2.0    # Must not go past word[2].start
+
+
+class TestBundleLoadSave:
+    """Test JSON bundle round-tripping through the document model."""
+
+    def test_load_bundle(self, tmp_path):
+        """Load a v2 bundle and verify entries have words and provenance."""
+        bundle = {
+            "bundle_version": 2,
+            "tool_version": "0.7.0",
+            "input_file": "test.wav",
+            "device_used": "cpu",
+            "compute_type_used": "int8",
+            "model_name": "tiny",
+            "subtitles": [
+                {
+                    "id": "sub1",
+                    "start": 1.0,
+                    "end": 3.0,
+                    "text": "Hello world",
+                    "original_text": "Hello world",
+                    "words": [
+                        {"id": "w1", "subtitle_id": "sub1", "text": "Hello", "start": 1.0, "end": 2.0},
+                        {"id": "w2", "subtitle_id": "sub1", "text": "world", "start": 2.0, "end": 3.0},
+                    ],
+                    "source_media_path": "test.wav",
+                    "model_name": "tiny",
+                },
+            ],
+            "words": [],
+        }
+        path = tmp_path / "test.bundle.json"
+        path.write_text(json.dumps(bundle), encoding="utf-8")
+
+        doc = SubtitleDocument()
+        doc.load_bundle(str(path))
+
+        assert len(doc.entries) == 1
+        assert doc.entries[0].text == "Hello world"
+        assert doc.entries[0].id == "sub1"
+        assert len(doc.entries[0].words) == 2
+        assert doc.entries[0].words[0].text == "Hello"
+        assert doc.entries[0].words[1].text == "world"
+        assert doc.entries[0].original_text == "Hello world"
+        assert doc.entries[0].source_media_path == "test.wav"
+        assert doc.entries[0].model_name == "tiny"
+        assert doc.is_dirty is False
+
+    def test_save_bundle(self, tmp_path):
+        """Save a document with words as a v2 bundle."""
+        from audio_visualizer.srt.models import WordItem
+
+        doc = SubtitleDocument()
+        words = [
+            WordItem(start=1.0, end=2.0, text="Hello", id="w1", subtitle_id="s1"),
+            WordItem(start=2.0, end=3.0, text="world", id="w2", subtitle_id="s1"),
+        ]
+        doc._entries = [
+            SubtitleEntry(
+                index=1, start_ms=1000, end_ms=3000, text="Hello world",
+                id="s1", words=words, original_text="Hello world",
+                source_media_path="test.wav", model_name="tiny",
+            ),
+        ]
+        doc._dirty = True
+
+        path = tmp_path / "output.bundle.json"
+        doc.save_bundle(str(path))
+
+        assert doc.is_dirty is False
+        data = json.loads(path.read_text())
+        assert data["bundle_version"] == 2
+        assert len(data["subtitles"]) == 1
+        assert data["subtitles"][0]["id"] == "s1"
+        assert len(data["subtitles"][0]["words"]) == 2
+        assert data["subtitles"][0]["words"][0]["text"] == "Hello"
+
+    def test_bundle_roundtrip(self, tmp_path):
+        """Bundle load -> save -> reload preserves data."""
+        from audio_visualizer.srt.models import WordItem
+
+        doc = SubtitleDocument()
+        words = [
+            WordItem(start=1.0, end=2.0, text="Hello", id="w1", subtitle_id="s1"),
+        ]
+        doc._entries = [
+            SubtitleEntry(
+                index=1, start_ms=1000, end_ms=3000, text="Hello",
+                id="s1", words=words, original_text="Hello",
+            ),
+        ]
+
+        path = tmp_path / "roundtrip.json"
+        doc.save_bundle(str(path))
+
+        doc2 = SubtitleDocument()
+        doc2.load_bundle(str(path))
+
+        assert len(doc2.entries) == 1
+        assert doc2.entries[0].id == "s1"
+        assert len(doc2.entries[0].words) == 1
+        assert doc2.entries[0].words[0].text == "Hello"
