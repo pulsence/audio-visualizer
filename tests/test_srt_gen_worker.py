@@ -233,6 +233,75 @@ class TestSrtGenWorkerPassesScriptPath:
         assert call_kwargs["script_path"] == Path("/tmp/script.txt")
 
 
+class TestSrtGenWorkerBundleFromSrt:
+    """Bundle-from-SRT mode uses _run_bundle_from_srt instead of transcribe_file."""
+
+    @patch("audio_visualizer.ui.workers.srtGenWorker.load_model")
+    @patch("audio_visualizer.ui.workers.srtGenWorker.transcribe_file")
+    def test_existing_srt_path_triggers_bundle_mode(self, mock_transcribe, mock_load):
+        """When existing_srt_path is set, transcribe_file should NOT be called."""
+        mock_model = MagicMock()
+        mock_load.return_value = (mock_model, "cpu", "int8")
+
+        emitter = AppEventEmitter()
+        job = _make_job(
+            existing_srt_path=Path("/tmp/existing.srt"),
+            json_bundle_path=Path("/tmp/output.bundle.json"),
+        )
+        worker = SrtGenWorker(jobs=[job], emitter=emitter)
+
+        # Mock _run_bundle_from_srt
+        mock_result = MagicMock(
+            success=True,
+            input_path=Path("/tmp/test.mp3"),
+            output_path=Path("/tmp/output.bundle.json"),
+            error=None,
+            transcript_path=None,
+            segments_path=None,
+            json_bundle_path=Path("/tmp/output.bundle.json"),
+            elapsed=1.0,
+        )
+        worker._run_bundle_from_srt = MagicMock(return_value=mock_result)
+
+        completed = []
+        worker.signals.completed.connect(lambda data: completed.append(data))
+
+        worker.run()
+
+        # transcribe_file should NOT have been called
+        mock_transcribe.assert_not_called()
+        # _run_bundle_from_srt SHOULD have been called
+        worker._run_bundle_from_srt.assert_called_once()
+
+    @patch("audio_visualizer.ui.workers.srtGenWorker.load_model")
+    @patch("audio_visualizer.ui.workers.srtGenWorker.transcribe_file")
+    def test_normal_job_still_uses_transcribe_file(self, mock_transcribe, mock_load):
+        """Jobs without existing_srt_path should use transcribe_file normally."""
+        mock_load.return_value = (MagicMock(), "cpu", "int8")
+        mock_transcribe.return_value = MagicMock(
+            success=True,
+            input_path=Path("/tmp/test.mp3"),
+            output_path=Path("/tmp/test.srt"),
+            error=None,
+            transcript_path=None,
+            segments_path=None,
+            json_bundle_path=None,
+            elapsed=1.0,
+        )
+
+        emitter = AppEventEmitter()
+        job = _make_job()
+        worker = SrtGenWorker(jobs=[job], emitter=emitter)
+
+        completed = []
+        worker.signals.completed.connect(lambda data: completed.append(data))
+
+        worker.run()
+
+        mock_transcribe.assert_called_once()
+        assert len(completed) == 1
+
+
 class TestSrtGenWorkerDeviceMetadata:
     """Completed payload must include device_used and compute_type_used."""
 

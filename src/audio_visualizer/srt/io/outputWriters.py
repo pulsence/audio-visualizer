@@ -7,18 +7,23 @@ This module handles writing subtitles to different formats:
 - ASS (Advanced SubStation Alpha)
 - TXT (plain transcript)
 - JSON (complete bundle with metadata)
+- JSON bundle-from-SRT (with alignment quality metadata)
 """
 from __future__ import annotations
 
 import dataclasses
 import json
 import os
+import uuid as _uuid_mod
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from audio_visualizer.srt.models import ResolvedConfig, SubtitleBlock
+from audio_visualizer.srt.models import ResolvedConfig, SubtitleBlock, WordItem
 from audio_visualizer.srt.io.systemHelpers import ensure_parent_dir
 from audio_visualizer.srt.core.textProcessing import normalize_spaces, wrap_text_lines
+
+if TYPE_CHECKING:
+    from audio_visualizer.srt.core.alignment import AlignedCue
 
 
 # ============================================================
@@ -362,6 +367,86 @@ def write_json_bundle(
         "model_name": model_name,
         "config": dataclasses.asdict(cfg),
         "subtitles": subtitles_v2,
+        "words": flat_words,
+    }
+    ensure_parent_dir(out_path)
+    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, out_path)
+
+
+def write_bundle_from_srt(
+    out_path: Path,
+    *,
+    aligned_cues: List[AlignedCue],
+    input_file: str,
+    device_used: str,
+    compute_type_used: str,
+    model_name: str,
+    tool_version: str,
+    cfg: Optional[ResolvedConfig] = None,
+) -> None:
+    """Write a v2 JSON bundle from aligned cue data (bundle-from-SRT).
+
+    Preserves the original subtitle text exactly while attaching
+    Whisper-aligned word timing and alignment quality metadata.
+
+    Args:
+        out_path: Output file path.
+        aligned_cues: List of AlignedCue objects from cue-to-word alignment.
+        input_file: Path to the source media file.
+        device_used: Device used for Whisper transcription.
+        compute_type_used: Compute type used.
+        model_name: Whisper model name.
+        tool_version: Tool version string.
+        cfg: Optional configuration used (for metadata only).
+    """
+    subtitles: List[Dict[str, Any]] = []
+    flat_words: List[Dict[str, Any]] = []
+
+    for cue in aligned_cues:
+        sub_id = str(_uuid_mod.uuid4())
+
+        words: List[Dict[str, Any]] = []
+        for w in cue.words:
+            w_id = str(_uuid_mod.uuid4())
+            w_entry: Dict[str, Any] = {
+                "id": w_id,
+                "subtitle_id": sub_id,
+                "text": w.text.strip(),
+                "start": w.start,
+                "end": w.end,
+            }
+            if w.confidence is not None:
+                w_entry["confidence"] = w.confidence
+            words.append(w_entry)
+            flat_words.append(w_entry)
+
+        sub_entry: Dict[str, Any] = {
+            "id": sub_id,
+            "start": cue.start,
+            "end": cue.end,
+            "text": cue.cue_text,
+            "original_text": cue.cue_text,
+            "words": words,
+            "source_media_path": input_file,
+            "model_name": model_name,
+            "device": device_used,
+            "compute_type": compute_type_used,
+            "alignment_status": cue.alignment_status,
+            "alignment_confidence": cue.alignment_confidence,
+        }
+        subtitles.append(sub_entry)
+
+    payload: Dict[str, Any] = {
+        "bundle_version": 2,
+        "tool_version": tool_version,
+        "input_file": input_file,
+        "device_used": device_used,
+        "compute_type_used": compute_type_used,
+        "model_name": model_name,
+        "config": dataclasses.asdict(cfg) if cfg else None,
+        "subtitles": subtitles,
         "words": flat_words,
     }
     ensure_parent_dir(out_path)

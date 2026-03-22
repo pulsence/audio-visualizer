@@ -24,6 +24,7 @@ from audio_visualizer.events import AppEvent, AppEventEmitter, EventLevel, Event
 from audio_visualizer.srt.models import PipelineMode, ResolvedConfig
 from audio_visualizer.srt.srtApi import TranscriptionResult, load_model, transcribe_file
 from audio_visualizer.ui.workers.workerBridge import WorkerBridge, WorkerSignals
+from audio_visualizer import __version__ as TOOL_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,174 @@ class SrtGenWorker(QRunnable):
         return self._cancel_flag.is_set()
 
     # ------------------------------------------------------------------
+    # Bundle-from-SRT
+    # ------------------------------------------------------------------
+
+    def _run_bundle_from_srt(
+        self,
+        job: SrtGenJobSpec,
+        model: Any,
+        device_used: str,
+        compute_type_used: str,
+    ) -> TranscriptionResult:
+        """Process a bundle-from-SRT job.
+
+        Runs Whisper for word-level timing, parses the existing subtitle
+        file, aligns cues to Whisper words, and writes a v2 bundle that
+        preserves the original subtitle text with attached word timing.
+        """
+        import os
+        import tempfile
+        import time
+
+        from audio_visualizer.srt.core.alignment import (
+            align_cues_to_whisper_words,
+            parse_subtitle_file,
+        )
+        from audio_visualizer.srt.io.audioHelpers import to_wav_16k_mono
+        from audio_visualizer.srt.io.outputWriters import write_bundle_from_srt
+        from audio_visualizer.srt.io.systemHelpers import ensure_parent_dir
+        from audio_visualizer.srt.models import WordItem
+
+        started = time.time()
+
+        try:
+            self._emitter.emit(AppEvent(
+                event_type=EventType.LOG,
+                message=f"Bundle from SRT: {job.existing_srt_path.name} + {job.input_path.name}",
+            ))
+
+            # Step 1: Parse existing subtitle file
+            self._emitter.emit(AppEvent(
+                event_type=EventType.LOG,
+                message=f"Parsing subtitle file: {job.existing_srt_path.name}",
+            ))
+            cues = parse_subtitle_file(job.existing_srt_path)
+            self._emitter.emit(AppEvent(
+                event_type=EventType.LOG,
+                message=f"Parsed {len(cues)} subtitle cues",
+            ))
+
+            # Step 2: Run Whisper for word-level timing
+            self._emitter.emit(AppEvent(
+                event_type=EventType.LOG,
+                message="Running Whisper for word-level timing...",
+            ))
+            fd, tmp_wav = tempfile.mkstemp(prefix="srtgen_bundle_", suffix=".wav")
+            os.close(fd)
+
+            try:
+                to_wav_16k_mono(str(job.input_path), tmp_wav)
+                segments_iter, _info = model.transcribe(
+                    tmp_wav,
+                    vad_filter=job.cfg.transcription.vad_filter,
+                    language=job.language,
+                    word_timestamps=True,
+                    condition_on_previous_text=job.cfg.transcription.condition_on_previous_text,
+                    no_speech_threshold=job.cfg.transcription.no_speech_threshold,
+                    log_prob_threshold=job.cfg.transcription.log_prob_threshold,
+                    compression_ratio_threshold=job.cfg.transcription.compression_ratio_threshold,
+                    initial_prompt=job.cfg.transcription.initial_prompt or None,
+                )
+                seg_list = list(segments_iter)
+            finally:
+                if not job.keep_wav and os.path.exists(tmp_wav):
+                    try:
+                        os.remove(tmp_wav)
+                    except OSError:
+                        pass
+
+            # Collect all word-level timing
+            whisper_words: list[WordItem] = []
+            for seg in seg_list:
+                for w in getattr(seg, "words", None) or []:
+                    w_text = getattr(w, "word", getattr(w, "text", ""))
+                    whisper_words.append(WordItem(
+                        start=float(w.start),
+                        end=float(w.end),
+                        text=w_text,
+                        confidence=getattr(w, "probability", None),
+                    ))
+
+            self._emitter.emit(AppEvent(
+                event_type=EventType.LOG,
+                message=f"Whisper produced {len(whisper_words)} words from {len(seg_list)} segments",
+            ))
+
+            # Step 3: Align existing cues to Whisper words
+            self._emitter.emit(AppEvent(
+                event_type=EventType.LOG,
+                message="Aligning cues to Whisper word timing...",
+            ))
+            aligned = align_cues_to_whisper_words(cues, whisper_words)
+
+            # Report alignment quality
+            matched = sum(1 for a in aligned if a.alignment_status == "matched")
+            partial = sum(1 for a in aligned if a.alignment_status == "partial")
+            estimated = sum(1 for a in aligned if a.alignment_status == "estimated")
+            avg_conf = (
+                sum(a.alignment_confidence for a in aligned) / len(aligned)
+                if aligned else 0.0
+            )
+            self._emitter.emit(AppEvent(
+                event_type=EventType.LOG,
+                message=(
+                    f"Alignment: {matched} matched, {partial} partial, "
+                    f"{estimated} estimated (avg confidence: {avg_conf:.2f})"
+                ),
+            ))
+
+            # Step 4: Write bundle output
+            output_path = job.json_bundle_path or job.output_path
+            ensure_parent_dir(output_path)
+            write_bundle_from_srt(
+                output_path,
+                aligned_cues=aligned,
+                input_file=str(job.input_path),
+                device_used=device_used,
+                compute_type_used=compute_type_used,
+                model_name=job.model_name,
+                tool_version=TOOL_VERSION,
+                cfg=job.cfg,
+            )
+
+            self._emitter.emit(AppEvent(
+                event_type=EventType.LOG,
+                message=f"Bundle written: {output_path}",
+            ))
+
+            elapsed = time.time() - started
+            return TranscriptionResult(
+                success=True,
+                input_path=job.input_path,
+                output_path=output_path,
+                subtitles=[],
+                segments=seg_list,
+                device_used=device_used,
+                compute_type_used=compute_type_used,
+                json_bundle_path=output_path,
+                elapsed=elapsed,
+            )
+
+        except Exception as exc:
+            self._emitter.emit(AppEvent(
+                event_type=EventType.LOG,
+                message=f"Bundle-from-SRT failed: {exc}",
+                level=EventLevel.ERROR,
+            ))
+            return TranscriptionResult(
+                success=False,
+                input_path=job.input_path,
+                output_path=job.output_path,
+                subtitles=[],
+                segments=[],
+                device_used=device_used,
+                compute_type_used=compute_type_used,
+                error=str(exc),
+                elapsed=time.time() - started,
+            )
+
+    # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
@@ -198,33 +367,43 @@ class SrtGenWorker(QRunnable):
                     )
                     return
 
-                self._emitter.emit(AppEvent(
-                    event_type=EventType.STAGE,
-                    message=f"Transcribing {job.input_path.name} ({idx + 1}/{total})",
-                    data={"stage_number": idx + 1, "total_stages": total + 1},
-                ))
+                if job.existing_srt_path:
+                    self._emitter.emit(AppEvent(
+                        event_type=EventType.STAGE,
+                        message=f"Bundle from SRT: {job.input_path.name} ({idx + 1}/{total})",
+                        data={"stage_number": idx + 1, "total_stages": total + 1},
+                    ))
+                    result = self._run_bundle_from_srt(
+                        job, model, device_used, compute_type_used
+                    )
+                else:
+                    self._emitter.emit(AppEvent(
+                        event_type=EventType.STAGE,
+                        message=f"Transcribing {job.input_path.name} ({idx + 1}/{total})",
+                        data={"stage_number": idx + 1, "total_stages": total + 1},
+                    ))
 
-                result = transcribe_file(
-                    input_path=job.input_path,
-                    output_path=job.output_path,
-                    fmt=job.fmt,
-                    cfg=job.cfg,
-                    model=model,
-                    device_used=device_used,
-                    compute_type_used=compute_type_used,
-                    language=job.language,
-                    word_level=job.word_level,
-                    mode=job.mode,
-                    transcript_path=job.transcript_path,
-                    segments_path=job.segments_path,
-                    json_bundle_path=job.json_bundle_path,
-                    diarize=job.diarize,
-                    hf_token=job.hf_token,
-                    dry_run=job.dry_run,
-                    keep_wav=job.keep_wav,
-                    script_path=job.script_path,
-                    emitter=self._emitter,
-                )
+                    result = transcribe_file(
+                        input_path=job.input_path,
+                        output_path=job.output_path,
+                        fmt=job.fmt,
+                        cfg=job.cfg,
+                        model=model,
+                        device_used=device_used,
+                        compute_type_used=compute_type_used,
+                        language=job.language,
+                        word_level=job.word_level,
+                        mode=job.mode,
+                        transcript_path=job.transcript_path,
+                        segments_path=job.segments_path,
+                        json_bundle_path=job.json_bundle_path,
+                        diarize=job.diarize,
+                        hf_token=job.hf_token,
+                        dry_run=job.dry_run,
+                        keep_wav=job.keep_wav,
+                        script_path=job.script_path,
+                        emitter=self._emitter,
+                    )
                 self._results.append(result)
 
                 # Emit per-file progress

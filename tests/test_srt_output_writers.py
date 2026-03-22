@@ -14,8 +14,10 @@ from audio_visualizer.srt.io.outputWriters import (
     write_txt,
     segments_to_jsonable,
     write_json_bundle,
+    write_bundle_from_srt,
 )
-from audio_visualizer.srt.models import SubtitleBlock, ResolvedConfig
+from audio_visualizer.srt.core.alignment import AlignedCue
+from audio_visualizer.srt.models import SubtitleBlock, ResolvedConfig, WordItem
 
 
 class TestFormatSrtTime:
@@ -416,3 +418,184 @@ class TestWriteJsonBundle:
         assert data["device_used"] == "cuda"
         assert data["compute_type_used"] == "float16"
         assert data["tool_version"] == "0.1.0"
+
+
+class TestWriteBundleFromSrt:
+    """Tests for write_bundle_from_srt function."""
+
+    def test_bundle_from_srt_structure(self, tmp_path):
+        """Test bundle-from-SRT output structure."""
+        aligned_cues = [
+            AlignedCue(
+                cue_text="Hello world",
+                start=0.0,
+                end=2.0,
+                words=[
+                    WordItem(0.1, 0.5, "Hello"),
+                    WordItem(0.6, 1.0, "world"),
+                ],
+                alignment_status="matched",
+                alignment_confidence=0.95,
+            )
+        ]
+        out_path = tmp_path / "bundle.json"
+
+        write_bundle_from_srt(
+            out_path,
+            aligned_cues=aligned_cues,
+            input_file="test.mp3",
+            device_used="cpu",
+            compute_type_used="int8",
+            model_name="small",
+            tool_version="0.7.0",
+        )
+
+        assert out_path.exists()
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+
+        assert data["bundle_version"] == 2
+        assert data["model_name"] == "small"
+        assert data["tool_version"] == "0.7.0"
+        assert data["input_file"] == "test.mp3"
+        assert len(data["subtitles"]) == 1
+        assert len(data["words"]) == 2
+
+    def test_bundle_from_srt_preserves_alignment_metadata(self, tmp_path):
+        """Subtitles should include alignment_status and alignment_confidence."""
+        aligned_cues = [
+            AlignedCue(
+                cue_text="First cue",
+                start=0.0,
+                end=1.0,
+                words=[WordItem(0.1, 0.5, "First"), WordItem(0.6, 0.9, "cue")],
+                alignment_status="matched",
+                alignment_confidence=0.92,
+            ),
+            AlignedCue(
+                cue_text="Second cue",
+                start=2.0,
+                end=3.0,
+                words=[],
+                alignment_status="estimated",
+                alignment_confidence=0.1,
+            ),
+        ]
+        out_path = tmp_path / "bundle.json"
+
+        write_bundle_from_srt(
+            out_path,
+            aligned_cues=aligned_cues,
+            input_file="test.mp3",
+            device_used="cpu",
+            compute_type_used="int8",
+            model_name="tiny",
+            tool_version="0.7.0",
+        )
+
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+
+        sub0 = data["subtitles"][0]
+        assert sub0["alignment_status"] == "matched"
+        assert sub0["alignment_confidence"] == 0.92
+        assert sub0["text"] == "First cue"
+        assert sub0["original_text"] == "First cue"
+
+        sub1 = data["subtitles"][1]
+        assert sub1["alignment_status"] == "estimated"
+        assert sub1["alignment_confidence"] == 0.1
+
+    def test_bundle_from_srt_preserves_original_text(self, tmp_path):
+        """Original cue text must be preserved exactly."""
+        aligned_cues = [
+            AlignedCue(
+                cue_text="Hello, World!",
+                start=0.0,
+                end=2.0,
+                words=[
+                    WordItem(0.1, 0.5, "Hello,"),
+                    WordItem(0.6, 1.0, "World!"),
+                ],
+                alignment_status="matched",
+                alignment_confidence=0.9,
+            )
+        ]
+        out_path = tmp_path / "bundle.json"
+
+        write_bundle_from_srt(
+            out_path,
+            aligned_cues=aligned_cues,
+            input_file="test.mp3",
+            device_used="cpu",
+            compute_type_used="int8",
+            model_name="tiny",
+            tool_version="0.7.0",
+        )
+
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+        assert data["subtitles"][0]["text"] == "Hello, World!"
+        assert data["subtitles"][0]["original_text"] == "Hello, World!"
+
+    def test_bundle_from_srt_with_config(self, tmp_path):
+        """Config should be included when provided."""
+        aligned_cues = [
+            AlignedCue(cue_text="Test", start=0.0, end=1.0)
+        ]
+        cfg = ResolvedConfig()
+        out_path = tmp_path / "bundle.json"
+
+        write_bundle_from_srt(
+            out_path,
+            aligned_cues=aligned_cues,
+            input_file="test.mp3",
+            device_used="cpu",
+            compute_type_used="int8",
+            model_name="tiny",
+            tool_version="0.7.0",
+            cfg=cfg,
+        )
+
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+        assert data["config"] is not None
+        assert "formatting" in data["config"]
+
+    def test_bundle_from_srt_word_ids_unique(self, tmp_path):
+        """All word IDs should be unique."""
+        aligned_cues = [
+            AlignedCue(
+                cue_text="Hello world",
+                start=0.0,
+                end=2.0,
+                words=[
+                    WordItem(0.1, 0.5, "Hello"),
+                    WordItem(0.6, 1.0, "world"),
+                ],
+                alignment_status="matched",
+                alignment_confidence=0.9,
+            ),
+            AlignedCue(
+                cue_text="Goodbye world",
+                start=3.0,
+                end=5.0,
+                words=[
+                    WordItem(3.1, 3.5, "Goodbye"),
+                    WordItem(3.6, 4.0, "world"),
+                ],
+                alignment_status="matched",
+                alignment_confidence=0.9,
+            ),
+        ]
+        out_path = tmp_path / "bundle.json"
+
+        write_bundle_from_srt(
+            out_path,
+            aligned_cues=aligned_cues,
+            input_file="test.mp3",
+            device_used="cpu",
+            compute_type_used="int8",
+            model_name="tiny",
+            tool_version="0.7.0",
+        )
+
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+        word_ids = [w["id"] for w in data["words"]]
+        assert len(word_ids) == len(set(word_ids))
