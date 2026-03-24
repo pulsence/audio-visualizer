@@ -1,74 +1,74 @@
 # Overview
-This app turns any audio file into a video visualization. It was built for creating audiograms from spoken content, but works for music and general audio as well. The output video can be layered over images or footage in any editor.
+Audio Visualizer is a seven-screen desktop workflow app for audio visualization, subtitle generation, subtitle editing, caption animation, render composition, asset management, and advanced transcription/training tools. It is built around shared session assets so files produced in one tab can be picked directly in the next.
 
-Starting with v0.6.0, Audio Visualizer is a multi-tab workflow desktop app with six screens: Audio Visualizer, SRT Gen, SRT Edit, Caption Animate, Render Composition, and Assets. The app includes integrated subtitle generation (`audio_visualizer.srt`), subtitle editing with waveform sync, caption animation rendering (`audio_visualizer.caption`), and layer-based video composition.
+The current workflow screens are:
+- `Audio Visualizer`
+- `SRT Gen`
+- `SRT Edit`
+- `Caption Animate`
+- `Render Composition`
+- `Assets`
+- `Advanced`
 
-This project is provided as-is under the MIT License. It is maintained for personal use, but shared in case it helps others.
+This project is provided as-is under the MIT License and is maintained primarily for personal use.
 
 ## Features
-- Multi-tab workflow with shared session assets across all screens.
-- Audio visualization rendering with 14 visualizer types, live preview, and configurable output.
-- Batch subtitle generation from audio/video using faster-whisper with word-level timing.
-- Waveform-synced subtitle editor with undo/redo, QA lint profiles, and resync tools.
-- Animated subtitle overlay rendering with preset-based styling and multiple quality tiers.
-- Layer-based video composition with timeline, drag-to-reorder, looping, keying, and audio mixing.
-- Workflow recipe system for reusable pipeline templates.
-- Session asset management with cross-tab file sharing.
-- Cancellable background jobs with global progress tracking.
-- Project save/load and auto-save on close.
-
-## Feature Table
-| Area | Highlights |
-| --- | --- |
-| Rendering | MP4 output, configurable FPS/size/codec, optional audio mux |
-| Preview | Embedded live preview panel, toggleable, auto-updates on changes |
-| Volume Visualizers | Rectangle, Circle, Smooth Line, Force Line |
-| Chroma Visualizers | Rectangle, Circle, Smooth Line, Lines, Force Rectangle/Circle/Line/Lines |
-| Combined | Volume + Chroma rectangle mode |
-| Projects | Save/load project files, auto-save, workflow recipes |
-| SRT Generation | Whisper-based transcription, word-level timing, batch queue, multiple output formats |
-| SRT Editing | Waveform-synced editor, undo/redo, QA lint, resync (shift, stretch, FPS drift, silence snap) |
-| Caption Rendering | Animated subtitle overlays, preset system, transparent video output (H.264, ProRes 422 HQ, ProRes 4444) |
-| Render Composition | Layer-based compositor, timeline with scroll/zoom, audio mixing, looping, chroma/luma keying |
-| Assets | Session asset browser, cross-tab file sharing, project folder import |
+- Multi-tab workflow with project save/load, autosave, shared session assets, and workflow recipes.
+- Audio visualization rendering with 14 visualizer types, live preview, and shared H.264 encoder selection with fallback.
+- Bundle-first subtitle workflow: SRT Gen can create bundle v2 output, SRT Edit can edit it, and Caption Animate can consume it directly.
+- SRT Edit word-level editing with waveform sync, undo/redo, markdown-aware editing, QA linting, and resync tools.
+- Caption Animate bundle input, markdown-to-ASS styling, word-aware animations, MP4-first delivery, and optional advanced overlay export.
+- Render Composition with center-origin positioning, linked video/audio ingest, layered audio mixing, real-time preview when runtime capabilities are available, and graceful fallback when they are not.
+- Advanced tab tools for correction management, prompt terms, replacement rules, training-data export, LoRA training, and trained-model selection.
+- Shared render/transcription queue with global status, cancellation, preview, and output actions.
 
 ## Visualizers
 Volume:
-- Rectangle (left-to-right or center-out flow).
-- Circle (left-to-right or center-out flow).
-- Smooth Line (flowed line).
-- Force Line (mass-spring rope with impulse injection).
+- Rectangle (left-to-right or center-out flow)
+- Circle (left-to-right or center-out flow)
+- Smooth Line (flowed line)
+- Force Line (mass-spring rope with impulse injection)
 
 Chroma:
-- Rectangle (12 bands).
-- Circle (12 bands).
-- Smooth Line (single curve across 12 bands).
-- Lines (12 independent smooth lines).
-- Force Rectangle (gravity + chroma force).
-- Force Circle (gravity + chroma force).
-- Force Line (single rope with 12 anchor forces).
-- Force Lines (12 independent force ropes).
+- Rectangle (12 bands)
+- Circle (12 bands)
+- Smooth Line (single curve across 12 bands)
+- Lines (12 independent smooth lines)
+- Force Rectangle (gravity + chroma force)
+- Force Circle (gravity + chroma force)
+- Force Line (single rope with 12 anchor forces)
+- Force Lines (12 independent force ropes)
 
 Combined:
-- Rectangle (volume + chroma in one view).
+- Rectangle (volume + chroma in one view)
 
-# Dependencies:
-- av
-- numpy
-- librosa
-- PIL (Pillow)
-- PySide6
-- pyqtgraph
-- faster-whisper
-- python-docx
-- pysubs2
-- PyYAML
-- pyannote.audio (optional, for speaker diarization)
+## Dependencies
+Base install:
+- `av`
+- `librosa`
+- `numpy`
+- `Pillow`
+- `PySide6`
+- `pyqtgraph`
+- `faster-whisper`
+- `python-docx`
+- `pysubs2`
+- `PyYAML`
+- `PyOpenGL`
+- `sounddevice`
 
-# Set Up
-Install Python 3 (3.13 was version this was developed in).
-Run `pip install .` to install required packages.
-Run `python -m audio_visualizer` from the project root.
+Optional/runtime-specific:
+- `pyannote.audio` for speaker diarization
+- `torch`, `transformers`, `peft`, and `ctranslate2` for Advanced-tab LoRA training and conversion
+
+## Setup
+Install Python 3.13 or newer.
+
+- Base install: `pip install .`
+- Training stack for source installs: `pip install .[advanced]`
+- Launch: `python -m audio_visualizer`
+
+The official desktop build for the v0.7.0 workflow must ship both playback dependencies (`PyOpenGL`, `sounddevice`) and the advanced training stack. Source installs can keep the training stack optional.
 
 ## Run Scripts
 - Windows: `run.bat`

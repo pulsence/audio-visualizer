@@ -19,20 +19,20 @@ This file is intentionally streamlined. The full task breakdown for each numbere
 
 ## Phase Files
 
-| Phase | Focus | Detailed file |
-|---|---|---|
-| 1 | Cross-cutting foundations: bundle schema, persistence gating, dependencies, Advanced tab shell | [PHASE_1.md](./plan_phases/PHASE_1.md) |
-| 2 | Shared GPU / hardware-acceleration work across all render paths | [PHASE_2.md](./plan_phases/PHASE_2.md) |
-| 3 | Render Composition coordinate break, layout fixes, audio controls, linked layers | [PHASE_3.md](./plan_phases/PHASE_3.md) |
-| 4 | Render Composition real-time GPU playback, scrubbing, waveform, transport | [PHASE_4.md](./plan_phases/PHASE_4.md) |
-| 5 | Advanced tab correction database and prompt / dictionary management | [PHASE_5.md](./plan_phases/PHASE_5.md) |
-| 6 | Advanced tab training export, LoRA training, model selection, speaker adaptation | [PHASE_6.md](./plan_phases/PHASE_6.md) |
-| 7 | SRT Edit bundle loading, word-level editing, timeline interaction upgrades | [PHASE_7.md](./plan_phases/PHASE_7.md) |
-| 8 | SRT Edit markdown support and right-sidebar controls restructure | [PHASE_8.md](./plan_phases/PHASE_8.md) |
-| 9 | SRT Gen script input, model management UI, bundle-from-SRT flow | [PHASE_9.md](./plan_phases/PHASE_9.md) |
-| 10 | Caption Animator bundle input, markdown-to-ASS, new animations, output consolidation | [PHASE_10.md](./plan_phases/PHASE_10.md) |
-| 11 | Refinement - 1 | [PHASE_11.md](./plan_phases/PHASE_11.md) |
-| 12 | Final review, integration testing, architecture docs, release prep | [PHASE_12.md](./plan_phases/PHASE_12.md) |
+| Phase | Focus | Detailed file | Status |
+|---|---|---|---|
+| 1 | Cross-cutting foundations: bundle schema, persistence gating, dependencies, Advanced tab shell | [PHASE_1.md](./plan_phases/PHASE_1.md) | Complete |
+| 2 | Shared GPU / hardware-acceleration work across all render paths | [PHASE_2.md](./plan_phases/PHASE_2.md) | Complete |
+| 3 | Render Composition coordinate break, layout fixes, audio controls, linked layers | [PHASE_3.md](./plan_phases/PHASE_3.md) | Complete |
+| 4 | Render Composition real-time GPU playback, scrubbing, waveform, transport | [PHASE_4.md](./plan_phases/PHASE_4.md) | Complete |
+| 5 | Advanced tab correction database and prompt / dictionary management | [PHASE_5.md](./plan_phases/PHASE_5.md) | Complete |
+| 6 | Advanced tab training export, LoRA training, model selection, speaker adaptation | [PHASE_6.md](./plan_phases/PHASE_6.md) | Complete |
+| 7 | SRT Edit bundle loading, word-level editing, timeline interaction upgrades | [PHASE_7.md](./plan_phases/PHASE_7.md) | Complete |
+| 8 | SRT Edit markdown support and right-sidebar controls restructure | [PHASE_8.md](./plan_phases/PHASE_8.md) | Complete |
+| 9 | SRT Gen script input, model management UI, bundle-from-SRT flow | [PHASE_9.md](./plan_phases/PHASE_9.md) | Complete |
+| 10 | Caption Animator bundle input, markdown-to-ASS, new animations, output consolidation | [PHASE_10.md](./plan_phases/PHASE_10.md) | Complete |
+| 11 | Refinement - 1 | [PHASE_11.md](./plan_phases/PHASE_11.md) | Pending |
+| 12 | Final review, integration testing, architecture docs, release prep | [PHASE_12.md](./plan_phases/PHASE_12.md) | Pending |
 
 ## Recommended Execution Order
 
@@ -53,3 +53,11 @@ This file is intentionally streamlined. The full task breakdown for each numbere
 ## Usage
 
 Use this file to navigate and understand cross-phase rules. Use each linked phase file for implementation details, file targets, success criteria, test expectations, and the required commit-and-push close-out work for every sub-phase.
+
+## Completion Status
+
+Audit refreshed on 2026-03-24 against the current implementation and research plan.
+
+- Phases 1 through 10 are complete.
+- Verification baseline: `.venv/bin/python -m pytest tests/ -q` passed with `1369` tests.
+- Remaining work is tracked in Phases 11 and 12.

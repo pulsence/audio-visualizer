@@ -1,6 +1,6 @@
 # audio_visualizer.srt
 
-Subtitle generation from media files using faster-whisper. Provides a pipeline that transcribes audio/video to timed subtitle blocks and writes them in multiple output formats (SRT, VTT, ASS, TXT, JSON). Heavy imports are deferred until first access via `__getattr__`-based lazy loading.
+Subtitle generation from media files using faster-whisper. Provides a pipeline that transcribes audio/video to timed subtitle blocks, bundle v2 data, and multiple text subtitle formats (SRT, VTT, ASS, TXT, JSON). Heavy imports are deferred until first access via `__getattr__`-based lazy loading.
 
 ## Package Exports (`__init__.py`)
 
@@ -89,7 +89,7 @@ A subtitle cue: `start: float`, `end: float`, `lines: List[str]`, `speaker: Opti
 
 ### `WordItem`
 
-A single transcribed word: `start: float`, `end: float`, `text: str`.
+A single transcribed word: `start: float`, `end: float`, `text: str`, plus optional `id`, `subtitle_id`, `confidence`, and `speaker_label` fields for bundle round-tripping.
 
 ## Configuration (`config.py`)
 
@@ -151,6 +151,7 @@ Low-level text manipulation:
 
 - `align_corrected_srt(corrected_srt, words) -> List[WordItem]` -- Align corrected SRT words to whisper word timings using `difflib.SequenceMatcher`
 - `align_script_to_segments(script_sentences, segments) -> List[object]` -- Replace segment text with script sentences using diff-based matching
+- Cue-to-word alignment helpers support bundle-from-SRT generation without overwriting the user's subtitle text.
 
 ### Diarization (`core/diarization.py`)
 
@@ -174,10 +175,16 @@ Optional speaker diarization via pyannote.audio:
 - `write_vtt(subs, out_path, *, max_chars, max_lines)` -- Write WebVTT format
 - `write_ass(subs, out_path, *, max_chars, max_lines)` -- Write ASS format
 - `write_txt(subs, out_path)` -- Write plain text transcript
-- `write_json_bundle(out_path, *, input_file, device_used, ...)` -- Write complete JSON bundle with metadata
+- `write_json_bundle(out_path, *, input_file, device_used, ...)` -- Write complete bundle v2 JSON with subtitle IDs, word IDs, provenance fields, and flat/top-level word convenience data
+- `write_bundle_from_srt(out_path, *, aligned_cues, ...)` -- Write bundle v2 JSON from cue-to-word alignment results
 - `segments_to_jsonable(segments, *, include_words) -> List[Dict]` -- Convert segments to JSON-serializable format
 
 All file writers use atomic write (write to `.tmp`, then `os.replace`).
+
+### Bundle Reader (`io/bundleReader.py`)
+
+- `read_json_bundle(path) -> dict` -- Read and normalize v1/v2 bundle payloads into the canonical v2 in-memory contract
+- `normalize_bundle(data) -> dict` -- Normalize a raw bundle dict without filesystem I/O
 
 ### Script Reader (`io/scriptReader.py`)
 

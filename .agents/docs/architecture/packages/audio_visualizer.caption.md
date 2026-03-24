@@ -1,6 +1,6 @@
 # audio_visualizer.caption
 
-Subtitle overlay rendering with animated effects. Takes SRT or ASS subtitle files and produces transparent video overlays (ProRes 4444 or H.264 with alpha) using FFmpeg with libass. Heavy imports (pysubs2, Pillow, etc.) are deferred until first access via `__getattr__`-based lazy loading.
+Subtitle overlay rendering with animated effects. Takes SRT, ASS, or bundle JSON subtitle files and produces transparent video overlays for the UI worker to turn into a user-facing MP4 delivery artifact. Heavy imports (pysubs2, Pillow, etc.) are deferred until first access via `__getattr__`-based lazy loading.
 
 ## Package Exports (`__init__.py`)
 
@@ -28,10 +28,10 @@ Lazy-loaded via `_EXPORTS` dict and `__getattr__`:
 ### `render_subtitle(input_path, output_path, config=None, on_progress=None, on_event=None) -> RenderResult`
 
 Main entry point for rendering. Orchestrates the full pipeline:
-1. Load and validate input subtitle file (.srt or .ass)
+1. Load and validate input subtitle file (`.srt`, `.ass`, or bundle JSON)
 2. Load preset configuration
 3. Build ASS style and apply to subtitle events
-4. Apply animation (fade, slide, scale, blur, word reveal)
+4. Apply animation (fade, slide, scale, blur, word reveal, word highlight, typewriter, and related word-aware effects)
 5. Compute tight overlay dimensions with safety margins
 6. Apply center positioning
 7. Render transparent video via FFmpeg
@@ -104,7 +104,7 @@ Computes tight overlay dimensions for all subtitle events.
 
 High-level wrapper around `pysubs2.SSAFile`.
 
-- `load(path: Path) -> SubtitleFile` -- Class method. Load .srt or .ass file
+- `load(path: Path) -> SubtitleFile` -- Class method. Load `.srt`, `.ass`, or bundle JSON input via the shared bundle reader when needed
 - `apply_style(style, preset, wrap_text=True)` -- Apply ASS style to all events, optionally wrap text
 - `apply_animation(animation, size=None, position=None)` -- Apply animation to all events
 - `apply_center_positioning(position, size)` -- Force center alignment with `\an5\pos()` tags
@@ -153,6 +153,8 @@ Central registry with class methods:
 | `scale_settle` | `ScaleSettleAnimation` | Varies | Scale effect using `\t(\fscx\fscy)` |
 | `blur_settle` | `BlurSettleAnimation` | Varies | Blur-to-sharp effect using `\t(\blur)` |
 | `word_reveal` | `WordRevealAnimation` | Varies | Per-word reveal with `\alpha` tags |
+| `word_highlight` | `WordHighlightAnimation` | Varies | Per-word emphasis/highlight using bundle or estimated timing |
+| `typewriter` | `TypewriterAnimation` | Varies | Character-by-character reveal with optional blinking cursor |
 
 All animation modules are lazily imported on first registry access.
 
@@ -168,7 +170,7 @@ Renders ASS subtitles to transparent video using FFmpeg with libass.
 Quality presets:
 | Quality | Codec | Pixel Format | Description |
 |---------|-------|-------------|-------------|
-| `small` | H.264 (libx264) | yuva420p | Smallest files, alpha support |
+| `small` | H.264 (shared encoder selection with fallback) | yuva420p | Smallest files, alpha support |
 | `medium` | ProRes 422 HQ | yuv422p10le | Mid-size, no alpha |
 | `large` | ProRes 4444 | yuva444p10le | Largest, full alpha support |
 

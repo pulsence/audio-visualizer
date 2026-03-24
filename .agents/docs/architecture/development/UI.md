@@ -7,7 +7,7 @@ This document describes the UI shell: lazy tab startup, shared session state, br
 `MainWindow` hosts a multi-tab shell:
 
 - Left: `NavigationSidebar`
-- Right: `QStackedWidget` containing one eager tab and five lazy tabs
+- Right: `QStackedWidget` containing one eager tab and six lazy tabs
 - Bottom: global `JobStatusWidget`
 
 Tab order:
@@ -18,6 +18,7 @@ Tab order:
 4. `Caption Animate`
 5. `Render Composition`
 6. `Assets`
+7. `Advanced`
 
 Only `AudioVisualizerTab` is instantiated during startup. The remaining tabs are placeholders until the user activates them or another shell path needs them.
 
@@ -109,6 +110,7 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - Standard resolution presets (`HD`, `HD Vertical`, `2K`, `4K`) update width/height but manual edits still fall back to `Custom`.
 - The timeline widget reflects the same timing model used by preview and final render, with snap-to-align behavior at a 200ms threshold. Timeline supports scroll/zoom via `_pixels_per_ms` and `_scroll_offset` with a linked horizontal scrollbar. Normal scroll = pan, Ctrl+scroll = zoom.
 - A playhead (red vertical line) can be clicked to set position and is synced with the preview timestamp spin box.
+- Real-time preview uses `playbackEngine.py` when `QOpenGLWidget`, PyAV, and usable audio output are available. When those capabilities are missing, the tab falls back to the static preview workflow instead of leaving playback broken.
 - Key color can be picked directly from the preview image.
 - Audio is layered, delayable, trimmable, and mixed during final FFmpeg export. Video/audio looping in preview and final render follows the same source-duration rules the timeline uses.
 
@@ -121,6 +123,8 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - Full renders use the shared `MainWindow.render_thread_pool` with guarded `_safe_main_window()` calls so the tab is safe to use without a host window.
 - `_create_delivery_output()` writes to a temp file then renames to avoid FFmpeg in-place conflicts. A process lock guards `_captured_process`. Preview temp files are cleaned up on rerender, failure, cancel, and close.
 - Mixed-type animation parameters (numeric, string, `None`) are handled by a control registry that creates `QDoubleSpinBox` or `QLineEdit` widgets depending on the parameter type.
+- Caption input accepts plain subtitle files or bundle JSON. Bundle timing is used for word-aware animations when available; plain subtitles fall back to estimated timing.
+- The normal user-facing artifact is the delivery MP4. Transparent overlay export remains available behind an advanced checkbox and registers as a secondary composition helper asset when enabled.
 - A unified input audio field in the Input/Output panel is shared by both mux and audio-reactive workflows. Settings persist only the resolved audio path; the session-audio combo is re-derived by matching that path against current session assets.
 
 ## SRT Gen
@@ -134,6 +138,8 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - The input panel uses a compact size policy (`QSizePolicy.Maximum`).
 - The event log panel uses an expanding size policy (no fixed 150px max height cap).
 - Worker completed payload includes `device_used` and `compute_type_used`; the tab displays the resolved device info after transcription.
+- Each queued input can carry an optional `.txt` / `.docx` script path and an optional existing subtitle file for bundle-from-SRT mode.
+- The Settings dialog exposes Whisper model management so download/delete flows stay out of the tab itself.
 
 ## SRT Edit
 
@@ -143,6 +149,17 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - Inline table edits (text, timestamps, speaker) emit a structured signal from `SubtitleTableModel` instead of mutating the document directly. `SrtEditTab` converts these into undoable commands (`EditTextCommand`, `EditTimestampCommand`, `EditSpeakerCommand`).
 - Multiline text edits auto-resize their table rows via a `dataChanged` handler.
 - Audio loading is performed on a background `_WaveformLoadWorker(QRunnable)` with a monotonic request ID so stale completions are ignored. `WaveformView` exposes `set_loading_message()`, `set_error_message()`, and `clear_message()` for an overlay status API. Subtitle overlays are restored after background waveform loading completes.
+- Bundle JSON is a first-class input path. The tab can load/save bundle v2 with word timing, provenance, alignment metadata, and markdown source intact.
+- Word-level editing uses inline word rows in the table and separate word regions in the waveform, both backed by the same document/undo model.
+- All playback, edit, save/export, resync, and QA controls now live in the right sidebar together with the markdown-aware segment editor.
+
+## Advanced Tab
+
+`AdvancedTab` is the seventh shell screen and owns the correction/training workflow.
+
+- Prompt terms and replacement rules are database-backed, filterable, speaker-aware, and exportable.
+- Training-data export produces dataset material for LoRA workflows from the correction database.
+- LoRA training runs in a background worker with capability gating, progress, cancellation, and trained-model management.
 
 ## Tab-Scoped Undo/Redo
 

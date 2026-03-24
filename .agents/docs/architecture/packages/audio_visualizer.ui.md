@@ -4,16 +4,16 @@ PySide6 application shell and shared UI infrastructure.
 
 ## MainWindow
 
-`MainWindow` is now a thin six-tab shell rather than the old single-screen visualizer window.
+`MainWindow` is now a thin seven-tab shell rather than the old single-screen visualizer window.
 
 - Owns the shared `WorkspaceContext`, the render `QThreadPool`, a background pool for update checks, the navigation sidebar, and the global `JobStatusWidget`.
-- Instantiates `AudioVisualizerTab` eagerly, then registers lazy placeholders for `SRT Gen`, `SRT Edit`, `Caption Animate`, `Render Composition`, and `Assets`.
+- Instantiates `AudioVisualizerTab` eagerly, then registers lazy placeholders for `SRT Gen`, `SRT Edit`, `Caption Animate`, `Render Composition`, `Assets`, and `Advanced`.
 - Loads the saved settings file once during startup so app theme can be applied before lazy tab creation.
 - Persists a versioned settings schema with top-level `app`, `ui`, `tabs`, and `session` sections.
 
 ### Shell responsibilities
 
-- `_register_all_tabs()` adds the eager tab plus five lazy placeholders.
+- `_register_all_tabs()` adds the eager tab plus six lazy placeholders.
 - `_ensure_tab_instantiated()` swaps a placeholder for the real tab on first activation and replays pending tab settings.
 - `try_start_job()` / `finish_job()` enforce the single shared render/transcription slot.
 - `show_job_*()` forwards lifecycle state into `JobStatusWidget`.
@@ -73,7 +73,7 @@ Modal settings dialog for app-level and session-level defaults.
 
 Left-side tab switcher that drives `QStackedWidget` tab display.
 
-- Shows all six tabs with labels and optional busy-state indicators.
+- Shows all seven tabs with labels and optional busy-state indicators.
 - Items use a highlight background for the selected tab with no border indicator.
 - Sidebar clicks trigger `_ensure_tab_instantiated()` for lazy tabs before switching.
 
@@ -85,6 +85,8 @@ Subtitle overlay rendering with dual preview modes.
 - Render Preview: ~5 second render to a temporary directory via `RenderConfig.max_duration_sec`, played back in an embedded `QMediaPlayer`/`QVideoWidget`. Does not register session assets.
 - Mixed-type animation parameters use a control registry: `QDoubleSpinBox` for numeric, `QLineEdit` for string/`None`.
 - `_create_delivery_output()` writes to a temp file then renames to avoid FFmpeg in-place conflicts. A process lock guards `_captured_process`. Preview temp files are cleaned up on rerender, failure, cancel, and close.
+- Accepts bundle JSON as subtitle input and uses bundle word timing for word-aware animations when available.
+- Registers the delivery MP4 as the primary reusable session asset. Transparent overlay export is optional and clearly marked as advanced.
 - All `MainWindow` integration points use `_safe_main_window()` guards.
 
 ## SrtGenTab
@@ -96,6 +98,8 @@ Batch Whisper transcription with explicit model lifecycle.
 - Compute type fallback resolves to a valid value instead of `"default"`.
 - Event log panel uses an expanding size policy (no fixed 150px max height cap).
 - Worker completed payload includes `device_used` and `compute_type_used`; the tab displays the resolved device info after transcription.
+- Per-input script attachment and bundle-from-SRT mode are part of the queued job spec.
+- The tab integrates with Advanced-tab LoRA output via adapter selection and speaker-aware prompt/replacement rules.
 
 ## SrtEditTab
 
@@ -105,6 +109,7 @@ Waveform-synced subtitle editing with tab-scoped undo.
 - Inline table edits emit structured signals from `SubtitleTableModel` and are converted to undoable commands in the tab.
 - Multiline text edits auto-resize rows.
 - Audio loading runs on a background `_WaveformLoadWorker(QRunnable)` with a monotonic request ID to discard stale completions. `WaveformView` provides `set_loading_message()`, `set_error_message()`, and `clear_message()` overlay helpers.
+- Bundle v2 load/save, word-level timeline editing, markdown-aware editing, and right-sidebar controls are all part of the main edit path.
 
 ## RenderCompositionTab
 
@@ -116,7 +121,16 @@ Layer-based video composition with timeline.
 - Key color can be picked from the preview image.
 - Standard resolution presets (`HD`, `HD Vertical`, `2K`, `4K`, `Custom`) drive width/height; manual edits fall back to `Custom`.
 - Audio layers use `adelay`, `atrim`, and `amix` FFmpeg filters for multi-source mixing.
+- Real-time preview uses `playbackEngine.py` when OpenGL/PyAV/audio capabilities are present and falls back cleanly when they are not.
 - Tab-local `QUndoStack` with `Ctrl+Z`/`Ctrl+Y` shortcuts.
+
+## AdvancedTab
+
+Correction-data and training workflow tab.
+
+- Manages prompt terms and replacement rules backed by the correction database.
+- Exports training data, launches LoRA training workers, and manages trained-model output.
+- Applies runtime capability gating so missing training dependencies surface as diagnostics instead of crashes.
 
 ## AssetsTab
 

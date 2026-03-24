@@ -94,13 +94,15 @@ The shell does not auto-open preview dialogs on completion.
 
 ### Overlay render
 
-- The caption package generates/loads subtitle styling, applies animations, measures the required overlay size, writes an intermediate ASS file, and runs FFmpeg to render the overlay video.
+- The caption package generates/loads subtitle styling, applies markdown-aware animations, measures the required overlay size, writes an intermediate ASS file, and runs FFmpeg to render the overlay video.
 - Worker progress, stage, and completion metadata are forwarded through `WorkerBridge`.
+- H.264 overlay renders use the shared encoder-selection layer with automatic fallback to software encoding when a hardware encoder fails at runtime.
 
 ### Delivery output
 
 - When the user requests a delivery MP4, `_create_delivery_output()` writes to a temporary file in the target directory and renames it into place after FFmpeg succeeds.
 - This avoids in-place read/write conflicts when the overlay artifact and delivery artifact would otherwise overlap.
+- The delivery MP4 is the primary user-facing artifact. It now uses the same shared H.264 encoder-selection and fallback strategy as the other FFmpeg render paths.
 
 ### Cancellation
 

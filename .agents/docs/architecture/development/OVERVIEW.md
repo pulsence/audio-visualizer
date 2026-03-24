@@ -1,19 +1,20 @@
 # System Overview
 
-Audio Visualizer is a multi-tab desktop application for audio visualization, subtitle generation, caption animation, and video composition. The PySide6 GUI hosts six workflow screens inside a thin `MainWindow` shell.
+Audio Visualizer is a multi-tab desktop application for audio visualization, subtitle generation, subtitle editing, caption animation, video composition, asset management, and advanced transcription/training workflows. The PySide6 GUI hosts seven workflow screens inside a thin `MainWindow` shell.
 
 ## System Context
 
 ```
 User → MainWindow (PySide6 thin shell)
     ├── NavigationSidebar — tab switcher
-    ├── QStackedWidget — one eager + five lazy tabs
+    ├── QStackedWidget — one eager + six lazy tabs
     │   ├── AudioVisualizerTab — audio visualization rendering
     │   ├── SrtGenTab — batch Whisper transcription
     │   ├── SrtEditTab — waveform-synced subtitle editor
     │   ├── CaptionAnimateTab — subtitle overlay rendering
     │   ├── RenderCompositionTab — layer-based video compositor
-    │   └── AssetsTab — session asset browser
+    │   ├── AssetsTab — session asset browser
+    │   └── AdvancedTab — correction/training tooling
     ├── JobStatusWidget — global job progress/cancel
     └── WorkspaceContext — shared asset registry
 ```
@@ -33,7 +34,7 @@ User → MainWindow (PySide6 thin shell)
 ┌───▼───────────────┐ ┌▼─────────────┐  ┌──▼────────────┐ ┌▼─────────────────┐
 │    UI Layer       │ │ Visualizer   │  │  SRT Package  │ │ Caption Package  │
 │  MainWindow shell │ │   Engine     │  │  srtApi       │ │ captionApi       │
-│  6 tabs (BaseTab) │ │ Visualizer   │  │  pipeline     │ │ SubtitleFile     │
+│  7 tabs (BaseTab) │ │ Visualizer   │  │  pipeline     │ │ SubtitleFile     │
 │  Workers          │ │ AudioData    │  │  whisper      │ │ StyleBuilder     │
 │  WorkspaceContext │ │ VideoData    │  │  subtitleGen  │ │ SizeCalculator   │
 │  SessionFilePicker│ │ 14 impls     │  │  textProc     │ │ AnimationReg.    │
@@ -56,13 +57,15 @@ User → MainWindow (PySide6 thin shell)
 
 6. **SRT editing** — `SrtEditTab` loads subtitles into a `SubtitleDocument`, displays a pyqtgraph waveform with subtitle regions, and provides undoable editing with QA lint and resync tools.
 
-7. **Caption rendering** — `CaptionAnimateTab` submits a `CaptionRenderWorker` that calls the `caption` package API. Presets, styles, animations, and overlay sizing are applied before FFmpeg renders the transparent overlay.
+7. **Caption rendering** — `CaptionAnimateTab` submits a `CaptionRenderWorker` that calls the `caption` package API. Bundles and markdown source are normalized before ASS generation. The render path produces a user-facing MP4 delivery artifact by default and keeps transparent overlay export optional.
 
-8. **Composition** — `RenderCompositionTab` builds a `CompositionModel` of visual and audio layers, generates an FFmpeg `filter_complex` command via `filterGraph.py`, and submits a `CompositionWorker`.
+8. **Composition** — `RenderCompositionTab` builds a `CompositionModel` of visual and audio layers, generates an FFmpeg `filter_complex` command via `filterGraph.py`, exposes real-time preview through `playbackEngine.py` when host capabilities allow it, and submits a `CompositionWorker` for final export.
 
-9. **Cross-tab assets** — Tab outputs are registered as `SessionAsset` entries in `WorkspaceContext`. Downstream tabs can pick session assets via `SessionFilePickerDialog` instead of browsing the filesystem.
+9. **Advanced tooling** — `AdvancedTab` exposes the correction database, prompt/replacement rule management, training-data export, LoRA training, and trained-model selection used by the speaker-adaptation path.
 
-10. **Completion** — `JobStatusWidget` shows result with `Preview`, `Open Output`, and `Open Folder` actions. No blocking modal dialog on completion.
+10. **Cross-tab assets** — Tab outputs are registered as `SessionAsset` entries in `WorkspaceContext`. Downstream tabs can pick session assets via `SessionFilePickerDialog` instead of browsing the filesystem.
+
+11. **Completion** — `JobStatusWidget` shows result with `Preview`, `Open Output`, and `Open Folder` actions. No blocking modal dialog on completion.
 
 ### SRT Subtitle Generation Data Flow
 
@@ -86,15 +89,15 @@ User → MainWindow (PySide6 thin shell)
 
 19. **Caption render initiation** — `render_subtitle()` in `captionApi.py` accepts input subtitle path, output video path, and `RenderConfig`.
 
-20. **Subtitle loading** — `SubtitleFile.load()` parses the input .srt or .ass file via pysubs2.
+20. **Subtitle loading** — `SubtitleFile.load()` parses `.srt`, `.ass`, or normalized bundle JSON input.
 
 21. **Preset and style application** — `PresetLoader.load()` resolves the preset (built-in, file, or directory search). `StyleBuilder.build()` converts the preset to a pysubs2 `SSAStyle`. Text is optionally wrapped to `max_width_px` using Pillow font measurement.
 
-22. **Animation application** — If the preset includes animation config, `AnimationRegistry.create()` instantiates the animation and applies ASS override tags to each subtitle event.
+22. **Animation application** — If the preset includes animation config, `AnimationRegistry.create()` instantiates the animation and applies ASS override tags to each subtitle event. Markdown-to-ASS conversion happens at render time so source markdown survives SRT Edit round-trips untouched.
 
 23. **Overlay sizing** — `SizeCalculator.compute_size()` measures all subtitle events with Pillow, adds padding/outline/shadow allowances, applies safety scaling, and ensures even dimensions.
 
-24. **Positioning and rendering** — `apply_center_positioning()` injects `\an5\pos()` tags. The working ASS file is saved and rendered to transparent video via `FFmpegRenderer.render()` using ffmpeg with libass.
+24. **Positioning and rendering** — `apply_center_positioning()` injects `\an5\pos()` tags. The working ASS file is saved and rendered to transparent video via `FFmpegRenderer.render()` using ffmpeg with libass, then the worker produces the user-facing MP4 delivery artifact.
 
 ## Key Design Decisions
 

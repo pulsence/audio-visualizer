@@ -214,47 +214,16 @@ class CaptionRenderWorker(QRunnable):
         tmp_path = Path(tmp_path_str)
 
         try:
-            ffmpeg_cmd = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(overlay_path),
-            ]
-            if audio_path is not None:
-                ffmpeg_cmd.extend(["-i", str(audio_path)])
-
-            ffmpeg_cmd.extend(
-                [
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "medium",
-                    "-crf",
-                    "18",
-                    "-pix_fmt",
-                    "yuv420p",
-                ]
+            from audio_visualizer.hwaccel import (
+                get_decode_flags,
+                is_hardware_encoder,
+                select_encoder,
             )
-            if audio_path is not None:
-                ffmpeg_cmd.extend(
-                    [
-                        "-c:a",
-                        "aac",
-                        "-b:a",
-                        "192k",
-                        "-shortest",
-                    ]
-                )
-            else:
-                ffmpeg_cmd.append("-an")
 
-            ffmpeg_cmd.extend(
-                [
-                    "-movflags",
-                    "+faststart",
-                    str(tmp_path),
-                ]
-            )
+            selected_encoder = select_encoder("h264")
+            attempted_encoders = [selected_encoder]
+            if is_hardware_encoder(selected_encoder):
+                attempted_encoders.append("libx264")
 
             self._emitter.emit(
                 AppEvent(
@@ -264,27 +233,108 @@ class CaptionRenderWorker(QRunnable):
                 )
             )
 
-            proc = subprocess.Popen(
-                ffmpeg_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            with self._process_lock:
-                self._captured_process = proc
-            _stdout, stderr = proc.communicate()
-            with self._process_lock:
-                self._captured_process = None
+            last_detail = ""
+            for attempt_index, encoder in enumerate(attempted_encoders):
+                ffmpeg_cmd = [
+                    "ffmpeg",
+                    "-y",
+                ]
+                ffmpeg_cmd.extend(get_decode_flags())
+                ffmpeg_cmd.extend(
+                    [
+                        "-i",
+                        str(overlay_path),
+                    ]
+                )
+                if audio_path is not None:
+                    ffmpeg_cmd.extend(["-i", str(audio_path)])
 
-            if self._cancel_flag.is_set():
-                tmp_path.unlink(missing_ok=True)
-                raise RuntimeError("Cancelled during render")
+                ffmpeg_cmd.extend(
+                    [
+                        "-c:v",
+                        encoder,
+                        "-preset",
+                        "medium",
+                        "-crf",
+                        "18",
+                        "-pix_fmt",
+                        "yuv420p",
+                    ]
+                )
+                if audio_path is not None:
+                    ffmpeg_cmd.extend(
+                        [
+                            "-c:a",
+                            "aac",
+                            "-b:a",
+                            "192k",
+                            "-shortest",
+                        ]
+                    )
+                else:
+                    ffmpeg_cmd.append("-an")
 
-            if proc.returncode != 0:
+                ffmpeg_cmd.extend(
+                    [
+                        "-movflags",
+                        "+faststart",
+                        str(tmp_path),
+                    ]
+                )
+
+                self._emitter.emit(
+                    AppEvent(
+                        event_type=EventType.LOG,
+                        message=f"Preparing delivery MP4 with encoder: {encoder}",
+                        level=EventLevel.INFO,
+                        data={"delivery_video_encoder": encoder},
+                    )
+                )
+
+                proc = subprocess.Popen(
+                    ffmpeg_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                with self._process_lock:
+                    self._captured_process = proc
+                _stdout, stderr = proc.communicate()
+                with self._process_lock:
+                    self._captured_process = None
+
+                if self._cancel_flag.is_set():
+                    tmp_path.unlink(missing_ok=True)
+                    raise RuntimeError("Cancelled during render")
+
+                if proc.returncode == 0:
+                    break
+
                 tmp_path.unlink(missing_ok=True)
-                detail = (stderr or "").strip()[-500:]
+                last_detail = (stderr or "").strip()[-500:]
+
+                if attempt_index < len(attempted_encoders) - 1:
+                    fallback_encoder = attempted_encoders[attempt_index + 1]
+                    self._emitter.emit(
+                        AppEvent(
+                            event_type=EventType.LOG,
+                            message=(
+                                "Delivery MP4 encoder failed; retrying with "
+                                f"software encoder {fallback_encoder}."
+                            ),
+                            level=EventLevel.WARNING,
+                            data={
+                                "failed_encoder": encoder,
+                                "fallback_encoder": fallback_encoder,
+                                "delivery_output": True,
+                            },
+                        )
+                    )
+                    continue
+
                 raise RuntimeError(
-                    f"Failed to create MP4 delivery output: {detail or 'ffmpeg exited with an error.'}"
+                    "Failed to create MP4 delivery output: "
+                    f"{last_detail or 'ffmpeg exited with an error.'}"
                 )
 
             # Success — atomic rename temp to delivery

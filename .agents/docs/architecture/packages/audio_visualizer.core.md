@@ -45,6 +45,33 @@ Platform-specific directory management.
   - Windows: `{LOCALAPPDATA}/audio_visualizer`
   - Unix: `{XDG_DATA_HOME}/audio_visualizer` (or `~/.local/share/audio_visualizer`)
 
+## capabilities.py
+
+Runtime capability detection helpers.
+
+### Functions
+
+- **`has_opengl() -> bool`** — Checks whether PyOpenGL is importable.
+- **`has_opengl_widget() -> bool`** — Checks whether `QOpenGLWidget` is available from PySide6.
+- **`has_sounddevice() -> bool`** — Checks whether `sounddevice` can see a usable output device.
+- **`has_pyav() -> bool`** — Checks whether PyAV is importable.
+- **`has_training_stack() -> bool`** — Checks whether `torch`, `transformers`, `peft`, and `ctranslate2` are importable.
+- **`has_cuda() -> bool`** — Checks whether CUDA is available through torch.
+- **`capability_summary() -> dict[str, bool]`** — Returns a cached snapshot of the runtime capability checks.
+
+## hwaccel.py
+
+Shared hardware-acceleration helpers used by Audio Visualizer, Caption Animate, and Render Composition.
+
+### Functions
+
+- **`detect_subprocess_encoders() -> list[str]`** — Probes FFmpeg for available H.264 encoders.
+- **`detect_working_subprocess_encoders() -> list[str]`** — Filters encoder candidates through a runtime usability probe.
+- **`detect_pyav_encoders() -> list[str]`** — Probes PyAV for writable H.264 encoders.
+- **`select_encoder(codec="h264", *, use_pyav=False) -> str`** — Returns the highest-priority usable encoder.
+- **`get_decode_flags() -> list[str]`** — Returns decode-acceleration flags for subprocess FFmpeg paths.
+- **`is_hardware_encoder(encoder: str) -> bool`** — Distinguishes hardware encoders from the `libx264` software fallback.
+
 ## updater.py
 
 GitHub release update checker.

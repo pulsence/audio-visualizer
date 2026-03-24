@@ -287,3 +287,113 @@ class TestCaptionRenderWorkerConfig:
         assert len(completed) == 1
         assert completed[0]["delivery_path"] == str(delivery_path)
         assert completed[0]["overlay_path"] == str(overlay_path)
+
+    def test_delivery_output_uses_selected_encoder_and_decode_flags(self, monkeypatch, tmp_path):
+        overlay_path = tmp_path / "overlay.mov"
+        overlay_path.write_bytes(b"overlay")
+        delivery_path = tmp_path / "delivery.mp4"
+
+        spec = CaptionRenderJobSpec(
+            subtitle_path=Path("/tmp/test.srt"),
+            output_path=overlay_path,
+            delivery_output_path=delivery_path,
+            config=RenderConfig(),
+        )
+        emitter = AppEventEmitter()
+        worker = CaptionRenderWorker(spec=spec, emitter=emitter)
+
+        commands = []
+
+        class _FakeProc:
+            def __init__(self, cmd):
+                self.cmd = cmd
+                self.returncode = 0
+
+            def communicate(self):
+                Path(self.cmd[-1]).write_bytes(b"mp4")
+                return "", ""
+
+        monkeypatch.setattr(
+            "audio_visualizer.hwaccel.select_encoder",
+            lambda codec="h264": "h264_nvenc",
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.hwaccel.get_decode_flags",
+            lambda: ["-hwaccel", "auto"],
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.hwaccel.is_hardware_encoder",
+            lambda encoder: encoder != "libx264",
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.captionRenderWorker.subprocess.Popen",
+            lambda cmd, **kwargs: commands.append(cmd) or _FakeProc(cmd),
+        )
+
+        worker._create_delivery_output(overlay_path, delivery_path, None)
+
+        assert len(commands) == 1
+        assert commands[0][:4] == ["ffmpeg", "-y", "-hwaccel", "auto"]
+        assert commands[0][commands[0].index("-c:v") + 1] == "h264_nvenc"
+        assert delivery_path.exists()
+
+    def test_delivery_output_falls_back_to_software_encoder(self, monkeypatch, tmp_path):
+        overlay_path = tmp_path / "overlay.mov"
+        overlay_path.write_bytes(b"overlay")
+        delivery_path = tmp_path / "delivery.mp4"
+
+        spec = CaptionRenderJobSpec(
+            subtitle_path=Path("/tmp/test.srt"),
+            output_path=overlay_path,
+            delivery_output_path=delivery_path,
+            config=RenderConfig(),
+        )
+        emitter = AppEventEmitter()
+        worker = CaptionRenderWorker(spec=spec, emitter=emitter)
+
+        commands = []
+        events = []
+        emitter.subscribe(events.append)
+
+        class _FakeProc:
+            def __init__(self, cmd, returncode, stderr):
+                self.cmd = cmd
+                self.returncode = returncode
+                self._stderr = stderr
+
+            def communicate(self):
+                if self.returncode == 0:
+                    Path(self.cmd[-1]).write_bytes(b"mp4")
+                return "", self._stderr
+
+        def _fake_popen(cmd, **kwargs):
+            commands.append(cmd)
+            if len(commands) == 1:
+                return _FakeProc(cmd, 1, "hardware failed")
+            return _FakeProc(cmd, 0, "")
+
+        monkeypatch.setattr(
+            "audio_visualizer.hwaccel.select_encoder",
+            lambda codec="h264": "h264_nvenc",
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.hwaccel.get_decode_flags",
+            lambda: ["-hwaccel", "auto"],
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.hwaccel.is_hardware_encoder",
+            lambda encoder: encoder != "libx264",
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.captionRenderWorker.subprocess.Popen",
+            _fake_popen,
+        )
+
+        worker._create_delivery_output(overlay_path, delivery_path, None)
+
+        assert [cmd[cmd.index("-c:v") + 1] for cmd in commands] == ["h264_nvenc", "libx264"]
+        assert any(
+            "retrying with software encoder libx264" in event.message.lower()
+            for event in events
+        )
+        assert delivery_path.exists()
