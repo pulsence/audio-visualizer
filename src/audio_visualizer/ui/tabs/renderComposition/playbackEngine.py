@@ -336,12 +336,16 @@ class _AudioPlayer:
 
             volume = layer_info.get("volume", 1.0)
 
-            # Use shared evaluation contract for activity check
+            # Use shared evaluation contract for activity check.
+            # The engine dict's "duration_ms" is already the effective
+            # duration, so we set use_full_length=False to pass it
+            # directly as the trimmed duration.
+            layer_dur = int(layer_info.get("duration_ms", 0))
             al = CompositionAudioLayer(
                 start_ms=int(layer_info.get("start_ms", 0)),
-                duration_ms=int(layer_info.get("duration_ms", 0)),
-                use_full_length=int(layer_info.get("duration_ms", 0)) <= 0,
-                source_duration_ms=int(layer_info.get("duration_ms", 0)),
+                duration_ms=layer_dur,
+                use_full_length=layer_dur <= 0,
+                source_duration_ms=0,
             )
             ev = evaluate_audio_layer(al, int(pos_ms))
             if not ev.is_active or ev.source_time_ms is None:
