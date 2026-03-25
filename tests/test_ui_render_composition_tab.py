@@ -716,26 +716,30 @@ class TestPreviewSection:
 
         def fake_load():
             calls["load"] += 1
+            tab._preview_controller._preview_model_dirty = False
 
-        monkeypatch.setattr(tab, "_load_engine_data", fake_load)
+        monkeypatch.setattr(tab._preview_controller, "load_engine_data", fake_load)
         monkeypatch.setattr(
             tab._playback_engine,
             "seek_from_timeline",
             lambda ms: calls["seek"].append(ms),
         )
+        layer_callback = lambda ms: calls["layer"].append(ms)
         monkeypatch.setattr(
             tab,
             "_update_layer_preview_from_engine",
-            lambda ms: calls["layer"].append(ms),
+            layer_callback,
         )
+        tab._preview_controller._on_seek_completed = layer_callback
 
-        tab._preview_model_dirty = True
+        tab._preview_controller.mark_dirty()
         tab._on_playhead_changed(250)
+        app.processEvents()
 
         assert calls["load"] == 1
         assert calls["seek"] == [250]
         assert calls["layer"] == [250]
-        assert tab._preview_model_dirty is False
+        assert tab._preview_controller.is_dirty is False
 
     def test_layer_selection_updates_preview_at_current_playhead(self, monkeypatch):
         tab = RenderCompositionTab()
@@ -1332,6 +1336,31 @@ class TestTimelineIntegration:
         tab._on_timeline_item_trimmed(layer.id, "end", 8000)
         assert layer.start_ms == 0
         assert layer.end_ms == 8000
+
+    def test_timeline_item_trimmed_end_defers_preview_seek_until_events_process(self, monkeypatch):
+        tab = RenderCompositionTab()
+        layer = CompositionLayer(
+            display_name="Trimmable",
+            start_ms=0,
+            end_ms=5000,
+        )
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+        tab._preview_time_spin.setValue(1234)
+
+        seek_calls = []
+        monkeypatch.setattr(
+            tab._preview_controller, "_seek_preview",
+            lambda ms: seek_calls.append(ms),
+        )
+
+        tab._on_timeline_item_trimmed(layer.id, "end", 8000)
+
+        assert layer.end_ms == 8000
+        assert seek_calls == []
+        app.processEvents()
+        assert seek_calls == [1234]
+        assert tab._preview_controller.is_dirty is True
 
     def test_timeline_selected_empty_id_ignored(self):
         """Selecting empty string on timeline does not crash."""

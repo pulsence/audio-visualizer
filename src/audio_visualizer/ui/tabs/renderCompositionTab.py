@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from PySide6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, Signal
+from PySide6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QCursor, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -59,6 +59,9 @@ from audio_visualizer.ui.tabs.renderComposition.commands import (
     RemoveLayerCommand,
     ReorderLayerCommand,
     ResizeLayerCommand,
+)
+from audio_visualizer.ui.tabs.renderComposition.evaluation import (
+    compute_composition_duration_ms,
 )
 from audio_visualizer.ui.tabs.renderComposition.model import (
     DEFAULT_MATTE_SETTINGS,
@@ -127,7 +130,7 @@ class RenderCompositionTab(BaseTab):
         self._playback_engine = None  # lazy init in _build_ui
         self._playback_position_from_engine = False  # feedback loop guard
         self._playback_unavailable_reason = ""
-        self._preview_model_dirty = True
+        self._preview_controller = None  # set up after engine
 
         self._init_undo_stack(100)
         self._build_ui()
@@ -735,7 +738,7 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._load_layer_properties(layer)
             self.settings_changed.emit()
-            self._seek_preview(self._preview_time_spin.value())
+            self._schedule_preview_seek(self._preview_time_spin.value())
             return
         al = self._model.get_audio_layer(item_id)
         if al:
@@ -746,7 +749,7 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._load_audio_layer_properties(al)
             self.settings_changed.emit()
-            self._seek_preview(self._preview_time_spin.value())
+            self._schedule_preview_seek(self._preview_time_spin.value())
 
     def _on_timeline_item_trimmed(self, item_id: str, which: str, ms: int) -> None:
         """Handle timeline trim (fires on mouse release)."""
@@ -759,7 +762,7 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._load_layer_properties(layer)
             self.settings_changed.emit()
-            self._seek_preview(self._preview_time_spin.value())
+            self._schedule_preview_seek(self._preview_time_spin.value())
             return
         al = self._model.get_audio_layer(item_id)
         if al:
@@ -772,7 +775,7 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._load_audio_layer_properties(al)
             self.settings_changed.emit()
-            self._seek_preview(self._preview_time_spin.value())
+            self._schedule_preview_seek(self._preview_time_spin.value())
 
     def _on_timeline_item_reordered(self, item_id: str, new_visual_index: int) -> None:
         """Handle visual layer reorder from timeline drag."""
@@ -829,7 +832,7 @@ class RenderCompositionTab(BaseTab):
         self._updating_ui = True
         self._preview_time_spin.setValue(ms)
         self._updating_ui = False
-        self._seek_preview(ms)
+        self._schedule_preview_seek(ms)
 
     def _on_preview_time_changed(self, ms: int) -> None:
         """Sync preview spin with timeline playhead and seek the compositor."""
@@ -839,28 +842,22 @@ class RenderCompositionTab(BaseTab):
             return
         if hasattr(self, '_timeline'):
             self._timeline.set_playhead_ms(ms)
-        self._seek_preview(ms)
+        self._schedule_preview_seek(ms)
 
-    def _seek_preview(self, ms: int) -> None:
-        """Load engine data if needed and render the frame at *ms*."""
-        if self._playback_engine is None:
+    def _schedule_preview_seek(self, ms: int) -> None:
+        """Queue a preview seek for the next event-loop turn."""
+        if self._preview_controller is None:
             return
-        try:
-            if self._preview_model_dirty:
-                self._load_engine_data()
-                self._preview_model_dirty = False
-            self._playback_engine.seek_from_timeline(ms)
-            self._update_layer_preview_from_engine(ms)
-        except Exception:
-            logger.debug("Preview seek failed at %d ms", ms, exc_info=True)
+        self._preview_controller.schedule_seek(ms)
 
     def _mark_preview_dirty(self) -> None:
         """Mark the preview as stale so next play reloads engine data."""
-        self._preview_model_dirty = True
+        if self._preview_controller is not None:
+            self._preview_controller.mark_dirty()
 
     def _sync_preview_to_position(self, ms: int) -> None:
         """Update preview at *ms* — used by layer selection changes."""
-        self._seek_preview(ms)
+        self._schedule_preview_seek(ms)
 
     # ------------------------------------------------------------------
     # Session context
@@ -955,6 +952,15 @@ class RenderCompositionTab(BaseTab):
         self._playback_engine.state_changed.connect(self._on_engine_state_changed)
         self._playback_engine.playback_finished.connect(self._on_engine_finished)
 
+        from audio_visualizer.ui.tabs.renderComposition.previewController import PreviewController
+        self._preview_controller = PreviewController(
+            self._playback_engine,
+            lambda: self._model,
+            status_label=self._preview_status_label,
+            parent_timer_owner=self,
+            on_seek_completed=self._update_layer_preview_from_engine,
+        )
+
     # ------------------------------------------------------------------
     # Transport controls
     # ------------------------------------------------------------------
@@ -972,9 +978,9 @@ class RenderCompositionTab(BaseTab):
         if self._playback_engine is None:
             return
         try:
-            if self._playback_engine.state == "stopped" or self._preview_model_dirty:
+            dirty = self._preview_controller.is_dirty if self._preview_controller else False
+            if self._playback_engine.state == "stopped" or dirty:
                 self._load_engine_data()
-                self._preview_model_dirty = False
             if not self._playback_engine.toggle_play_pause():
                 _available, reason = self._playback_availability()
                 if reason:
@@ -982,7 +988,7 @@ class RenderCompositionTab(BaseTab):
         except Exception:
             logger.exception("Playback start/toggle failed")
             self._preview_status_label.setText(
-                "Playback failed — check logs for details."
+                "Playback failed \u2014 check logs for details."
             )
             try:
                 self._playback_engine.stop()
@@ -1008,7 +1014,7 @@ class RenderCompositionTab(BaseTab):
         if self._playback_engine is None:
             return
         if not self._playback_availability()[0]:
-            self._preview_time_spin.setValue(self._model.get_duration_ms())
+            self._preview_time_spin.setValue(compute_composition_duration_ms(self._model))
             return
         if self._playback_engine:
             if self._playback_engine.state == "stopped":
@@ -1017,53 +1023,8 @@ class RenderCompositionTab(BaseTab):
 
     def _load_engine_data(self) -> None:
         """Prepare and load model data into the playback engine."""
-        if self._playback_engine is None:
-            return
-
-        visual_layers: list[dict] = []
-        for layer in self._model.get_layers_sorted():
-            if not layer.enabled:
-                continue
-            visual_layers.append({
-                "id": layer.id,
-                "path": str(layer.asset_path) if layer.asset_path else "",
-                "source_kind": layer.source_kind,
-                "source_duration_ms": layer.source_duration_ms,
-                "start_ms": layer.start_ms,
-                "end_ms": layer.start_ms + layer.effective_duration_ms(),
-                "behavior_after_end": layer.behavior_after_end,
-                "center_x": layer.center_x,
-                "center_y": layer.center_y,
-                "width": layer.width,
-                "height": layer.height,
-                "z_order": layer.z_order,
-                "opacity": 1.0,
-                "enabled": layer.enabled,
-            })
-
-        audio_layers: list[dict] = []
-        for al in self._model.audio_layers:
-            if not al.enabled:
-                continue
-            audio_layers.append({
-                "id": al.id,
-                "path": str(al.asset_path) if al.asset_path else "",
-                "start_ms": al.start_ms,
-                "duration_ms": al.effective_end_ms() - al.start_ms,
-                "volume": al.volume,
-                "muted": al.muted,
-                "enabled": al.enabled,
-            })
-
-        duration_ms = self._model.get_duration_ms()
-        self._playback_engine.load(
-            visual_layers,
-            audio_layers,
-            duration_ms,
-            output_width=self._model.output_width,
-            output_height=self._model.output_height,
-        )
-        self._preview_model_dirty = False
+        if self._preview_controller is not None:
+            self._preview_controller.load_engine_data()
 
     def _on_engine_position_changed(self, ms: int) -> None:
         """Update timeline and spin from engine position (avoid feedback loops)."""
@@ -2406,7 +2367,7 @@ class RenderCompositionTab(BaseTab):
                 width=self._model.output_width,
                 height=self._model.output_height,
                 fps=self._model.output_fps,
-                duration_ms=self._model.get_duration_ms(),
+                duration_ms=compute_composition_duration_ms(self._model),
                 has_audio=any(al.enabled and al.asset_path for al in self._model.audio_layers),
                 metadata={
                     "layer_count": len(self._model.layers),
