@@ -148,7 +148,7 @@ This eliminates the previous duplication where `PlaybackEngine._layer_source_pos
 ### Cancellation and failure handling
 
 - `CompositionWorker.cancel()` terminates the FFmpeg subprocess.
-- Progress is parsed from FFmpeg `stderr` by reading `time=` updates and converting them against `CompositionModel.get_duration_ms()`.
+- Progress is parsed from FFmpeg `stderr` by reading `time=` updates and converting them against `compute_composition_duration_ms()` from the shared Render Composition evaluation contract.
 - Recent stderr output is included in the failure message when FFmpeg exits non-zero.
 
 ### Completion behavior

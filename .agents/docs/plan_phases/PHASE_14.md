@@ -267,8 +267,8 @@ Selection retention should be handled inside `_refresh_layer_list()` by matching
 
 ### Test Coverage
 
-- 55 new tests added (29 evaluation, 8 behavior/parity, 4 preview lifecycle, 7 sync, 7 stability)
-- Full suite: 1424 tests passing (up from 1369 pre-phase baseline)
+- The Phase 14 refactor added dedicated automated coverage for shared evaluation logic, preview lifecycle behavior, editor/view synchronization, and preview/export timing parity.
+- Current review verification: full suite passing with 1428 tests (up from the 1369-test pre-phase baseline recorded in the plan index).
 
 ### Manual Verification Checklist
 

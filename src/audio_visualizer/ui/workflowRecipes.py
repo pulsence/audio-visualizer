@@ -204,7 +204,7 @@ def load_recipe(path: Path) -> WorkflowRecipe | None:
             name=data.get("name", ""),
             enabled_stages=data.get("enabled_stages", {s: True for s in VALID_STAGES}),
             asset_roles=data.get("asset_roles", {r: None for r in RECIPE_ASSET_ROLES}),
-            tabs=tabs_data,
+            tabs=data.get("tabs", {}),
             references=data.get("references", {
                 "caption_preset": None,
                 "layout_preset": None,
