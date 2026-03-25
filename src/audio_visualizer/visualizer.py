@@ -42,7 +42,30 @@ def _resolve_icon_path() -> Path | None:
             return candidate
     return None
 
+def _install_global_exception_hook():
+    """Install a global exception hook so unhandled errors always print to stderr."""
+    import logging
+    import traceback
+
+    _logger = logging.getLogger("audio_visualizer")
+
+    _original_hook = sys.excepthook
+
+    def _exception_hook(exc_type, exc_value, exc_tb):
+        # Always print to stderr so the terminal shows it
+        traceback.print_exception(exc_type, exc_value, exc_tb)
+        # Also log through the logging system
+        _logger.critical(
+            "Unhandled exception", exc_info=(exc_type, exc_value, exc_tb),
+        )
+        _original_hook(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _exception_hook
+
+
 def main():
+    _install_global_exception_hook()
+
     app = QApplication([])
 
     # Use Fusion style so custom palettes are respected by all widgets

@@ -404,7 +404,8 @@ class CompositorWidget(_CompositorBase):
     def set_composition_size(self, w: int, h: int) -> None:
         self._comp_width = w
         self._comp_height = h
-        self.update()
+        if self.isVisible():
+            self.update()
 
     def set_layers(self, layers: list[dict]) -> None:
         """Set the current frame layers for compositing.
@@ -413,11 +414,13 @@ class CompositorWidget(_CompositorBase):
         ``z_order``, ``opacity``.
         """
         self._layers = sorted(layers, key=lambda l: l.get("z_order", 0))
-        self.update()
+        if self.isVisible():
+            self.update()
 
     def clear(self) -> None:
         self._layers = []
-        self.update()
+        if self.isVisible():
+            self.update()
 
     def paintEvent(self, event) -> None:
         if self._use_opengl and _HAS_OPENGL_WIDGET:
