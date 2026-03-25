@@ -596,34 +596,44 @@ class CompositorWidget(_CompositorBase):
         return "OpenGL compositing is disabled."
 
     def _ensure_texture(self, layer_id: str, image: QImage) -> QOpenGLTexture:
-        """Return an uploaded texture for *layer_id*, refreshing data when needed."""
+        """Return an uploaded texture for *layer_id*, recreating when needed.
+
+        Always destroys and recreates the texture when the image data
+        changes.  In-place ``setData()`` is avoided because Qt's
+        ``QOpenGLTexture`` rejects format/size changes on allocated
+        storage, which triggers noisy errors during rapid frame updates.
+        """
         if QOpenGLTexture is None:
             raise RuntimeError("QOpenGLTexture is unavailable")
 
         normalized = image.convertToFormat(QImage.Format.Format_RGBA8888)
-        texture = self._textures.get(layer_id)
         image_size = (normalized.width(), normalized.height())
         image_key = int(normalized.cacheKey())
 
-        if texture is None or self._texture_sizes.get(layer_id) != image_size:
-            if texture is not None:
-                texture.destroy()
-            texture = QOpenGLTexture(
-                normalized,
-                QOpenGLTexture.MipMapGeneration.DontGenerateMipMaps,
-            )
-            texture.setMinMagFilters(
-                QOpenGLTexture.Filter.Linear,
-                QOpenGLTexture.Filter.Linear,
-            )
-            texture.setWrapMode(QOpenGLTexture.WrapMode.ClampToEdge)
-            self._textures[layer_id] = texture
-        elif self._texture_cache_keys.get(layer_id) != image_key:
-            texture.setData(
-                normalized,
-                QOpenGLTexture.MipMapGeneration.DontGenerateMipMaps,
-            )
+        cached_key = self._texture_cache_keys.get(layer_id)
+        cached_size = self._texture_sizes.get(layer_id)
 
+        if cached_key == image_key and cached_size == image_size:
+            texture = self._textures.get(layer_id)
+            if texture is not None:
+                return texture
+
+        # Destroy the old texture and create a fresh one
+        old = self._textures.pop(layer_id, None)
+        if old is not None:
+            old.destroy()
+
+        texture = QOpenGLTexture(
+            normalized,
+            QOpenGLTexture.MipMapGeneration.DontGenerateMipMaps,
+        )
+        texture.setMinMagFilters(
+            QOpenGLTexture.Filter.Linear,
+            QOpenGLTexture.Filter.Linear,
+        )
+        texture.setWrapMode(QOpenGLTexture.WrapMode.ClampToEdge)
+
+        self._textures[layer_id] = texture
         self._texture_cache_keys[layer_id] = image_key
         self._texture_sizes[layer_id] = image_size
         return texture
