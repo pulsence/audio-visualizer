@@ -2432,3 +2432,42 @@ class TestCapabilities:
         summary = capability_summary()
         assert "opengl_widget" in summary
         assert "pyav" in summary
+
+
+class TestApplySettingsLegacyComposition:
+    """Regression: old coordinate-system payloads must not crash the tab."""
+
+    def test_apply_settings_with_old_composition_shows_warning(self, monkeypatch):
+        """apply_settings with a pre-center-origin payload warns instead of crashing."""
+        tab = RenderCompositionTab()
+        old_model_data = {
+            "output_width": 1920,
+            "output_height": 1080,
+            # Missing composition_schema_version → triggers ValueError
+        }
+        warned = []
+        monkeypatch.setattr(
+            QMessageBox, "warning",
+            lambda *args, **kwargs: warned.append(True),
+        )
+        # Must not raise
+        tab.apply_settings({"model": old_model_data})
+        assert len(warned) == 1
+
+    def test_apply_settings_with_old_composition_keeps_default_model(self, monkeypatch):
+        """Tab model stays at defaults after rejecting an old payload."""
+        tab = RenderCompositionTab()
+        default_layers = len(tab._model.layers)
+        old_model_data = {"composition_schema_version": 1}
+        monkeypatch.setattr(
+            QMessageBox, "warning", lambda *args, **kwargs: None,
+        )
+        tab.apply_settings({"model": old_model_data})
+        assert len(tab._model.layers) == default_layers
+
+    def test_apply_settings_with_valid_composition_succeeds(self):
+        """A valid current-schema payload restores normally."""
+        tab = RenderCompositionTab()
+        valid_data = tab._model.to_dict()
+        tab.apply_settings({"model": valid_data})
+        assert tab._model.output_width == valid_data["output_width"]
