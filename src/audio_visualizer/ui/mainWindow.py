@@ -169,16 +169,31 @@ class MainWindow(QMainWindow):
         from audio_visualizer.ui.tabs.audioVisualizerTab import AudioVisualizerTab
         self.add_tab(AudioVisualizerTab(self))
 
-        # Register lazy tabs with placeholder widgets
-        lazy_defs = [
+        # Register remaining tabs in sidebar order. RenderCompositionTab is
+        # instantiated eagerly so its QOpenGLWidget GL context is created
+        # during startup rather than on first tab switch.
+        lazy_before = [
             ("srt_gen", "SRT Gen"),
             ("srt_edit", "SRT Edit"),
             ("caption_animate", "Caption Animate"),
-            ("render_composition", "Render Composition"),
+        ]
+        for tab_id, title in lazy_before:
+            placeholder = QWidget()
+            index = self._stack.addWidget(placeholder)
+            self._sidebar.add_tab(tab_id, title, index)
+            self._lazy_tab_defs[tab_id] = title
+            self._lazy_placeholders[tab_id] = placeholder
+            logger.debug("Lazy tab registered: %s (%s)", tab_id, title)
+
+        # Eagerly instantiate RenderCompositionTab
+        from audio_visualizer.ui.tabs.renderCompositionTab import RenderCompositionTab
+        self.add_tab(RenderCompositionTab(self))
+
+        lazy_after = [
             ("assets", "Assets"),
             ("advanced", "Advanced"),
         ]
-        for tab_id, title in lazy_defs:
+        for tab_id, title in lazy_after:
             placeholder = QWidget()
             index = self._stack.addWidget(placeholder)
             self._sidebar.add_tab(tab_id, title, index)
