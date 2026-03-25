@@ -126,7 +126,7 @@ class SrtGenWorker(QRunnable):
         """Process a bundle-from-SRT job.
 
         Runs Whisper for word-level timing, parses the existing subtitle
-        file, aligns cues to Whisper words, and writes a v2 bundle that
+        file, aligns cues to Whisper words, and writes a bundle that
         preserves the original subtitle text with attached word timing.
         """
         import os
