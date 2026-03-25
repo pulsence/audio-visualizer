@@ -727,7 +727,7 @@ class RenderCompositionTab(BaseTab):
                 return
 
     def _on_timeline_item_moved(self, item_id: str, new_start: int, new_end: int) -> None:
-        """Handle timeline item drag."""
+        """Handle timeline item drag (fires on mouse release)."""
         layer = self._model.get_layer(item_id)
         if layer:
             layer.start_ms = new_start
@@ -735,6 +735,7 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._load_layer_properties(layer)
             self.settings_changed.emit()
+            self._seek_preview(self._preview_time_spin.value())
             return
         al = self._model.get_audio_layer(item_id)
         if al:
@@ -745,9 +746,10 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._load_audio_layer_properties(al)
             self.settings_changed.emit()
+            self._seek_preview(self._preview_time_spin.value())
 
     def _on_timeline_item_trimmed(self, item_id: str, which: str, ms: int) -> None:
-        """Handle timeline trim."""
+        """Handle timeline trim (fires on mouse release)."""
         layer = self._model.get_layer(item_id)
         if layer:
             if which == "start":
@@ -757,6 +759,7 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._load_layer_properties(layer)
             self.settings_changed.emit()
+            self._seek_preview(self._preview_time_spin.value())
             return
         al = self._model.get_audio_layer(item_id)
         if al:
@@ -769,6 +772,7 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._load_audio_layer_properties(al)
             self.settings_changed.emit()
+            self._seek_preview(self._preview_time_spin.value())
 
     def _on_timeline_item_reordered(self, item_id: str, new_visual_index: int) -> None:
         """Handle visual layer reorder from timeline drag."""
@@ -816,53 +820,47 @@ class RenderCompositionTab(BaseTab):
         self._timeline_scrollbar.blockSignals(False)
 
     def _on_playhead_changed(self, ms: int) -> None:
-        """Sync playhead with preview timestamp spin and playback engine."""
+        """Sync playhead with preview timestamp spin and seek the compositor.
+
+        This fires during user playhead scrubbing (not during item drag).
+        """
         if self._playback_position_from_engine:
             return
         self._updating_ui = True
         self._preview_time_spin.setValue(ms)
         self._updating_ui = False
-        # Only seek the engine if it is already loaded (playing/paused).
-        # When stopped the engine has no data, so skip until the user
-        # explicitly presses play.
-        if (self._playback_engine is not None
-                and self._playback_engine.state != "stopped"):
-            try:
-                self._playback_engine.seek_from_timeline(ms)
-            except Exception:
-                logger.debug("Playhead seek failed", exc_info=True)
+        self._seek_preview(ms)
 
     def _on_preview_time_changed(self, ms: int) -> None:
-        """Sync preview spin with timeline playhead and playback engine."""
+        """Sync preview spin with timeline playhead and seek the compositor."""
         if self._updating_ui:
             return
         if self._playback_position_from_engine:
             return
         if hasattr(self, '_timeline'):
             self._timeline.set_playhead_ms(ms)
-        if (self._playback_engine is not None
-                and self._playback_engine.state != "stopped"):
-            try:
-                self._playback_engine.seek_from_timeline(ms)
-                self._update_layer_preview_from_engine(ms)
-            except Exception:
-                logger.debug("Preview time seek failed", exc_info=True)
+        self._seek_preview(ms)
+
+    def _seek_preview(self, ms: int) -> None:
+        """Load engine data if needed and render the frame at *ms*."""
+        if self._playback_engine is None:
+            return
+        try:
+            if self._preview_model_dirty:
+                self._load_engine_data()
+                self._preview_model_dirty = False
+            self._playback_engine.seek_from_timeline(ms)
+            self._update_layer_preview_from_engine(ms)
+        except Exception:
+            logger.debug("Preview seek failed at %d ms", ms, exc_info=True)
 
     def _mark_preview_dirty(self) -> None:
         """Mark the preview as stale so next play reloads engine data."""
         self._preview_model_dirty = True
 
     def _sync_preview_to_position(self, ms: int) -> None:
-        """Update layer preview if the engine is active (playing/paused)."""
-        if self._playback_engine is None:
-            return
-        if self._playback_engine.state == "stopped":
-            return
-        try:
-            self._playback_engine.seek_from_timeline(ms)
-            self._update_layer_preview_from_engine(ms)
-        except Exception:
-            logger.debug("Preview sync failed at %d ms", ms, exc_info=True)
+        """Update preview at *ms* — used by layer selection changes."""
+        self._seek_preview(ms)
 
     # ------------------------------------------------------------------
     # Session context
