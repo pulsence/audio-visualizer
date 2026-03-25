@@ -709,32 +709,23 @@ class TestPreviewSection:
         assert tab._preview_tabs.tabText(0) == "Timeline"
         assert tab._preview_tabs.tabText(1) == "Layer"
 
-    def test_playhead_change_loads_preview_when_dirty(self, monkeypatch):
+    def test_playhead_change_when_stopped_does_not_render(self, monkeypatch):
+        """Playhead scrub while engine is stopped must not trigger rendering."""
         tab = RenderCompositionTab()
-        calls = {"load": 0, "seek": [], "layer": []}
-
-        def fake_load():
-            calls["load"] += 1
-            tab._preview_model_dirty = False
-
-        monkeypatch.setattr(tab, "_load_engine_data", fake_load)
+        calls = {"seek": []}
         monkeypatch.setattr(
             tab._playback_engine,
             "seek_from_timeline",
             lambda ms: calls["seek"].append(ms),
         )
-        monkeypatch.setattr(
-            tab,
-            "_update_layer_preview_from_engine",
-            lambda ms: calls["layer"].append(ms),
-        )
 
         tab._preview_model_dirty = True
         tab._on_playhead_changed(250)
 
-        assert calls["load"] == 1
-        assert calls["seek"] == [250]
-        assert calls["layer"] == [250]
+        # Engine is stopped — no seek should have been issued
+        assert calls["seek"] == []
+        # Dirty flag stays set for next play
+        assert tab._preview_model_dirty is True
 
     def test_layer_selection_updates_preview_at_current_playhead(self, monkeypatch):
         tab = RenderCompositionTab()

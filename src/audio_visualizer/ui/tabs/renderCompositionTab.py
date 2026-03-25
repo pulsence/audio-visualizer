@@ -822,7 +822,15 @@ class RenderCompositionTab(BaseTab):
         self._updating_ui = True
         self._preview_time_spin.setValue(ms)
         self._updating_ui = False
-        self._sync_preview_to_position(ms)
+        # Only seek the engine if it is already loaded (playing/paused).
+        # When stopped the engine has no data, so skip until the user
+        # explicitly presses play.
+        if (self._playback_engine is not None
+                and self._playback_engine.state != "stopped"):
+            try:
+                self._playback_engine.seek_from_timeline(ms)
+            except Exception:
+                logger.debug("Playhead seek failed", exc_info=True)
 
     def _on_preview_time_changed(self, ms: int) -> None:
         """Sync preview spin with timeline playhead and playback engine."""
@@ -832,20 +840,25 @@ class RenderCompositionTab(BaseTab):
             return
         if hasattr(self, '_timeline'):
             self._timeline.set_playhead_ms(ms)
-        self._sync_preview_to_position(ms)
+        if (self._playback_engine is not None
+                and self._playback_engine.state != "stopped"):
+            try:
+                self._playback_engine.seek_from_timeline(ms)
+                self._update_layer_preview_from_engine(ms)
+            except Exception:
+                logger.debug("Preview time seek failed", exc_info=True)
 
     def _mark_preview_dirty(self) -> None:
-        """Mark the preview as stale until the next synchronized seek."""
+        """Mark the preview as stale so next play reloads engine data."""
         self._preview_model_dirty = True
 
     def _sync_preview_to_position(self, ms: int) -> None:
-        """Keep timeline and layer previews synchronized to *ms*."""
+        """Update layer preview if the engine is active (playing/paused)."""
         if self._playback_engine is None:
             return
+        if self._playback_engine.state == "stopped":
+            return
         try:
-            if self._playback_engine.state != "playing" and self._preview_model_dirty:
-                self._load_engine_data()
-                self._preview_model_dirty = False
             self._playback_engine.seek_from_timeline(ms)
             self._update_layer_preview_from_engine(ms)
         except Exception:
@@ -961,8 +974,9 @@ class RenderCompositionTab(BaseTab):
         if self._playback_engine is None:
             return
         try:
-            if self._playback_engine.state == "stopped":
+            if self._playback_engine.state == "stopped" or self._preview_model_dirty:
                 self._load_engine_data()
+                self._preview_model_dirty = False
             if not self._playback_engine.toggle_play_pause():
                 _available, reason = self._playback_availability()
                 if reason:
