@@ -940,14 +940,22 @@ class RenderCompositionTab(BaseTab):
         """Toggle play/pause on the playback engine."""
         if self._playback_engine is None:
             return
-        if self._playback_engine.state == "stopped":
-            # Load composition data into engine before first play
-            self._load_engine_data()
-        if not self._playback_engine.toggle_play_pause():
-            _available, reason = self._playback_availability()
-            fallback_reason = reason
-            if fallback_reason:
-                self._preview_status_label.setText(fallback_reason)
+        try:
+            if self._playback_engine.state == "stopped":
+                self._load_engine_data()
+            if not self._playback_engine.toggle_play_pause():
+                _available, reason = self._playback_availability()
+                if reason:
+                    self._preview_status_label.setText(reason)
+        except Exception:
+            logger.exception("Playback start/toggle failed")
+            self._preview_status_label.setText(
+                "Playback failed — check logs for details."
+            )
+            try:
+                self._playback_engine.stop()
+            except Exception:
+                pass
 
     def _on_transport_stop(self) -> None:
         if self._playback_engine:

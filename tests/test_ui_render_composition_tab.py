@@ -2135,6 +2135,44 @@ class TestTransportControls:
 
         assert "Real-time playback unavailable" in tab._preview_status_label.text()
 
+    def test_play_pause_exception_does_not_crash(self, monkeypatch):
+        """If the playback engine raises during play, the tab catches it."""
+        tab = RenderCompositionTab()
+        tab._model.add_layer(
+            CompositionLayer(display_name="Test", start_ms=0, end_ms=1000)
+        )
+
+        def exploding_toggle(*args, **kwargs):
+            raise RuntimeError("simulated playback crash")
+
+        monkeypatch.setattr(tab._playback_engine, "toggle_play_pause", exploding_toggle)
+        # Must not raise
+        tab._on_transport_play_pause()
+        assert "failed" in tab._preview_status_label.text().lower()
+
+    def test_engine_play_failure_returns_false(self):
+        """Engine.play() returns False on startup failure instead of crashing."""
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import PlaybackEngine
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import CompositorWidget
+
+        widget = CompositorWidget(1920, 1080)
+        engine = PlaybackEngine(widget, allow_audio=False)
+        engine.load(
+            [{"id": "bad", "path": "/nonexistent/video.mp4", "source_kind": "video",
+              "source_duration_ms": 5000, "start_ms": 0, "end_ms": 5000,
+              "behavior_after_end": "hide", "center_x": 0, "center_y": 0,
+              "width": 1920, "height": 1080, "z_order": 0, "opacity": 1.0,
+              "enabled": True}],
+            [],
+            5000,
+        )
+        # play() should not crash even with a bad path
+        result = engine.play()
+        # Will return True or False depending on OpenGL availability,
+        # but must not crash
+        assert isinstance(result, bool)
+        engine.stop()
+
     def test_engine_state_changed_updates_button(self):
         """State change signal updates the play button text."""
         tab = RenderCompositionTab()

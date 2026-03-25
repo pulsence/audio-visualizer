@@ -770,9 +770,21 @@ class PlaybackEngine(QObject):
         if not available:
             return False
 
-        self._start_decode_workers()
-        self._start_audio()
-        self._render_frame_at(int(self._position_ms))
+        try:
+            self._start_decode_workers()
+            self._start_audio()
+            self._render_frame_at(int(self._position_ms))
+        except Exception:
+            logger.exception("Failed to start playback")
+            self._stop_workers()
+            if self._audio_player:
+                try:
+                    self._audio_player.stop()
+                except Exception:
+                    pass
+                self._audio_player = None
+            return False
+
         self._state = "playing"
         self._display_timer.start()
         self.state_changed.emit("playing")
@@ -908,23 +920,27 @@ class PlaybackEngine(QObject):
         if self._state != "playing":
             return
 
-        # Read master clock
-        if self._audio_player and self._audio_player.playing:
-            self._position_ms = self._audio_player.current_ms()
-        else:
-            # No audio master — advance by timer interval
-            self._position_ms += self._display_timer.interval()
+        try:
+            # Read master clock
+            if self._audio_player and self._audio_player.playing:
+                self._position_ms = self._audio_player.current_ms()
+            else:
+                # No audio master — advance by timer interval
+                self._position_ms += self._display_timer.interval()
 
-        pos_ms = int(self._position_ms)
+            pos_ms = int(self._position_ms)
 
-        # Check for end of composition
-        if pos_ms >= self._duration_ms:
+            # Check for end of composition
+            if pos_ms >= self._duration_ms:
+                self.stop()
+                self.playback_finished.emit()
+                return
+
+            self._render_frame_at(pos_ms)
+            self.position_changed.emit(pos_ms)
+        except Exception:
+            logger.exception("Display tick failed, stopping playback")
             self.stop()
-            self.playback_finished.emit()
-            return
-
-        self._render_frame_at(pos_ms)
-        self.position_changed.emit(pos_ms)
 
     def _render_frame_at(self, pos_ms: int) -> None:
         """Composite and display all visible layers at *pos_ms*."""
