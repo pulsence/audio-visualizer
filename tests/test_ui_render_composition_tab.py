@@ -2544,3 +2544,137 @@ class TestSettingsRoundTrip:
         tab2.apply_settings(settings)
         assert tab2._model.output_width == 3840
         assert tab2._model.output_height == 2160
+
+
+# ------------------------------------------------------------------
+# Phase 14.5: Stability verification — preview lifecycle and sync
+# ------------------------------------------------------------------
+
+
+class TestPreviewLifecycle:
+    """Stopped, paused, and playing preview state transitions."""
+
+    def test_initial_state_is_stopped(self):
+        tab = RenderCompositionTab()
+        assert tab._playback_engine.state == "stopped"
+
+    def test_preview_controller_starts_dirty(self):
+        tab = RenderCompositionTab()
+        assert tab._preview_controller.is_dirty is True
+
+    def test_mark_dirty_propagates_to_controller(self):
+        tab = RenderCompositionTab()
+        tab._preview_controller._preview_model_dirty = False
+        tab._mark_preview_dirty()
+        assert tab._preview_controller.is_dirty is True
+
+    def test_schedule_seek_coalesces(self):
+        """Multiple rapid schedule_seek calls should coalesce to one."""
+        tab = RenderCompositionTab()
+        tab._preview_controller._preview_model_dirty = False
+
+        calls = []
+        tab._preview_controller._seek_preview = lambda ms: calls.append(ms)
+
+        tab._schedule_preview_seek(100)
+        tab._schedule_preview_seek(200)
+        tab._schedule_preview_seek(300)
+        app.processEvents()
+
+        # Only the last value should have been flushed
+        assert calls == [300]
+
+
+class TestSyncViewsAfterEdit:
+    """Ensure _sync_views_after_edit rebuilds all views consistently."""
+
+    def test_sync_emits_settings_changed(self):
+        tab = RenderCompositionTab()
+        tab._model.add_layer(CompositionLayer(
+            display_name="Test", start_ms=0, end_ms=5000,
+        ))
+        tab._refresh_layer_list()
+
+        signals = []
+        tab.settings_changed.connect(lambda: signals.append(True))
+        tab._sync_views_after_edit()
+        assert len(signals) == 1
+
+    def test_sync_refreshes_timeline(self):
+        tab = RenderCompositionTab()
+        layer = CompositionLayer(
+            display_name="Before", start_ms=0, end_ms=3000,
+        )
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+
+        layer.end_ms = 7000
+        tab._sync_views_after_edit(layer.id)
+        assert tab._timeline._items[0].end_ms == 7000
+
+    def test_sync_reloads_visual_properties(self):
+        tab = RenderCompositionTab()
+        layer = CompositionLayer(
+            display_name="Visual", start_ms=0, end_ms=5000,
+            center_x=100, center_y=200,
+        )
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+        tab._layer_list.setCurrentRow(0)
+
+        layer.center_x = 999
+        tab._sync_views_after_edit(layer.id)
+        assert tab._x_spin.value() == 999
+
+    def test_sync_reloads_audio_properties(self):
+        tab = RenderCompositionTab()
+        al = CompositionAudioLayer(
+            display_name="Audio", start_ms=500, source_duration_ms=5000,
+        )
+        tab._model.audio_layers.append(al)
+        tab._refresh_layer_list()
+        # Select the audio row
+        tab._layer_list.setCurrentRow(tab._layer_list.count() - 1)
+
+        al.start_ms = 2000
+        tab._sync_views_after_edit(al.id)
+        assert tab._audio_start_spin.value() == 2000
+
+    def test_selection_retained_after_sync(self):
+        tab = RenderCompositionTab()
+        l1 = CompositionLayer(display_name="First", start_ms=0, end_ms=3000)
+        l2 = CompositionLayer(display_name="Second", start_ms=0, end_ms=5000)
+        tab._model.add_layer(l1)
+        tab._model.add_layer(l2)
+        tab._refresh_layer_list()
+        tab._layer_list.setCurrentRow(1)
+
+        tab._sync_views_after_edit(l2.id)
+        _, selected_id = tab._unified_row_type(tab._layer_list.currentRow())
+        assert selected_id == l2.id
+
+    def test_sync_after_timeline_move(self):
+        tab = RenderCompositionTab()
+        layer = CompositionLayer(
+            display_name="Moveable", start_ms=0, end_ms=5000,
+        )
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+
+        tab._on_timeline_item_moved(layer.id, 1000, 6000)
+        assert layer.start_ms == 1000
+        assert layer.end_ms == 6000
+        # Timeline should reflect the change
+        assert tab._timeline._items[0].start_ms == 1000
+
+    def test_sync_after_timeline_trim(self):
+        tab = RenderCompositionTab()
+        layer = CompositionLayer(
+            display_name="Trimmable", start_ms=0, end_ms=5000,
+        )
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+
+        tab._on_timeline_item_trimmed(layer.id, "end", 8000)
+        assert layer.end_ms == 8000
+        assert tab._timeline._items[0].end_ms == 8000
