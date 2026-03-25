@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._log_path = setup_logging()
         self.setWindowTitle("Audio Visualizer")
-        self.resize(1600, 1000)
+        self.setGeometry(100, 100, 1600, 1000)
 
         # Shared state
         self.workspace_context = WorkspaceContext(self)

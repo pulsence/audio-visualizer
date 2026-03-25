@@ -2474,14 +2474,17 @@ class RenderCompositionTab(BaseTab):
                     "Discarding incompatible composition payload — "
                     "old coordinate system detected"
                 )
-                QMessageBox.warning(
+                # Show warning after event loop settles to avoid blocking
+                # startup geometry restoration with a modal dialog.
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: QMessageBox.warning(
                     self,
                     "Incompatible Composition",
                     "The saved composition uses an older coordinate system "
                     "that is incompatible with v0.7.0. "
                     "The composition has been reset to defaults. "
                     "Please recreate your composition.",
-                )
+                ))
                 # Keep the default model — tab stays usable
             else:
                 self._refresh_layer_list()

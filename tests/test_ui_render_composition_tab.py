@@ -2476,6 +2476,8 @@ class TestApplySettingsLegacyComposition:
         )
         # Must not raise
         tab.apply_settings({"model": old_model_data})
+        # Warning is deferred via QTimer.singleShot — process pending events
+        QApplication.processEvents()
         assert len(warned) == 1
 
     def test_apply_settings_with_old_composition_keeps_default_model(self, monkeypatch):
