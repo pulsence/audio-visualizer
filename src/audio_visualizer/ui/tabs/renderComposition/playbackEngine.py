@@ -846,6 +846,8 @@ class PlaybackEngine(QObject):
 
     def seek_from_timeline(self, ms: int) -> None:
         """Seek triggered by timeline interaction — does not re-emit position."""
+        if self._duration_ms <= 0:
+            return  # No composition loaded
         ms = max(0, min(ms, self._duration_ms))
         self._position_ms = float(ms)
         if self._audio_player:
@@ -954,6 +956,8 @@ class PlaybackEngine(QObject):
 
     def _render_frame_at(self, pos_ms: int) -> None:
         """Composite and display all visible layers at *pos_ms*."""
+        if not self._visual_layers:
+            return  # Nothing to render — avoid unnecessary compositor calls
         self._drain_frame_queues()
 
         comp_layers: list[dict] = []

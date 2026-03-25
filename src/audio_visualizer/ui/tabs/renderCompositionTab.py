@@ -837,10 +837,14 @@ class RenderCompositionTab(BaseTab):
         """Keep timeline and layer previews synchronized to *ms*."""
         if self._playback_engine is None:
             return
-        if self._playback_engine.state != "playing" and self._preview_model_dirty:
-            self._load_engine_data()
-        self._playback_engine.seek_from_timeline(ms)
-        self._update_layer_preview_from_engine(ms)
+        try:
+            if self._playback_engine.state != "playing" and self._preview_model_dirty:
+                self._load_engine_data()
+                self._preview_model_dirty = False
+            self._playback_engine.seek_from_timeline(ms)
+            self._update_layer_preview_from_engine(ms)
+        except Exception:
+            logger.debug("Preview sync failed at %d ms", ms, exc_info=True)
 
     # ------------------------------------------------------------------
     # Session context
