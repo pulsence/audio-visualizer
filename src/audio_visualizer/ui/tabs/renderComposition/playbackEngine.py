@@ -1078,3 +1078,17 @@ class PlaybackEngine(QObject):
             if layer.get("id") == layer_id:
                 return layer
         return None
+
+    def layer_image_at(self, layer_id: str, position_ms: int) -> QImage | None:
+        """Return the decoded frame for a single layer at *position_ms*.
+
+        This is used by the Layer preview tab to display individual layer
+        frames synchronized with the playhead.
+        """
+        layer = self._visual_layer_by_id(layer_id)
+        if layer is None:
+            return None
+        source_ms = self._layer_source_position_ms(layer, position_ms)
+        if source_ms is None:
+            return None
+        return self._image_for_layer_at(layer, source_ms)

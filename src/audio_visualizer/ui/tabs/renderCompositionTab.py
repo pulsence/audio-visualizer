@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import subprocess
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Optional
@@ -264,10 +262,6 @@ class RenderCompositionTab(BaseTab):
         self._preview_time_spin.setValue(0)
         controls.addWidget(self._preview_time_spin)
 
-        self._preview_refresh_btn = QPushButton("Refresh Preview")
-        self._preview_refresh_btn.clicked.connect(self._on_refresh_preview)
-        controls.addWidget(self._preview_refresh_btn)
-
         self._preview_status_label = QLabel("")
         controls.addWidget(self._preview_status_label)
         controls.addStretch()
@@ -277,10 +271,10 @@ class RenderCompositionTab(BaseTab):
 
         self._preview_time_spin.valueChanged.connect(self._on_preview_time_changed)
 
-        # Preview tabs: Compositor, Timeline, and Layer
+        # Preview tabs: Timeline (compositor) and Layer
         self._preview_tabs = QTabWidget()
 
-        # Compositor tab (real-time playback)
+        # Timeline tab — the OpenGL-backed compositor widget
         from audio_visualizer.ui.tabs.renderComposition.playbackEngine import CompositorWidget
         self._compositor_widget = CompositorWidget(
             self._model.output_width,
@@ -290,17 +284,7 @@ class RenderCompositionTab(BaseTab):
         self._compositor_widget.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding,
         )
-        self._preview_tabs.addTab(self._compositor_widget, "Compositor")
-
-        self._timeline_preview_label = QLabel()
-        self._timeline_preview_label.setMinimumSize(400, 300)
-        self._timeline_preview_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding,
-        )
-        self._timeline_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._timeline_preview_label.setStyleSheet("background: #1a1a1a; border: 1px solid #333;")
-        self._timeline_preview_label.setText("Click 'Refresh Preview' to generate a frame")
-        self._preview_tabs.addTab(self._timeline_preview_label, "Timeline")
+        self._preview_tabs.addTab(self._compositor_widget, "Timeline")
 
         self._layer_preview_label = QLabel()
         self._layer_preview_label.setMinimumSize(400, 300)
@@ -312,8 +296,8 @@ class RenderCompositionTab(BaseTab):
         self._layer_preview_label.setText("Select a visual layer to preview.")
         self._preview_tabs.addTab(self._layer_preview_label, "Layer")
 
-        # For backward compat with pick-from-preview, point _preview_label at timeline tab
-        self._preview_label = self._timeline_preview_label
+        # For pick-from-preview, point _preview_label at compositor
+        self._preview_label = self._compositor_widget
         self._preview_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         preview_layout.addWidget(self._preview_tabs)
@@ -845,6 +829,7 @@ class RenderCompositionTab(BaseTab):
             self._timeline.set_playhead_ms(ms)
         if self._playback_engine is not None:
             self._playback_engine.seek_from_timeline(ms)
+            self._update_layer_preview_from_engine(ms)
 
     # ------------------------------------------------------------------
     # Session context
@@ -928,7 +913,7 @@ class RenderCompositionTab(BaseTab):
             self._playback_unavailable_reason = (
                 "Real-time playback unavailable: missing "
                 + ", ".join(missing_runtime)
-                + ". Use Refresh Preview for static previews."
+                + "."
             )
 
         self._playback_engine = PlaybackEngine(
@@ -1049,6 +1034,7 @@ class RenderCompositionTab(BaseTab):
             self._preview_time_spin.setValue(ms)
             if hasattr(self, "_timeline"):
                 self._timeline.set_playhead_ms(ms)
+            self._update_layer_preview_from_engine(ms)
         finally:
             self._updating_ui = False
             self._playback_position_from_engine = False
@@ -1946,12 +1932,12 @@ class RenderCompositionTab(BaseTab):
 
     def _on_pick_key_from_preview(self) -> None:
         """Start pick-from-preview mode for key color."""
-        pixmap = self._preview_label.pixmap()
+        pixmap = self._preview_label.grab()
         if pixmap is None or pixmap.isNull():
             QMessageBox.information(
                 self,
                 "No Preview",
-                "Generate a preview frame first using 'Refresh Preview'.",
+                "Move the playhead to a frame first.",
             )
             return
         self._picking_key_color = True
@@ -1977,28 +1963,16 @@ class RenderCompositionTab(BaseTab):
         return super().eventFilter(obj, event)
 
     def _sample_preview_color(self, click_pos) -> None:
-        """Sample color at *click_pos* from the preview pixmap."""
-        pixmap = self._preview_label.pixmap()
+        """Sample color at *click_pos* from the compositor widget."""
+        pixmap = self._preview_label.grab()
         if pixmap is None or pixmap.isNull():
             self._cancel_pick_mode()
             return
 
-        # Account for aspect-ratio scaling with AlignCenter
-        label_w = self._preview_label.width()
-        label_h = self._preview_label.height()
         pm_w = pixmap.width()
         pm_h = pixmap.height()
-
-        # The displayed pixmap is scaled to fit the label keeping aspect ratio
-        scale = min(label_w / pm_w, label_h / pm_h)
-        displayed_w = pm_w * scale
-        displayed_h = pm_h * scale
-        offset_x = (label_w - displayed_w) / 2.0
-        offset_y = (label_h - displayed_h) / 2.0
-
-        # Map click coordinates to pixmap coordinates
-        px_x = int((click_pos.x() - offset_x) / scale)
-        px_y = int((click_pos.y() - offset_y) / scale)
+        px_x = click_pos.x()
+        px_y = click_pos.y()
 
         if 0 <= px_x < pm_w and 0 <= px_y < pm_h:
             image = pixmap.toImage()
@@ -2225,102 +2199,35 @@ class RenderCompositionTab(BaseTab):
     # Live preview
     # ------------------------------------------------------------------
 
-    def _on_refresh_preview(self) -> None:
-        """Generate a single-frame preview at the selected timestamp."""
-        if self._picking_key_color:
-            self._cancel_pick_mode()
-        valid, msg = self.validate_settings()
-        if not valid:
-            self._preview_status_label.setText(f"Cannot preview: {msg}")
-            return
-
-        self._preview_refresh_btn.setEnabled(False)
-        self._preview_status_label.setText("Generating preview...")
-
-        timestamp_ms = self._preview_time_spin.value()
-        timestamp_s = timestamp_ms / 1000.0
-
-        worker = _PreviewWorker(copy.deepcopy(self._model), timestamp_s)
-        worker.signals.finished.connect(self._on_preview_finished)
-        worker.signals.failed.connect(self._on_preview_failed)
-
-        mw = self._main_window
-        if mw and hasattr(mw, "render_thread_pool"):
-            mw.render_thread_pool.start(worker)
-        else:
-            QThreadPool.globalInstance().start(worker)
-
-    def _on_preview_finished(self, image_path: str) -> None:
-        """Display the generated preview frame."""
-        if self._picking_key_color:
-            self._cancel_pick_mode()
-        self._preview_refresh_btn.setEnabled(True)
-        self._preview_status_label.setText("")
-
-        pixmap = QPixmap(image_path)
-        if pixmap.isNull():
-            self._preview_status_label.setText("Failed to load preview image")
-            return
-
-        # Timeline preview
-        scaled = pixmap.scaled(
-            self._timeline_preview_label.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._timeline_preview_label.setPixmap(scaled)
-
-        # Update layer preview based on selection
-        self._update_layer_preview()
-
-    def _on_preview_failed(self, error: str) -> None:
-        """Handle preview generation failure."""
-        if self._picking_key_color:
-            self._cancel_pick_mode()
-        self._preview_refresh_btn.setEnabled(True)
-        self._preview_status_label.setText(f"Preview failed: {error}")
-
-    def _update_layer_preview(self) -> None:
-        """Update the Layer preview tab based on current selection."""
+    def _update_layer_preview_from_engine(self, ms: int) -> None:
+        """Update the Layer preview tab from the playback engine at *ms*."""
         row_type, row_id = self._unified_row_type(self._layer_list.currentRow())
         if row_type == "audio":
             self._layer_preview_label.setPixmap(QPixmap())
             self._layer_preview_label.setText("Audio layers do not have a layer preview.")
-        elif row_type == "visual" and row_id:
-            layer = self._model.get_layer(row_id)
-            if layer and layer.asset_path:
-                self._layer_preview_label.setText("Generating layer preview...")
-                timestamp_ms = self._preview_time_spin.value()
-                timestamp_s = timestamp_ms / 1000.0
-                worker = _LayerPreviewWorker(copy.deepcopy(self._model), layer, timestamp_s)
-                worker.signals.finished.connect(self._on_layer_preview_finished)
-                worker.signals.failed.connect(self._on_layer_preview_failed)
-                mw = self._main_window
-                if mw and hasattr(mw, "render_thread_pool"):
-                    mw.render_thread_pool.start(worker)
-                else:
-                    QThreadPool.globalInstance().start(worker)
-                return
+            return
+        if row_type != "visual" or not row_id:
             self._layer_preview_label.setPixmap(QPixmap())
             self._layer_preview_label.setText("Select a visual layer to preview.")
-        else:
+            return
+
+        if self._playback_engine is None:
+            self._layer_preview_label.setText("Playback engine not available.")
+            return
+
+        img = self._playback_engine.layer_image_at(row_id, ms)
+        if img is None or img.isNull():
             self._layer_preview_label.setPixmap(QPixmap())
-            self._layer_preview_label.setText("Select a visual layer to preview.")
+            self._layer_preview_label.setText("No frame at this position.")
+            return
 
-    def _on_layer_preview_finished(self, image_path: str) -> None:
-        pixmap = QPixmap(image_path)
-        if not pixmap.isNull():
-            scaled = pixmap.scaled(
-                self._layer_preview_label.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self._layer_preview_label.setPixmap(scaled)
-        else:
-            self._layer_preview_label.setText("Failed to load layer preview.")
-
-    def _on_layer_preview_failed(self, error: str) -> None:
-        self._layer_preview_label.setText(f"Layer preview failed: {error}")
+        pixmap = QPixmap.fromImage(img)
+        scaled = pixmap.scaled(
+            self._layer_preview_label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._layer_preview_label.setPixmap(scaled)
 
     # ------------------------------------------------------------------
     # Presets
@@ -2597,125 +2504,3 @@ class RenderCompositionTab(BaseTab):
             self._updating_ui = False
 
 
-# ----------------------------------------------------------------------
-# Preview worker
-# ----------------------------------------------------------------------
-
-class _PreviewSignals(QObject):
-    """Signals for the preview worker."""
-
-    finished = Signal(str)   # image path
-    failed = Signal(str)     # error message
-
-
-class _PreviewWorker(QRunnable):
-    """QRunnable that extracts a single preview frame via FFmpeg."""
-
-    def __init__(self, model: CompositionModel, timestamp_s: float) -> None:
-        super().__init__()
-        self.setAutoDelete(True)
-        self._model = model
-        self._timestamp_s = timestamp_s
-        self.signals = _PreviewSignals()
-
-    def run(self) -> None:
-        try:
-            import shutil
-
-            if shutil.which("ffmpeg") is None:
-                self.signals.failed.emit("FFmpeg not found on PATH.")
-                return
-
-            from audio_visualizer.ui.tabs.renderComposition.filterGraph import (
-                build_preview_command,
-            )
-
-            # Use a temp file for the preview image
-            tmp = tempfile.NamedTemporaryFile(
-                suffix=".png", prefix="comp_preview_", delete=False
-            )
-            tmp.close()
-
-            cmd = build_preview_command(self._model, self._timestamp_s, tmp.name)
-            logger.debug("Preview command: %s", " ".join(cmd))
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-
-            if result.returncode != 0:
-                stderr = result.stderr[-500:] if result.stderr else ""
-                self.signals.failed.emit(
-                    f"FFmpeg exited with code {result.returncode}: {stderr}"
-                )
-                return
-
-            if not Path(tmp.name).exists() or Path(tmp.name).stat().st_size == 0:
-                self.signals.failed.emit("Preview frame was not generated.")
-                return
-
-            self.signals.finished.emit(tmp.name)
-
-        except subprocess.TimeoutExpired:
-            self.signals.failed.emit("Preview generation timed out.")
-        except Exception as exc:
-            self.signals.failed.emit(str(exc))
-
-
-class _LayerPreviewWorker(QRunnable):
-    """QRunnable that extracts a single layer preview frame via FFmpeg."""
-
-    def __init__(self, model: CompositionModel, layer: CompositionLayer, timestamp_s: float) -> None:
-        super().__init__()
-        self.setAutoDelete(True)
-        self._model = model
-        self._layer = copy.deepcopy(layer)
-        self._timestamp_s = timestamp_s
-        self.signals = _PreviewSignals()
-
-    def run(self) -> None:
-        try:
-            import shutil
-
-            if shutil.which("ffmpeg") is None:
-                self.signals.failed.emit("FFmpeg not found on PATH.")
-                return
-
-            from audio_visualizer.ui.tabs.renderComposition.filterGraph import (
-                build_single_layer_preview_command,
-            )
-
-            tmp = tempfile.NamedTemporaryFile(
-                suffix=".png", prefix="layer_preview_", delete=False
-            )
-            tmp.close()
-
-            cmd = build_single_layer_preview_command(
-                self._model, self._layer, self._timestamp_s, tmp.name
-            )
-            logger.debug("Layer preview command: %s", " ".join(cmd))
-
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30,
-            )
-
-            if result.returncode != 0:
-                stderr = result.stderr[-500:] if result.stderr else ""
-                self.signals.failed.emit(
-                    f"FFmpeg exited with code {result.returncode}: {stderr}"
-                )
-                return
-
-            if not Path(tmp.name).exists() or Path(tmp.name).stat().st_size == 0:
-                self.signals.failed.emit("Layer preview frame was not generated.")
-                return
-
-            self.signals.finished.emit(tmp.name)
-
-        except subprocess.TimeoutExpired:
-            self.signals.failed.emit("Layer preview generation timed out.")
-        except Exception as exc:
-            self.signals.failed.emit(str(exc))

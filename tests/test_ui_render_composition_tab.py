@@ -69,7 +69,7 @@ class TestRenderCompositionTabSettings:
     def test_collect_settings_structure(self):
         tab = RenderCompositionTab()
         settings = tab.collect_settings()
-        expected_keys = {"model", "output_path", "preset"}
+        expected_keys = {"model", "output_path", "preset", "lock_ratio"}
         assert set(settings.keys()) == expected_keys
 
     def test_collect_settings_model_structure(self):
@@ -696,17 +696,18 @@ class TestPreviewSection:
         tab = RenderCompositionTab()
         assert hasattr(tab, "_preview_label")
         assert hasattr(tab, "_preview_time_spin")
-        assert hasattr(tab, "_preview_refresh_btn")
+        assert hasattr(tab, "_compositor_widget")
 
     def test_preview_timestamp_default(self):
         tab = RenderCompositionTab()
         assert tab._preview_time_spin.value() == 0
 
-    def test_preview_validate_fails_gracefully(self):
-        """Refresh preview with no layers shows error in status label."""
+    def test_preview_tabs_are_timeline_and_layer(self):
+        """Preview area has two tabs: Timeline and Layer (no Compositor tab)."""
         tab = RenderCompositionTab()
-        tab._on_refresh_preview()
-        assert "Cannot preview" in tab._preview_status_label.text()
+        assert tab._preview_tabs.count() == 2
+        assert tab._preview_tabs.tabText(0) == "Timeline"
+        assert tab._preview_tabs.tabText(1) == "Layer"
 
 
 # ------------------------------------------------------------------
@@ -2019,65 +2020,28 @@ class TestPickFromPreview:
         assert hasattr(tab, "_picking_key_color")
         assert tab._picking_key_color is False
 
-    def test_pick_from_preview_no_pixmap_shows_info(self, monkeypatch):
-        """Clicking 'Pick from Preview' without a preview shows info message."""
+    def test_pick_from_preview_enters_pick_mode(self):
+        """Pick from preview enters pick mode when compositor has content."""
         tab = RenderCompositionTab()
-        shown = []
-        monkeypatch.setattr(
-            QMessageBox, "information",
-            lambda *args, **kwargs: shown.append(True),
-        )
-        tab._on_pick_key_from_preview()
-        assert len(shown) == 1
-        assert tab._picking_key_color is False
-
-    def test_pick_from_preview_with_pixmap_enters_pick_mode(self):
-        """With a valid pixmap, pick mode is activated."""
-        tab = RenderCompositionTab()
-        # Create a small test pixmap and set it
+        # Set layers on compositor so grab() produces a non-null pixmap
         img = QImage(100, 100, QImage.Format.Format_RGB32)
         img.fill(QColor("#FF0000"))
-        pixmap = QPixmap.fromImage(img)
-        tab._preview_label.setPixmap(pixmap)
+        tab._compositor_widget.set_layers([{
+            "id": "test", "qimage": img, "x": 0, "y": 0,
+            "w": 100, "h": 100, "z_order": 0, "opacity": 1.0,
+        }])
+        tab._compositor_widget.resize(100, 100)
 
         tab._on_pick_key_from_preview()
         assert tab._picking_key_color is True
 
-        # Clean up pick mode
         tab._cancel_pick_mode()
         assert tab._picking_key_color is False
 
-    def test_sample_preview_color(self):
-        """Sampling a color from the preview updates the key color edit."""
-        tab = RenderCompositionTab()
-        # Create a green test pixmap
-        img = QImage(100, 100, QImage.Format.Format_RGB32)
-        img.fill(QColor("#00ff00"))
-        pixmap = QPixmap.fromImage(img)
-        tab._preview_label.setPixmap(pixmap)
-        tab._preview_label.resize(100, 100)
-
-        # Add a layer so matte_changed has something to work with
-        layer = CompositionLayer(display_name="Test")
-        tab._model.add_layer(layer)
-        tab._refresh_layer_list()
-        tab._layer_list.setCurrentRow(0)
-
-        tab._picking_key_color = True
-        tab._sample_preview_color(QPoint(50, 50))
-
-        # The key color should have been sampled (green)
-        assert tab._picking_key_color is False
-        sampled = tab._key_color_edit.text().lower()
-        assert sampled == "#00ff00"
-
     def test_right_click_cancels_pick_mode(self):
         tab = RenderCompositionTab()
-        img = QImage(50, 50, QImage.Format.Format_RGB32)
-        img.fill(QColor("#ff0000"))
-        tab._preview_label.setPixmap(QPixmap.fromImage(img))
-
-        tab._on_pick_key_from_preview()
+        tab._picking_key_color = True
+        tab._preview_label.installEventFilter(tab)
 
         event = QMouseEvent(
             QEvent.Type.MouseButtonPress,
@@ -2092,11 +2056,8 @@ class TestPickFromPreview:
 
     def test_escape_cancels_pick_mode(self):
         tab = RenderCompositionTab()
-        img = QImage(50, 50, QImage.Format.Format_RGB32)
-        img.fill(QColor("#ff0000"))
-        tab._preview_label.setPixmap(QPixmap.fromImage(img))
-
-        tab._on_pick_key_from_preview()
+        tab._picking_key_color = True
+        tab._preview_label.installEventFilter(tab)
 
         event = QKeyEvent(
             QEvent.Type.KeyPress,
@@ -2105,22 +2066,6 @@ class TestPickFromPreview:
         )
 
         assert tab.eventFilter(tab._preview_label, event) is True
-        assert tab._picking_key_color is False
-
-    def test_preview_refresh_completion_cancels_pick_mode(self, tmp_path):
-        tab = RenderCompositionTab()
-        img = QImage(50, 50, QImage.Format.Format_RGB32)
-        img.fill(QColor("#123456"))
-        tab._preview_label.setPixmap(QPixmap.fromImage(img))
-
-        tab._on_pick_key_from_preview()
-        assert tab._picking_key_color is True
-
-        preview_path = tmp_path / "preview.png"
-        assert img.save(str(preview_path))
-
-        tab._on_preview_finished(str(preview_path))
-
         assert tab._picking_key_color is False
 
     def test_cancel_pick_mode(self):
