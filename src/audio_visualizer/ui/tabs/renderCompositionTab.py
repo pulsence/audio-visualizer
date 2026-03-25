@@ -276,11 +276,16 @@ class RenderCompositionTab(BaseTab):
         # Preview tabs: Timeline (compositor) and Layer
         self._preview_tabs = QTabWidget()
 
-        # Timeline tab — the OpenGL-backed compositor widget
+        # Timeline tab — compositor widget using QPainter rendering.
+        # OpenGL is deliberately disabled here to avoid QOpenGLWidget
+        # context-lifecycle segfaults during tab switching and timeline
+        # interaction.  The QPainter path is visually identical for the
+        # preview surface and avoids an entire class of platform bugs.
         from audio_visualizer.ui.tabs.renderComposition.playbackEngine import CompositorWidget
         self._compositor_widget = CompositorWidget(
             self._model.output_width,
             self._model.output_height,
+            use_opengl=False,
         )
         self._compositor_widget.setMinimumSize(400, 300)
         self._compositor_widget.setSizePolicy(

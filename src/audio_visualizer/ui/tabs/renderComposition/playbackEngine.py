@@ -960,7 +960,9 @@ class PlaybackEngine(QObject):
     def _render_frame_at(self, pos_ms: int) -> None:
         """Composite and display all visible layers at *pos_ms*."""
         if not self._visual_layers:
-            return  # Nothing to render — avoid unnecessary compositor calls
+            return
+        if not self._compositor.isVisible():
+            return
         self._drain_frame_queues()
 
         comp_layers: list[dict] = []
@@ -972,7 +974,11 @@ class PlaybackEngine(QObject):
             if source_ms is None:
                 continue
 
-            img = self._image_for_layer_at(vl, source_ms)
+            try:
+                img = self._image_for_layer_at(vl, source_ms)
+            except Exception:
+                logger.debug("Failed to get image for layer %s", layer_id, exc_info=True)
+                continue
             if img is None or img.isNull():
                 continue
 
