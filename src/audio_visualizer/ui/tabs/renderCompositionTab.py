@@ -735,10 +735,7 @@ class RenderCompositionTab(BaseTab):
         if layer:
             layer.start_ms = new_start
             layer.end_ms = new_end
-            self._refresh_layer_list()
-            self._load_layer_properties(layer)
-            self.settings_changed.emit()
-            self._schedule_preview_seek(self._preview_time_spin.value())
+            self._sync_views_after_edit(layer.id)
             return
         al = self._model.get_audio_layer(item_id)
         if al:
@@ -746,10 +743,7 @@ class RenderCompositionTab(BaseTab):
             al.start_ms = new_start
             if not al.use_full_length:
                 al.duration_ms = duration
-            self._refresh_layer_list()
-            self._load_audio_layer_properties(al)
-            self.settings_changed.emit()
-            self._schedule_preview_seek(self._preview_time_spin.value())
+            self._sync_views_after_edit(al.id)
 
     def _on_timeline_item_trimmed(self, item_id: str, which: str, ms: int) -> None:
         """Handle timeline trim (fires on mouse release)."""
@@ -759,10 +753,7 @@ class RenderCompositionTab(BaseTab):
                 layer.start_ms = ms
             else:
                 layer.end_ms = ms
-            self._refresh_layer_list()
-            self._load_layer_properties(layer)
-            self.settings_changed.emit()
-            self._schedule_preview_seek(self._preview_time_spin.value())
+            self._sync_views_after_edit(layer.id)
             return
         al = self._model.get_audio_layer(item_id)
         if al:
@@ -772,10 +763,7 @@ class RenderCompositionTab(BaseTab):
                 new_duration = max(0, ms - al.start_ms)
                 al.duration_ms = new_duration
                 al.use_full_length = False
-            self._refresh_layer_list()
-            self._load_audio_layer_properties(al)
-            self.settings_changed.emit()
-            self._schedule_preview_seek(self._preview_time_spin.value())
+            self._sync_views_after_edit(al.id)
 
     def _on_timeline_item_reordered(self, item_id: str, new_visual_index: int) -> None:
         """Handle visual layer reorder from timeline drag."""
@@ -796,8 +784,7 @@ class RenderCompositionTab(BaseTab):
             for display_index, visual_layer in enumerate(visual_items):
                 visual_layer.z_order = highest_z - display_index
             self._model.layers = visual_items
-        self._refresh_layer_list()
-        self.settings_changed.emit()
+        self._sync_views_after_edit(item_id)
 
     def _on_timeline_audio_mute_toggled(self, item_id: str, muted: bool) -> None:
         """Apply timeline mute toggles to the backing audio layer model."""
@@ -806,10 +793,7 @@ class RenderCompositionTab(BaseTab):
             return
         cmd = EditAudioLayerCommand(self._model, item_id, muted=muted)
         self._push_command(cmd)
-        if self._selected_audio_layer() is al:
-            self._load_audio_layer_properties(al)
-        self._refresh_timeline()
-        self.settings_changed.emit()
+        self._sync_views_after_edit(item_id)
 
     def _on_timeline_scroll(self, value: int) -> None:
         self._timeline.set_scroll_offset(value)
@@ -858,6 +842,38 @@ class RenderCompositionTab(BaseTab):
     def _sync_preview_to_position(self, ms: int) -> None:
         """Update preview at *ms* — used by layer selection changes."""
         self._schedule_preview_seek(ms)
+
+    def _sync_views_after_edit(self, affected_layer_id: str | None = None) -> None:
+        """Rebuild all UI views after a model mutation.
+
+        Encapsulates the layer-list rebuild, property-panel reload,
+        settings-changed emission, and preview scheduling that every
+        edit handler previously called manually.
+        """
+        self._refresh_layer_list()
+
+        # Reload the property panel for the affected or currently selected layer
+        if affected_layer_id:
+            layer = self._model.get_layer(affected_layer_id)
+            if layer is not None:
+                self._load_layer_properties(layer)
+            else:
+                al = self._model.get_audio_layer(affected_layer_id)
+                if al is not None:
+                    self._load_audio_layer_properties(al)
+        else:
+            row_type, row_id = self._unified_row_type(self._layer_list.currentRow())
+            if row_type == "visual" and row_id:
+                layer = self._model.get_layer(row_id)
+                if layer is not None:
+                    self._load_layer_properties(layer)
+            elif row_type == "audio" and row_id:
+                al = self._model.get_audio_layer(row_id)
+                if al is not None:
+                    self._load_audio_layer_properties(al)
+
+        self.settings_changed.emit()
+        self._schedule_preview_seek(self._preview_time_spin.value())
 
     # ------------------------------------------------------------------
     # Session context
@@ -1142,9 +1158,7 @@ class RenderCompositionTab(BaseTab):
                 if layer is not None:
                     layer.z_order = z
                     z += 1
-        self._refresh_layer_list()
-        self._refresh_timeline()
-        self.settings_changed.emit()
+        self._sync_views_after_edit()
 
     def _unified_row_type(self, row: int) -> tuple[str | None, str | None]:
         """Return (type, layer_id) for the given unified list row.
@@ -1858,8 +1872,7 @@ class RenderCompositionTab(BaseTab):
             return
         layer.start_ms = self._start_ms_spin.value()
         layer.end_ms = self._end_ms_spin.value()
-        self._refresh_timeline()
-        self.settings_changed.emit()
+        self._sync_views_after_edit(layer.id)
 
     def _on_behavior_changed(self, text: str) -> None:
         if self._updating_ui:
@@ -1868,7 +1881,7 @@ class RenderCompositionTab(BaseTab):
         if layer is None:
             return
         layer.behavior_after_end = text
-        self.settings_changed.emit()
+        self._sync_views_after_edit(layer.id)
 
     def _on_visual_full_length_toggled(self, checked: bool) -> None:
         """Handle Full Length checkbox for video layers."""
@@ -1924,6 +1937,7 @@ class RenderCompositionTab(BaseTab):
             "invert": self._invert_cb.isChecked(),
         }
         self.settings_changed.emit()
+        self._schedule_preview_seek(self._preview_time_spin.value())
 
     def _on_pick_key_color(self) -> None:
         from PySide6.QtGui import QColor
@@ -2012,8 +2026,7 @@ class RenderCompositionTab(BaseTab):
             use_full_length=use_full_length,
         )
         self._push_command(cmd)
-        self._refresh_timeline()
-        self.settings_changed.emit()
+        self._sync_views_after_edit(al.id)
 
     def _on_audio_full_length_toggled(self, checked: bool) -> None:
         """Handle Full Length checkbox toggle for audio layers."""
