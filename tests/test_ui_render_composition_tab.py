@@ -2471,3 +2471,43 @@ class TestApplySettingsLegacyComposition:
         valid_data = tab._model.to_dict()
         tab.apply_settings({"model": valid_data})
         assert tab._model.output_width == valid_data["output_width"]
+
+
+class TestSettingsRoundTrip:
+    """Settings collect/apply round-trip for persisted controls."""
+
+    def test_lock_ratio_persists(self):
+        tab = RenderCompositionTab()
+        tab._lock_ratio_cb.setChecked(False)
+        settings = tab.collect_settings()
+        assert settings["lock_ratio"] is False
+
+        tab2 = RenderCompositionTab()
+        tab2.apply_settings(settings)
+        assert tab2._lock_ratio_cb.isChecked() is False
+
+    def test_lock_ratio_default_true(self):
+        tab = RenderCompositionTab()
+        assert tab._lock_ratio_cb.isChecked() is True
+        settings = tab.collect_settings()
+        assert settings["lock_ratio"] is True
+
+    def test_output_path_persists(self):
+        tab = RenderCompositionTab()
+        tab._output_path_edit.setText("/tmp/test.mp4")
+        settings = tab.collect_settings()
+
+        tab2 = RenderCompositionTab()
+        tab2.apply_settings(settings)
+        assert tab2._output_path_edit.text() == "/tmp/test.mp4"
+
+    def test_model_round_trips(self):
+        tab = RenderCompositionTab()
+        tab._model.output_width = 3840
+        tab._model.output_height = 2160
+        settings = tab.collect_settings()
+
+        tab2 = RenderCompositionTab()
+        tab2.apply_settings(settings)
+        assert tab2._model.output_width == 3840
+        assert tab2._model.output_height == 2160

@@ -2529,6 +2529,7 @@ class RenderCompositionTab(BaseTab):
             "model": self._model.to_dict(),
             "output_path": self._output_path_edit.text(),
             "preset": self._preset_combo.currentText(),
+            "lock_ratio": self._lock_ratio_cb.isChecked(),
         }
 
     def apply_settings(self, data: dict[str, Any]) -> None:
@@ -2575,6 +2576,9 @@ class RenderCompositionTab(BaseTab):
         idx = self._preset_combo.findText(preset)
         if idx >= 0:
             self._preset_combo.setCurrentIndex(idx)
+
+        if "lock_ratio" in data:
+            self._lock_ratio_cb.setChecked(data["lock_ratio"])
 
     def _sync_output_ui(self) -> None:
         """Synchronize output spinboxes with the model."""
