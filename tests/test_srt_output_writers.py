@@ -388,7 +388,7 @@ class TestWriteJsonBundle:
         assert "config" in data
         assert "subtitles" in data
         assert "words" in data
-        assert data["bundle_version"] == 2
+        assert "bundle_version" not in data
 
     def test_write_json_bundle_values(self, tmp_path):
         """Test JSON bundle contains correct values."""
@@ -453,7 +453,7 @@ class TestWriteBundleFromSrt:
         assert out_path.exists()
         data = json.loads(out_path.read_text(encoding="utf-8"))
 
-        assert data["bundle_version"] == 2
+        assert "bundle_version" not in data
         assert data["model_name"] == "small"
         assert data["tool_version"] == "0.7.0"
         assert data["input_file"] == "test.mp3"

@@ -149,7 +149,7 @@ Long-running work across tabs is surfaced in one shared `JobStatusWidget`.
 - Inline table edits (text, timestamps, speaker) emit a structured signal from `SubtitleTableModel` instead of mutating the document directly. `SrtEditTab` converts these into undoable commands (`EditTextCommand`, `EditTimestampCommand`, `EditSpeakerCommand`).
 - Multiline text edits auto-resize their table rows via a `dataChanged` handler.
 - Audio loading is performed on a background `_WaveformLoadWorker(QRunnable)` with a monotonic request ID so stale completions are ignored. `WaveformView` exposes `set_loading_message()`, `set_error_message()`, and `clear_message()` for an overlay status API. Subtitle overlays are restored after background waveform loading completes.
-- Bundle JSON is a first-class input path. The tab can load/save bundle v2 with word timing, provenance, alignment metadata, and markdown source intact.
+- Bundle JSON is a first-class input path. The tab can load/save bundles with word timing, provenance, alignment metadata, and markdown source intact.
 - Word-level editing uses inline word rows in the table and separate word regions in the waveform, both backed by the same document/undo model.
 - All playback, edit, save/export, resync, and QA controls now live in the right sidebar together with the markdown-aware segment editor.
 

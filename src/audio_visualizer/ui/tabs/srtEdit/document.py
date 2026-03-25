@@ -438,7 +438,7 @@ class SubtitleDocument:
         logger.info("Loaded bundle with %d entries from %s", len(self._entries), path)
 
     def save_bundle(self, path: str) -> None:
-        """Save the current document as a JSON bundle v2.
+        """Save the current document as a JSON bundle.
 
         Preserves word timing data and provenance fields.
 
@@ -489,7 +489,6 @@ class SubtitleDocument:
             subtitles.append(sub_entry)
 
         payload = {
-            "bundle_version": 2,
             "subtitles": subtitles,
             "words": flat_words,
         }

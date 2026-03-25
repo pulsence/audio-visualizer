@@ -109,7 +109,7 @@ Waveform-synced subtitle editing with tab-scoped undo.
 - Inline table edits emit structured signals from `SubtitleTableModel` and are converted to undoable commands in the tab.
 - Multiline text edits auto-resize rows.
 - Audio loading runs on a background `_WaveformLoadWorker(QRunnable)` with a monotonic request ID to discard stale completions. `WaveformView` provides `set_loading_message()`, `set_error_message()`, and `clear_message()` overlay helpers.
-- Bundle v2 load/save, word-level timeline editing, markdown-aware editing, and right-sidebar controls are all part of the main edit path.
+- Bundle load/save, word-level timeline editing, markdown-aware editing, and right-sidebar controls are all part of the main edit path.
 
 ## RenderCompositionTab
 

@@ -413,9 +413,8 @@ class TestBundleLoadSave:
     """Test JSON bundle round-tripping through the document model."""
 
     def test_load_bundle(self, tmp_path):
-        """Load a v2 bundle and verify entries have words and provenance."""
+        """Load a bundle and verify entries have words and provenance."""
         bundle = {
-            "bundle_version": 2,
             "tool_version": "0.7.0",
             "input_file": "test.wav",
             "device_used": "cpu",
@@ -456,7 +455,7 @@ class TestBundleLoadSave:
         assert doc.is_dirty is False
 
     def test_save_bundle(self, tmp_path):
-        """Save a document with words as a v2 bundle."""
+        """Save a document with words as a bundle."""
         from audio_visualizer.srt.models import WordItem
 
         doc = SubtitleDocument()
@@ -478,7 +477,7 @@ class TestBundleLoadSave:
 
         assert doc.is_dirty is False
         data = json.loads(path.read_text())
-        assert data["bundle_version"] == 2
+        assert "bundle_version" not in data
         assert len(data["subtitles"]) == 1
         assert data["subtitles"][0]["id"] == "s1"
         assert len(data["subtitles"][0]["words"]) == 2

@@ -128,7 +128,6 @@ class TestSrtEditTabSessionIntegration:
     def test_load_bundle_file(self, tmp_path):
         """Loading a .json bundle populates words and provenance."""
         bundle = {
-            "bundle_version": 2,
             "subtitles": [
                 {
                     "id": "sub1",

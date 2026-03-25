@@ -245,7 +245,7 @@ def segments_to_jsonable(segments: List[Any], *, include_words: bool) -> List[Di
     return out
 
 
-def _build_v2_subtitles(
+def _build_subtitles(
     subs: List[SubtitleBlock],
     segments: List[Any],
     *,
@@ -254,7 +254,7 @@ def _build_v2_subtitles(
     compute_type_used: str,
     source_media_path: str,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Build v2 subtitle entries and a flat words list.
+    """Build subtitle entries and a flat words list.
 
     Returns (subtitles_list, flat_words_list).
     """
@@ -335,8 +335,8 @@ def write_json_bundle(
 ) -> None:
     """Write a complete JSON bundle with metadata, segments, and subtitles.
 
-    Emits bundle v2 format by default with stable IDs, normalized field
-    names, provenance fields, and a flat convenience ``words`` list.
+    Emits a bundle with stable IDs, normalized field names, provenance
+    fields, and a flat convenience ``words`` list.
 
     Args:
         out_path: Output file path
@@ -349,7 +349,7 @@ def write_json_bundle(
         tool_version: Tool version string
         model_name: Whisper model name used for transcription
     """
-    subtitles_v2, flat_words = _build_v2_subtitles(
+    subtitles_list, flat_words = _build_subtitles(
         subs,
         segments,
         model_name=model_name,
@@ -359,14 +359,13 @@ def write_json_bundle(
     )
 
     payload: Dict[str, Any] = {
-        "bundle_version": 2,
         "tool_version": tool_version,
         "input_file": input_file,
         "device_used": device_used,
         "compute_type_used": compute_type_used,
         "model_name": model_name,
         "config": dataclasses.asdict(cfg),
-        "subtitles": subtitles_v2,
+        "subtitles": subtitles_list,
         "words": flat_words,
     }
     ensure_parent_dir(out_path)
@@ -386,7 +385,7 @@ def write_bundle_from_srt(
     tool_version: str,
     cfg: Optional[ResolvedConfig] = None,
 ) -> None:
-    """Write a v2 JSON bundle from aligned cue data (bundle-from-SRT).
+    """Write a JSON bundle from aligned cue data (bundle-from-SRT).
 
     Preserves the original subtitle text exactly while attaching
     Whisper-aligned word timing and alignment quality metadata.
@@ -439,7 +438,6 @@ def write_bundle_from_srt(
         subtitles.append(sub_entry)
 
     payload: Dict[str, Any] = {
-        "bundle_version": 2,
         "tool_version": tool_version,
         "input_file": input_file,
         "device_used": device_used,

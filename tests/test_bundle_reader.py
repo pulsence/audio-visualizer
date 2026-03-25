@@ -1,4 +1,4 @@
-"""Tests for the srt.io.bundleReader module — v1/v2 normalization."""
+"""Tests for the srt.io.bundleReader module — unversioned bundle contract."""
 import json
 import pytest
 from pathlib import Path
@@ -14,45 +14,9 @@ from audio_visualizer.srt.models import WordItem
 # Fixtures: sample bundle payloads
 # ------------------------------------------------------------------
 
-def _v1_bundle() -> dict:
-    """Return a sample v1 bundle (no bundle_version key, uses 'word' field)."""
+def _bundle() -> dict:
+    """Return a sample bundle."""
     return {
-        "tool_version": "0.5.0",
-        "input_file": "speech.mp3",
-        "device_used": "cpu",
-        "compute_type_used": "int8",
-        "config": {"formatting": {}, "transcription": {}, "silence": {}},
-        "segments": [
-            {
-                "start": 0.0,
-                "end": 2.5,
-                "text": "Hello world",
-                "words": [
-                    {"start": 0.0, "end": 1.0, "word": "Hello"},
-                    {"start": 1.1, "end": 2.5, "word": "world"},
-                ],
-            },
-            {
-                "start": 3.0,
-                "end": 5.0,
-                "text": "Testing now",
-                "words": [
-                    {"start": 3.0, "end": 3.8, "word": "Testing"},
-                    {"start": 3.9, "end": 5.0, "word": "now"},
-                ],
-            },
-        ],
-        "subtitles": [
-            {"start": 0.0, "end": 2.5, "text": "Hello world"},
-            {"start": 3.0, "end": 5.0, "text": "Testing now"},
-        ],
-    }
-
-
-def _v2_bundle() -> dict:
-    """Return a sample v2 bundle."""
-    return {
-        "bundle_version": 2,
         "tool_version": "0.7.0",
         "input_file": "speech.mp3",
         "device_used": "cuda",
@@ -112,87 +76,103 @@ def _v2_bundle() -> dict:
     }
 
 
+def _minimal_bundle() -> dict:
+    """Return a minimal bundle with just subtitles."""
+    return {
+        "subtitles": [
+            {"start": 0.0, "end": 2.5, "text": "Hello world"},
+            {"start": 3.0, "end": 5.0, "text": "Testing now"},
+        ],
+    }
+
+
 # ------------------------------------------------------------------
 # Tests: normalize_bundle
 # ------------------------------------------------------------------
 
 
-class TestNormalizeV1:
-    def test_produces_v2(self):
-        result = normalize_bundle(_v1_bundle())
-        assert result["bundle_version"] == 2
-
+class TestNormalizeBundle:
     def test_preserves_metadata(self):
-        result = normalize_bundle(_v1_bundle())
-        assert result["tool_version"] == "0.5.0"
+        result = normalize_bundle(_bundle())
+        assert result["tool_version"] == "0.7.0"
         assert result["input_file"] == "speech.mp3"
-        assert result["device_used"] == "cpu"
+        assert result["device_used"] == "cuda"
 
+    def test_preserves_ids(self):
+        result = normalize_bundle(_bundle())
+        assert result["subtitles"][0]["id"] == "sub-001"
+
+    def test_words_are_word_items(self):
+        result = normalize_bundle(_bundle())
+        for w in result["words"]:
+            assert isinstance(w, WordItem)
+
+    def test_word_confidence_preserved(self):
+        result = normalize_bundle(_bundle())
+        w = result["words"][0]
+        assert w.confidence == 0.95
+
+    def test_speaker_label_preserved(self):
+        result = normalize_bundle(_bundle())
+        assert result["subtitles"][0]["speaker_label"] == "Speaker 1"
+
+    def test_model_name_preserved(self):
+        result = normalize_bundle(_bundle())
+        assert result["model_name"] == "large-v3"
+
+    def test_no_bundle_version_in_output(self):
+        result = normalize_bundle(_bundle())
+        assert "bundle_version" not in result
+
+    def test_words_linked_to_subtitles(self):
+        result = normalize_bundle(_bundle())
+        for sub in result["subtitles"]:
+            for w in sub["words"]:
+                assert w.subtitle_id == sub["id"]
+
+    def test_flat_words_list(self):
+        result = normalize_bundle(_bundle())
+        assert len(result["words"]) == 2
+
+    def test_subtitle_count(self):
+        result = normalize_bundle(_bundle())
+        assert len(result["subtitles"]) == 1
+
+
+class TestNormalizeMinimalBundle:
     def test_subtitles_have_ids(self):
-        result = normalize_bundle(_v1_bundle())
+        result = normalize_bundle(_minimal_bundle())
         for sub in result["subtitles"]:
             assert "id" in sub
             assert isinstance(sub["id"], str)
             assert len(sub["id"]) > 0
 
     def test_words_are_word_items(self):
-        result = normalize_bundle(_v1_bundle())
-        for w in result["words"]:
-            assert isinstance(w, WordItem)
-
-    def test_word_text_normalized(self):
-        """V1 'word' field is normalized to WordItem.text."""
-        result = normalize_bundle(_v1_bundle())
-        texts = [w.text for w in result["words"]]
-        assert "Hello" in texts
-        assert "world" in texts
-
-    def test_words_linked_to_subtitles(self):
-        result = normalize_bundle(_v1_bundle())
-        for sub in result["subtitles"]:
-            for w in sub["words"]:
-                assert w.subtitle_id == sub["id"]
-
-    def test_flat_words_list(self):
-        result = normalize_bundle(_v1_bundle())
-        assert len(result["words"]) == 4  # 2 words per subtitle x 2 subtitles
-
-    def test_subtitle_count(self):
-        result = normalize_bundle(_v1_bundle())
-        assert len(result["subtitles"]) == 2
+        result = normalize_bundle(_minimal_bundle())
+        # Minimal bundle has no words
+        assert result["words"] == []
 
     def test_original_text_set(self):
-        result = normalize_bundle(_v1_bundle())
+        result = normalize_bundle(_minimal_bundle())
         for sub in result["subtitles"]:
             assert sub["original_text"] == sub["text"]
 
+    def test_subtitle_count(self):
+        result = normalize_bundle(_minimal_bundle())
+        assert len(result["subtitles"]) == 2
 
-class TestNormalizeV2:
-    def test_preserves_version(self):
-        result = normalize_bundle(_v2_bundle())
-        assert result["bundle_version"] == 2
+    def test_defaults_for_missing_metadata(self):
+        result = normalize_bundle(_minimal_bundle())
+        assert result["tool_version"] == ""
+        assert result["input_file"] == ""
+        assert result["device_used"] == ""
 
-    def test_preserves_ids(self):
-        result = normalize_bundle(_v2_bundle())
-        assert result["subtitles"][0]["id"] == "sub-001"
-
-    def test_words_are_word_items(self):
-        result = normalize_bundle(_v2_bundle())
-        for w in result["words"]:
-            assert isinstance(w, WordItem)
-
-    def test_word_confidence_preserved(self):
-        result = normalize_bundle(_v2_bundle())
-        w = result["words"][0]
-        assert w.confidence == 0.95
-
-    def test_speaker_label_preserved(self):
-        result = normalize_bundle(_v2_bundle())
-        assert result["subtitles"][0]["speaker_label"] == "Speaker 1"
-
-    def test_model_name_preserved(self):
-        result = normalize_bundle(_v2_bundle())
-        assert result["model_name"] == "large-v3"
+    def test_ignores_legacy_bundle_version_key(self):
+        """Bundles with a legacy bundle_version key should still load fine."""
+        data = _bundle()
+        data["bundle_version"] = 2
+        result = normalize_bundle(data)
+        assert "bundle_version" not in result
 
 
 # ------------------------------------------------------------------
@@ -201,19 +181,18 @@ class TestNormalizeV2:
 
 
 class TestReadJsonBundle:
-    def test_read_v1_file(self, tmp_path):
-        path = tmp_path / "v1.json"
-        path.write_text(json.dumps(_v1_bundle()), encoding="utf-8")
+    def test_read_bundle_file(self, tmp_path):
+        path = tmp_path / "test.bundle.json"
+        path.write_text(json.dumps(_bundle()), encoding="utf-8")
         result = read_json_bundle(path)
-        assert result["bundle_version"] == 2
-        assert len(result["subtitles"]) == 2
-
-    def test_read_v2_file(self, tmp_path):
-        path = tmp_path / "v2.bundle.json"
-        path.write_text(json.dumps(_v2_bundle()), encoding="utf-8")
-        result = read_json_bundle(path)
-        assert result["bundle_version"] == 2
+        assert len(result["subtitles"]) == 1
         assert result["subtitles"][0]["id"] == "sub-001"
+
+    def test_read_minimal_bundle_file(self, tmp_path):
+        path = tmp_path / "minimal.json"
+        path.write_text(json.dumps(_minimal_bundle()), encoding="utf-8")
+        result = read_json_bundle(path)
+        assert len(result["subtitles"]) == 2
 
     def test_missing_file_raises(self):
         with pytest.raises(FileNotFoundError):
@@ -273,7 +252,7 @@ class TestBundleRoundTrip:
         )
 
         result = read_json_bundle(path)
-        assert result["bundle_version"] == 2
+        assert "bundle_version" not in result
         assert len(result["subtitles"]) == 1
         assert result["subtitles"][0]["text"] == "Hello world"
         assert len(result["words"]) >= 2

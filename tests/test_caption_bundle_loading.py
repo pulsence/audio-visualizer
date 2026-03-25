@@ -10,9 +10,8 @@ from audio_visualizer.caption.core.subtitle import SubtitleFile
 class TestSubtitleBundleLoading:
     """Tests for SubtitleFile.load_bundle() and bundle support in load()."""
 
-    def test_load_v2_bundle(self, tmp_path):
+    def test_load_bundle(self, tmp_path):
         bundle = {
-            "bundle_version": 2,
             "tool_version": "0.7.0",
             "input_file": "test.mp3",
             "device_used": "cpu",
@@ -54,7 +53,6 @@ class TestSubtitleBundleLoading:
 
     def test_bundle_has_word_timing(self, tmp_path):
         bundle = {
-            "bundle_version": 2,
             "subtitles": [
                 {
                     "start": 0.0,
@@ -82,7 +80,6 @@ class TestSubtitleBundleLoading:
 
     def test_bundle_without_words_no_word_timing(self, tmp_path):
         bundle = {
-            "bundle_version": 2,
             "subtitles": [
                 {
                     "start": 0.0,
@@ -103,7 +100,6 @@ class TestSubtitleBundleLoading:
     def test_load_json_via_generic_load(self, tmp_path):
         """SubtitleFile.load() should handle .json files by delegating to load_bundle()."""
         bundle = {
-            "bundle_version": 2,
             "subtitles": [
                 {
                     "start": 0.0,
@@ -149,32 +145,3 @@ class TestSubtitleBundleLoading:
         txt_path.write_text("plain text", encoding="utf-8")
         with pytest.raises(ValueError, match="Unsupported"):
             SubtitleFile.load(txt_path)
-
-    def test_v1_bundle_loading(self, tmp_path):
-        """V1 bundles should also load correctly."""
-        bundle = {
-            "input_file": "test.mp3",
-            "device_used": "cpu",
-            "compute_type_used": "int8",
-            "segments": [
-                {
-                    "words": [
-                        {"word": "Hello", "start": 0.0, "end": 0.5},
-                        {"word": "world", "start": 0.5, "end": 1.0},
-                    ]
-                }
-            ],
-            "subtitles": [
-                {"start": 0.0, "end": 1.0, "text": "Hello world"},
-            ],
-        }
-        bundle_path = tmp_path / "v1.json"
-        bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
-
-        sub = SubtitleFile.load_bundle(bundle_path)
-
-        assert sub.source_format == "bundle"
-        assert len(sub.subs.events) == 1
-        assert sub.subs.events[0].text == "Hello world"
-        # V1 bundles should also have word timing
-        assert sub.has_word_timing is True
