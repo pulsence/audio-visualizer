@@ -80,6 +80,7 @@ def build_preview_command(
 ) -> list[str]:
     """Build an FFmpeg command to extract a single preview frame."""
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    output_path = Path(output_path)
     cmd: list[str] = [ffmpeg, "-y"]
 
     layers = _get_renderable_layers(model)

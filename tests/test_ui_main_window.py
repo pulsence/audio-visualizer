@@ -220,6 +220,27 @@ class TestMainWindowSettings:
         # Restore
         main_window._apply_theme("off")
 
+    def test_render_composition_settings_round_trip_through_main_window(self, main_window):
+        """MainWindow collect/apply preserves persisted render-composition inputs."""
+        original = main_window._collect_settings()
+        idx = main_window._find_stack_index_for_tab_id("render_composition")
+        assert idx >= 0
+
+        tab = main_window._ensure_tab_instantiated(idx)
+        assert tab is not None
+
+        try:
+            tab._lock_ratio_cb.setChecked(False)
+            settings = main_window._collect_settings()
+
+            tab._lock_ratio_cb.setChecked(True)
+            main_window._apply_settings(settings)
+
+            assert tab._lock_ratio_cb.isChecked() is False
+            assert main_window._collect_settings()["tabs"]["render_composition"]["lock_ratio"] is False
+        finally:
+            main_window._apply_settings(original)
+
     def test_apply_theme_auto_preserves_auto_mode(self, main_window, monkeypatch):
         class _FakeStyleHints:
             def colorScheme(self):

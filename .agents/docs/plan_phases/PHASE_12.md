@@ -154,7 +154,7 @@ Fix the reported preview-play crash and keep the preview runtime within the Phas
 - Added regression tests for exception handling in play/pause and engine failure paths.
 
 ### Code Review (12.4)
-- Full test suite: **1376 passed**, no regressions from Phase 12 changes.
+- Full test suite: **1380 passed**, no regressions from Phase 12 changes.
 - No dead preview-worker code or references remain after cleanup.
 
 ### Manual Verification Checklist

@@ -709,6 +709,47 @@ class TestPreviewSection:
         assert tab._preview_tabs.tabText(0) == "Timeline"
         assert tab._preview_tabs.tabText(1) == "Layer"
 
+    def test_playhead_change_loads_preview_when_dirty(self, monkeypatch):
+        tab = RenderCompositionTab()
+        calls = {"load": 0, "seek": [], "layer": []}
+
+        def fake_load():
+            calls["load"] += 1
+            tab._preview_model_dirty = False
+
+        monkeypatch.setattr(tab, "_load_engine_data", fake_load)
+        monkeypatch.setattr(
+            tab._playback_engine,
+            "seek_from_timeline",
+            lambda ms: calls["seek"].append(ms),
+        )
+        monkeypatch.setattr(
+            tab,
+            "_update_layer_preview_from_engine",
+            lambda ms: calls["layer"].append(ms),
+        )
+
+        tab._preview_model_dirty = True
+        tab._on_playhead_changed(250)
+
+        assert calls["load"] == 1
+        assert calls["seek"] == [250]
+        assert calls["layer"] == [250]
+
+    def test_layer_selection_updates_preview_at_current_playhead(self, monkeypatch):
+        tab = RenderCompositionTab()
+        tab._model.add_layer(CompositionLayer(display_name="Layer 1", start_ms=0, end_ms=1000))
+        tab._model.add_layer(CompositionLayer(display_name="Layer 2", start_ms=0, end_ms=1000))
+        tab._refresh_layer_list()
+        tab._preview_time_spin.setValue(321)
+
+        seen = []
+        monkeypatch.setattr(tab, "_sync_preview_to_position", lambda ms: seen.append(ms))
+
+        tab._on_layer_selected(1)
+
+        assert seen == [321]
+
 
 # ------------------------------------------------------------------
 # Resolution presets

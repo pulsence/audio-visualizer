@@ -127,11 +127,13 @@ class RenderCompositionTab(BaseTab):
         self._playback_engine = None  # lazy init in _build_ui
         self._playback_position_from_engine = False  # feedback loop guard
         self._playback_unavailable_reason = ""
+        self._preview_model_dirty = True
 
         self._init_undo_stack(100)
         self._build_ui()
         self._setup_shortcuts()
         self._setup_playback_engine()
+        self.settings_changed.connect(self._mark_preview_dirty)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -815,9 +817,7 @@ class RenderCompositionTab(BaseTab):
         self._updating_ui = True
         self._preview_time_spin.setValue(ms)
         self._updating_ui = False
-        # Seek the playback engine without re-emitting position
-        if self._playback_engine is not None:
-            self._playback_engine.seek_from_timeline(ms)
+        self._sync_preview_to_position(ms)
 
     def _on_preview_time_changed(self, ms: int) -> None:
         """Sync preview spin with timeline playhead and playback engine."""
@@ -827,9 +827,20 @@ class RenderCompositionTab(BaseTab):
             return
         if hasattr(self, '_timeline'):
             self._timeline.set_playhead_ms(ms)
-        if self._playback_engine is not None:
-            self._playback_engine.seek_from_timeline(ms)
-            self._update_layer_preview_from_engine(ms)
+        self._sync_preview_to_position(ms)
+
+    def _mark_preview_dirty(self) -> None:
+        """Mark the preview as stale until the next synchronized seek."""
+        self._preview_model_dirty = True
+
+    def _sync_preview_to_position(self, ms: int) -> None:
+        """Keep timeline and layer previews synchronized to *ms*."""
+        if self._playback_engine is None:
+            return
+        if self._playback_engine.state != "playing" and self._preview_model_dirty:
+            self._load_engine_data()
+        self._playback_engine.seek_from_timeline(ms)
+        self._update_layer_preview_from_engine(ms)
 
     # ------------------------------------------------------------------
     # Session context
@@ -1031,6 +1042,7 @@ class RenderCompositionTab(BaseTab):
             output_width=self._model.output_width,
             output_height=self._model.output_height,
         )
+        self._preview_model_dirty = False
 
     def _on_engine_position_changed(self, ms: int) -> None:
         """Update timeline and spin from engine position (avoid feedback loops)."""
@@ -1197,6 +1209,7 @@ class RenderCompositionTab(BaseTab):
             if al is not None:
                 self._settings_stack.setCurrentIndex(1)
                 self._load_audio_layer_properties(al)
+        self._sync_preview_to_position(self._preview_time_spin.value())
 
     def _load_layer_properties(self, layer: CompositionLayer) -> None:
         """Populate the visual settings page with *layer*'s properties."""
