@@ -983,3 +983,35 @@ class TestSrtExportMarkdownStripping:
         content = Path(path).read_text(encoding="utf-8")
         assert "highlighted text" in content
         assert "==" not in content
+
+
+class TestHoverableRegionItem:
+    """Regression: hovering waveform boundaries must not throw TypeError."""
+
+    def test_hover_enter_changes_pen_width(self):
+        from PySide6.QtGui import QPen, QColor
+        from audio_visualizer.ui.tabs.srtEdit.waveformView import (
+            _HoverableRegionItem,
+            _HOVER_BORDER_WIDTH,
+            _NORMAL_BORDER_WIDTH,
+        )
+
+        region = _HoverableRegionItem(values=[1.0, 2.0])
+        # Simulate hover enter — must not raise
+        region.hoverEnterEvent(None)
+        for line in region.lines:
+            assert line.pen.width() == _HOVER_BORDER_WIDTH
+
+    def test_hover_leave_restores_pen_width(self):
+        from PySide6.QtGui import QPen, QColor
+        from audio_visualizer.ui.tabs.srtEdit.waveformView import (
+            _HoverableRegionItem,
+            _HOVER_BORDER_WIDTH,
+            _NORMAL_BORDER_WIDTH,
+        )
+
+        region = _HoverableRegionItem(values=[1.0, 2.0])
+        region.hoverEnterEvent(None)
+        region.hoverLeaveEvent(None)
+        for line in region.lines:
+            assert line.pen.width() == _NORMAL_BORDER_WIDTH

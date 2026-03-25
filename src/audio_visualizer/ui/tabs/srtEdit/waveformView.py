@@ -14,7 +14,7 @@ from typing import Optional
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QKeyEvent, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -66,14 +66,14 @@ class _HoverableRegionItem(pg.LinearRegionItem):
 
     def hoverEnterEvent(self, ev):
         for line in self.lines:
-            pen = line.pen()
+            pen = QPen(line.pen)
             pen.setWidth(_HOVER_BORDER_WIDTH)
             line.setPen(pen)
         super().hoverEnterEvent(ev)
 
     def hoverLeaveEvent(self, ev):
         for line in self.lines:
-            pen = line.pen()
+            pen = QPen(line.pen)
             pen.setWidth(_NORMAL_BORDER_WIDTH)
             line.setPen(pen)
         super().hoverLeaveEvent(ev)
