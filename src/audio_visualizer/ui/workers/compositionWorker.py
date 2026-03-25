@@ -18,6 +18,9 @@ from typing import Any
 from PySide6.QtCore import QRunnable
 
 from audio_visualizer.hwaccel import is_hardware_encoder
+from audio_visualizer.ui.tabs.renderComposition.evaluation import (
+    compute_composition_duration_ms,
+)
 from audio_visualizer.ui.tabs.renderComposition.filterGraph import (
     build_ffmpeg_command,
 )
@@ -117,7 +120,7 @@ class CompositionWorker(QRunnable):
             self._stage_data(selected_encoder),
         )
 
-        duration_s = self._model.get_duration_ms() / 1000.0
+        duration_s = compute_composition_duration_ms(self._model) / 1000.0
         if duration_s <= 0:
             duration_s = 10.0
 

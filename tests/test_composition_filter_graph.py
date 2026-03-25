@@ -9,6 +9,7 @@ from audio_visualizer.ui.tabs.renderComposition.filterGraph import (
     build_filter_graph,
     build_single_layer_preview_command,
     build_preview_command,
+    _build_behavior_filter,
     _build_enable_expr,
     _build_matte_filter,
     _duration_seconds,
@@ -743,4 +744,120 @@ class TestAudioVolumeAndMute:
         assert "volume=0.8" in cmd_str
         assert "volume=1.5" in cmd_str
         assert "amix=inputs=2" in cmd_str
+
+
+# ------------------------------------------------------------------
+# Behavior-after-end filter (freeze_last_frame tpad)
+# ------------------------------------------------------------------
+
+
+class TestBehaviorFilter:
+    def test_freeze_last_frame_generates_tpad(self):
+        layer = CompositionLayer(
+            source_kind="video",
+            source_duration_ms=3000,
+            start_ms=0,
+            end_ms=6000,
+            behavior_after_end="freeze_last_frame",
+        )
+        result = _build_behavior_filter(layer, None)
+        assert "tpad" in result
+        assert "stop_mode=clone" in result
+        assert "stop_duration=3" in result
+
+    def test_hide_behavior_returns_empty(self):
+        layer = CompositionLayer(
+            source_kind="video",
+            source_duration_ms=3000,
+            start_ms=0,
+            end_ms=6000,
+            behavior_after_end="hide",
+        )
+        assert _build_behavior_filter(layer, None) == ""
+
+    def test_loop_behavior_returns_empty(self):
+        layer = CompositionLayer(
+            source_kind="video",
+            source_duration_ms=3000,
+            start_ms=0,
+            end_ms=6000,
+            behavior_after_end="loop",
+        )
+        assert _build_behavior_filter(layer, None) == ""
+
+    def test_image_layer_no_tpad(self):
+        layer = CompositionLayer(
+            source_kind="image",
+            source_duration_ms=0,
+            start_ms=0,
+            end_ms=5000,
+            behavior_after_end="freeze_last_frame",
+        )
+        assert _build_behavior_filter(layer, None) == ""
+
+    def test_no_tpad_when_source_covers_duration(self):
+        layer = CompositionLayer(
+            source_kind="video",
+            source_duration_ms=5000,
+            start_ms=0,
+            end_ms=3000,
+            behavior_after_end="freeze_last_frame",
+        )
+        assert _build_behavior_filter(layer, None) == ""
+
+    def test_freeze_in_full_command(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="Freeze",
+            asset_path=Path("/tmp/short.mp4"),
+            source_kind="video",
+            source_duration_ms=2000,
+            start_ms=0,
+            end_ms=5000,
+            behavior_after_end="freeze_last_frame",
+            width=1920,
+            height=1080,
+        ))
+        graph = build_filter_graph(model)
+        assert "tpad" in graph
+        assert "stop_mode=clone" in graph
+
+
+# ------------------------------------------------------------------
+# Export timing parity with shared evaluation contract
+# ------------------------------------------------------------------
+
+
+class TestExportTimingParity:
+    def test_duration_uses_shared_contract(self):
+        """_duration_seconds should use compute_composition_duration_ms."""
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="L1", start_ms=0, end_ms=7000, enabled=True,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="A1", start_ms=0, source_duration_ms=12000, enabled=True,
+        ))
+        assert _duration_seconds(model) == 12.0
+
+    def test_audio_loop_uses_shared_contract(self):
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.mp4"),
+            width=1920, height=1080,
+            end_ms=15000,
+        ))
+        model.audio_layers.append(CompositionAudioLayer(
+            display_name="Looped",
+            asset_path=Path("/tmp/short.mp3"),
+            source_duration_ms=3000,
+            duration_ms=12000,
+            use_full_length=False,
+            enabled=True,
+        ))
+        cmd = build_ffmpeg_command(model, "/tmp/output.mp4")
+        assert "-stream_loop" in cmd
+        cmd_str = " ".join(cmd)
+        assert "atrim=duration=12" in cmd_str
 
