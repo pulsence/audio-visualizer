@@ -81,8 +81,6 @@ def migrate_settings(data: dict) -> dict:
 
     v1 → v2 migration:
     - Adds the ``"advanced"`` tab key.
-    - Rejects composition payloads that lack ``composition_schema_version``
-      (pre-center-origin data).
 
     Parameters
     ----------
@@ -116,24 +114,12 @@ def _migrate_v1_to_v2(data: dict) -> dict:
     """Migrate settings from v1 to v2.
 
     - Adds the ``"advanced"`` tab key.
-    - Rejects old composition payloads that lack ``composition_schema_version``.
     """
     logger.info("Migrating settings from v1 to v2.")
 
     # Add advanced tab key if missing
     tabs = data.get("tabs", {})
     tabs.setdefault("advanced", {})
-
-    # Reject old composition payloads (pre-center-origin)
-    comp_data = tabs.get("render_composition", {})
-    if comp_data and "composition" in comp_data:
-        comp_payload = comp_data["composition"]
-        if isinstance(comp_payload, dict) and "composition_schema_version" not in comp_payload:
-            logger.warning(
-                "Rejecting pre-v0.7.0 composition payload (no composition_schema_version). "
-                "Old top-left-origin coordinates are incompatible with center-origin."
-            )
-            comp_data.pop("composition", None)
 
     data["version"] = 2
     return data

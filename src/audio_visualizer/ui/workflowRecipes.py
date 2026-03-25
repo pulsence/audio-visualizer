@@ -198,19 +198,6 @@ def load_recipe(path: Path) -> WorkflowRecipe | None:
         logger.warning("Recipe file does not contain a JSON object: %s", path)
         return None
 
-    # Reject old composition payloads that lack composition_schema_version
-    tabs_data = data.get("tabs", {})
-    comp_data = tabs_data.get("render_composition", {})
-    if comp_data and "composition" in comp_data:
-        comp_payload = comp_data["composition"]
-        if isinstance(comp_payload, dict) and "composition_schema_version" not in comp_payload:
-            logger.warning(
-                "Rejecting recipe composition payload from %s: "
-                "missing composition_schema_version (pre-center-origin).",
-                path,
-            )
-            comp_data.pop("composition", None)
-
     try:
         recipe = WorkflowRecipe(
             version=data.get("version", RECIPE_SCHEMA_VERSION),

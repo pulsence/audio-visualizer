@@ -781,22 +781,22 @@ class TestResolutionPresets:
         assert data["resolution_preset"] == "4k"
 
     def test_model_from_dict_restores_preset(self):
-        data = {"composition_schema_version": 2, "resolution_preset": "2k", "output_width": 2560, "output_height": 1440}
+        data = {"resolution_preset": "2k", "output_width": 2560, "output_height": 1440}
         model = CompositionModel.from_dict(data)
         assert model.resolution_preset == "2k"
 
     def test_model_from_dict_defaults_to_custom(self):
         """Data without resolution_preset defaults to custom."""
-        data = {"composition_schema_version": 2, "output_width": 1280, "output_height": 720}
+        data = {"output_width": 1280, "output_height": 720}
         model = CompositionModel.from_dict(data)
         assert model.resolution_preset == "custom"
 
-    def test_model_from_dict_rejects_old_schema(self):
-        """Pre-v0.7.0 payloads without composition_schema_version are rejected."""
-        import pytest
-        data = {"output_width": 1920, "output_height": 1080}
-        with pytest.raises(ValueError, match="older coordinate system"):
-            CompositionModel.from_dict(data)
+    def test_model_from_dict_accepts_any_payload(self):
+        """from_dict accepts payloads regardless of schema version."""
+        data = {"output_width": 1280, "output_height": 720}
+        model = CompositionModel.from_dict(data)
+        assert model.output_width == 1280
+        assert model.output_height == 720
 
     def test_tab_has_resolution_preset_combo(self):
         tab = RenderCompositionTab()
@@ -1055,7 +1055,7 @@ class TestCenterOriginSerialization:
 
     def test_center_x_y_deserialized(self):
         data = {
-            "composition_schema_version": 2,
+
             "layers": [{
                 "id": "test-id",
                 "display_name": "Test",
@@ -1091,7 +1091,7 @@ class TestAudioVolumeMutePersistence:
 
     def test_volume_muted_deserialized(self):
         data = {
-            "composition_schema_version": 2,
+
             "audio_layers": [{
                 "id": "aud-1",
                 "display_name": "Audio",
@@ -1108,7 +1108,7 @@ class TestAudioVolumeMutePersistence:
 
     def test_volume_muted_defaults(self):
         data = {
-            "composition_schema_version": 2,
+
             "audio_layers": [{
                 "id": "aud-2",
                 "display_name": "Audio",
@@ -1144,7 +1144,7 @@ class TestLinkedLayerPersistence:
 
     def test_linked_layer_id_deserialized(self):
         data = {
-            "composition_schema_version": 2,
+
             "layers": [{
                 "id": "vid-1",
                 "display_name": "Video",
@@ -1446,7 +1446,7 @@ class TestCompositionModelAudioLayers:
 
     def test_from_dict_restores_audio_layers(self):
         data = {
-            "composition_schema_version": 2,
+
             "audio_layers": [
                 {
                     "id": "al-1",
@@ -1482,7 +1482,7 @@ class TestCompositionModelAudioLayers:
     def test_from_dict_ignores_legacy_audio_source_fields(self):
         """Legacy audio_source_path/audio_source_asset_id fields are ignored."""
         data = {
-            "composition_schema_version": 2,
+
             "audio_source_asset_id": "audio-legacy",
             "audio_source_path": "/tmp/legacy_audio.mp3",
         }
@@ -1492,7 +1492,7 @@ class TestCompositionModelAudioLayers:
     def test_from_dict_audio_layers_present(self):
         """audio_layers in data are restored correctly."""
         data = {
-            "composition_schema_version": 2,
+
             "audio_layers": [
                 {"id": "al-1", "display_name": "New Track", "asset_path": "/tmp/new.mp3"},
             ],
@@ -2458,41 +2458,18 @@ class TestCapabilities:
         assert "pyav" in summary
 
 
-class TestApplySettingsLegacyComposition:
-    """Regression: old coordinate-system payloads must not crash the tab."""
+class TestApplySettingsComposition:
+    """Composition model restore through apply_settings."""
 
-    def test_apply_settings_with_old_composition_shows_warning(self, monkeypatch):
-        """apply_settings with a pre-center-origin payload warns instead of crashing."""
+    def test_apply_settings_with_minimal_payload(self):
+        """A minimal model payload restores without crashing."""
         tab = RenderCompositionTab()
-        old_model_data = {
-            "output_width": 1920,
-            "output_height": 1080,
-            # Missing composition_schema_version → triggers ValueError
-        }
-        warned = []
-        monkeypatch.setattr(
-            QMessageBox, "warning",
-            lambda *args, **kwargs: warned.append(True),
-        )
-        # Must not raise
-        tab.apply_settings({"model": old_model_data})
-        # Warning is deferred via QTimer.singleShot — process pending events
-        QApplication.processEvents()
-        assert len(warned) == 1
-
-    def test_apply_settings_with_old_composition_keeps_default_model(self, monkeypatch):
-        """Tab model stays at defaults after rejecting an old payload."""
-        tab = RenderCompositionTab()
-        default_layers = len(tab._model.layers)
-        old_model_data = {"composition_schema_version": 1}
-        monkeypatch.setattr(
-            QMessageBox, "warning", lambda *args, **kwargs: None,
-        )
-        tab.apply_settings({"model": old_model_data})
-        assert len(tab._model.layers) == default_layers
+        tab.apply_settings({"model": {"output_width": 1280, "output_height": 720}})
+        assert tab._model.output_width == 1280
+        assert tab._model.output_height == 720
 
     def test_apply_settings_with_valid_composition_succeeds(self):
-        """A valid current-schema payload restores normally."""
+        """A full round-tripped payload restores normally."""
         tab = RenderCompositionTab()
         valid_data = tab._model.to_dict()
         tab.apply_settings({"model": valid_data})

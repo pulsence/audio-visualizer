@@ -2467,41 +2467,22 @@ class RenderCompositionTab(BaseTab):
     def apply_settings(self, data: dict[str, Any]) -> None:
         model_data = data.get("model")
         if model_data:
-            try:
-                self._model = CompositionModel.from_dict(model_data)
-            except ValueError:
-                logger.warning(
-                    "Discarding incompatible composition payload — "
-                    "old coordinate system detected"
-                )
-                # Show warning after event loop settles to avoid blocking
-                # startup geometry restoration with a modal dialog.
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: QMessageBox.warning(
-                    self,
-                    "Incompatible Composition",
-                    "The saved composition uses an older coordinate system "
-                    "that is incompatible with v0.7.0. "
-                    "The composition has been reset to defaults. "
-                    "Please recreate your composition.",
-                ))
-                # Keep the default model — tab stays usable
-            else:
-                self._refresh_layer_list()
-                self._refresh_asset_combos()
-                self._sync_output_ui()
-                self._refresh_timeline()
-                current_row_type, current_row_id = self._unified_row_type(
-                    self._layer_list.currentRow()
-                )
-                if current_row_type == "visual":
-                    layer = self._model.get_layer(current_row_id)
-                    if layer is not None:
-                        self._load_layer_properties(layer)
-                elif current_row_type == "audio":
-                    al = self._model.get_audio_layer(current_row_id)
-                    if al is not None:
-                        self._load_audio_layer_properties(al)
+            self._model = CompositionModel.from_dict(model_data)
+            self._refresh_layer_list()
+            self._refresh_asset_combos()
+            self._sync_output_ui()
+            self._refresh_timeline()
+            current_row_type, current_row_id = self._unified_row_type(
+                self._layer_list.currentRow()
+            )
+            if current_row_type == "visual":
+                layer = self._model.get_layer(current_row_id)
+                if layer is not None:
+                    self._load_layer_properties(layer)
+            elif current_row_type == "audio":
+                al = self._model.get_audio_layer(current_row_id)
+                if al is not None:
+                    self._load_audio_layer_properties(al)
 
         output_path = data.get("output_path", "")
         if output_path:
