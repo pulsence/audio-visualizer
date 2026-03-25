@@ -134,6 +134,17 @@ The shell does not auto-open preview dialogs on completion.
 - Audio layers support `adelay`, `atrim`, looping, and `amix=duration=longest` for layered audio output.
 - Timeline loop markers come from the same source-duration data used to build the FFmpeg command.
 
+### Shared evaluation contract
+
+`audio_visualizer.ui.tabs.renderComposition.evaluation` provides pure functions that both live preview (`playbackEngine.py`) and FFmpeg export (`filterGraph.py`) import for timing decisions:
+
+- `evaluate_visual_layer()` — maps composition time to source time, handling loop/freeze/hide behaviors.
+- `evaluate_audio_layer()` — maps composition time to audio source time with activity window checking.
+- `compute_composition_duration_ms()` — canonical composition duration from all enabled layers.
+- `visual_needs_input_loop()` / `audio_needs_input_loop()` — whether `-stream_loop -1` is needed.
+
+This eliminates the previous duplication where `PlaybackEngine._layer_source_position_ms()` and `filterGraph._build_enable_expr()` / `_add_visual_input()` carried parallel timing logic.
+
 ### Cancellation and failure handling
 
 - `CompositionWorker.cancel()` terminates the FFmpeg subprocess.

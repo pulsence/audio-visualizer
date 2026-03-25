@@ -23,6 +23,15 @@ from PySide6.QtCore import QObject, QTimer, Signal, Qt, QRect, QRectF
 from PySide6.QtGui import QImage, QPainter, QColor
 from PySide6.QtWidgets import QWidget
 
+from audio_visualizer.ui.tabs.renderComposition.evaluation import (
+    evaluate_visual_layer,
+    evaluate_audio_layer,
+)
+from audio_visualizer.ui.tabs.renderComposition.model import (
+    CompositionAudioLayer,
+    CompositionLayer,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -326,15 +335,18 @@ class _AudioPlayer:
                 continue
 
             volume = layer_info.get("volume", 1.0)
-            layer_start_ms = layer_info.get("start_ms", 0)
-            layer_duration_ms = layer_info.get("duration_ms", 0)
 
-            # Calculate sample offset into this layer's audio
-            offset_ms = pos_ms - layer_start_ms
-            if offset_ms < 0:
+            # Use shared evaluation contract for activity check
+            al = CompositionAudioLayer(
+                start_ms=int(layer_info.get("start_ms", 0)),
+                duration_ms=int(layer_info.get("duration_ms", 0)),
+                use_full_length=int(layer_info.get("duration_ms", 0)) <= 0,
+                source_duration_ms=int(layer_info.get("duration_ms", 0)),
+            )
+            ev = evaluate_audio_layer(al, int(pos_ms))
+            if not ev.is_active or ev.source_time_ms is None:
                 continue
-            if layer_duration_ms > 0 and offset_ms >= layer_duration_ms:
-                continue
+            offset_ms = ev.source_time_ms
 
             sample_offset = int(offset_ms * self._sample_rate / 1000)
             if sample_offset >= len(audio_data):
@@ -1084,25 +1096,19 @@ class PlaybackEngine(QObject):
             return None
 
     def _layer_source_position_ms(self, layer: dict, composition_ms: int) -> int | None:
-        """Map composition time to source time for a visual layer."""
-        start_ms = int(layer.get("start_ms", 0))
-        end_ms = int(layer.get("end_ms", 0))
-        if composition_ms < start_ms:
-            return None
-        if end_ms > start_ms and composition_ms >= end_ms:
-            return None
+        """Map composition time to source time for a visual layer.
 
-        source_ms = max(0, composition_ms - start_ms)
-        source_duration_ms = int(layer.get("source_duration_ms", 0))
-        behavior = layer.get("behavior_after_end", "hide")
-
-        if source_duration_ms > 0 and source_ms >= source_duration_ms:
-            if behavior == "loop":
-                return source_ms % source_duration_ms
-            if behavior == "freeze_last_frame":
-                return max(0, source_duration_ms - 1)
-            return None
-        return source_ms
+        Delegates to the shared :func:`evaluate_visual_layer` contract
+        so preview and export use identical timing semantics.
+        """
+        cl = CompositionLayer(
+            start_ms=int(layer.get("start_ms", 0)),
+            end_ms=int(layer.get("end_ms", 0)),
+            source_duration_ms=int(layer.get("source_duration_ms", 0)),
+            behavior_after_end=layer.get("behavior_after_end", "hide"),
+        )
+        result = evaluate_visual_layer(cl, composition_ms)
+        return result.source_time_ms
 
     def _worker_seek_ms(self, layer: dict, composition_ms: int) -> int:
         """Return the source seek target for a decode worker."""

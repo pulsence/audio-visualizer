@@ -10,6 +10,11 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from audio_visualizer.ui.tabs.renderComposition.evaluation import (
+    audio_needs_input_loop,
+    compute_composition_duration_ms,
+    visual_needs_input_loop,
+)
 from audio_visualizer.ui.tabs.renderComposition.model import (
     CompositionAudioLayer,
     CompositionLayer,
@@ -301,10 +306,7 @@ def _add_visual_input(cmd: list[str], layer: CompositionLayer) -> None:
     path = _resolve_layer_path(layer)
     if not path:
         return
-    requested = layer.effective_duration_ms()
-    if (layer.source_kind == "video"
-            and layer.source_duration_ms > 0
-            and requested > layer.source_duration_ms):
+    if visual_needs_input_loop(layer):
         cmd.extend(["-stream_loop", "-1", "-i", str(path)])
     else:
         cmd.extend(["-i", str(path)])
@@ -312,8 +314,7 @@ def _add_visual_input(cmd: list[str], layer: CompositionLayer) -> None:
 
 def _add_audio_input(cmd: list[str], al: CompositionAudioLayer) -> None:
     """Add input arguments for an audio layer, with looping if needed."""
-    eff_dur = al.effective_duration_ms()
-    if al.source_duration_ms > 0 and eff_dur > al.source_duration_ms:
+    if audio_needs_input_loop(al):
         cmd.extend(["-stream_loop", "-1", "-i", str(al.asset_path)])
     else:
         cmd.extend(["-i", str(al.asset_path)])
@@ -321,7 +322,7 @@ def _add_audio_input(cmd: list[str], al: CompositionAudioLayer) -> None:
 
 def _duration_seconds(model: CompositionModel) -> float:
     """Return composition duration in seconds."""
-    dur_ms = model.get_duration_ms()
+    dur_ms = compute_composition_duration_ms(model)
     if dur_ms <= 0:
         return 10.0  # fallback
     return dur_ms / 1000.0
@@ -421,9 +422,23 @@ def _build_timeline_filter(layer: CompositionLayer, model: CompositionModel) -> 
 
 
 def _build_behavior_filter(layer: CompositionLayer, model: CompositionModel) -> str:
-    """Build filter for behavior_after_end."""
-    del layer, model
-    return ""
+    """Build filter for behavior_after_end.
+
+    For ``freeze_last_frame``, generates a ``tpad`` filter that clones
+    the last frame until the layer's effective duration is filled.
+    """
+    del model
+    if layer.behavior_after_end != "freeze_last_frame":
+        return ""
+    if layer.source_kind != "video":
+        return ""
+    requested_ms = layer.effective_duration_ms()
+    source_ms = layer.source_duration_ms
+    if source_ms <= 0 or requested_ms <= source_ms:
+        return ""
+    pad_ms = requested_ms - source_ms
+    pad_s = pad_ms / 1000.0
+    return f"tpad=stop_mode=clone:stop_duration={pad_s:.3f}".rstrip("0").rstrip(".")
 
 
 def _build_enable_expr(layer: CompositionLayer) -> str:
