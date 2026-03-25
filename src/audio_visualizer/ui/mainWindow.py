@@ -827,9 +827,8 @@ class MainWindow(QMainWindow):
         # UI state
         ui_state = data.get("ui", {})
         window = ui_state.get("window", {})
-        if window.get("maximized"):
-            self.showMaximized()
-        else:
+        should_maximize = bool(window.get("maximized"))
+        if not should_maximize:
             w = window.get("width", 1600)
             h = window.get("height", 1000)
             self.resize(w, h)
@@ -858,6 +857,11 @@ class MainWindow(QMainWindow):
             self._sidebar.set_active(idx)
             self._stack.setCurrentIndex(idx)
         self._update_undo_actions()
+
+        # Apply maximized state last so tab instantiation and layout
+        # changes don't override it.
+        if should_maximize:
+            self.showMaximized()
 
     def _save_settings_to_path(self, path: Path) -> bool:
         try:
