@@ -7,6 +7,7 @@ an FFmpeg-based render pipeline.  Supports full undo/redo.
 from __future__ import annotations
 
 import copy
+from functools import wraps
 import logging
 import uuid
 from pathlib import Path
@@ -99,6 +100,9 @@ _OUTPUT_FILTERS = (
 )
 
 _MATTE_MODES = ("none", "colorkey", "chromakey", "lumakey")
+_DEFAULT_TIMELINE_FIT_MAX_MS = 3 * 60 * 1000
+_EDITOR_HANDLER_ERROR_TEXT = "Editor action failed — check logs for details."
+_RENDER_HANDLER_ERROR_TEXT = "Render action failed — check logs for details."
 
 
 class RenderCompositionTab(BaseTab):
@@ -133,10 +137,77 @@ class RenderCompositionTab(BaseTab):
         self._preview_controller = None  # set up after engine
 
         self._init_undo_stack(100)
+        self._wrap_ui_handlers()
         self._build_ui()
         self._setup_shortcuts()
         self._setup_playback_engine()
         self.settings_changed.connect(self._mark_preview_dirty)
+
+    def _wrap_ui_handlers(self) -> None:
+        """Wrap UI entry points so signal/event failures never disappear silently."""
+        handler_names = {
+            name
+            for name in dir(type(self))
+            if name.startswith("_on_")
+        }
+        handler_names.update({"eventFilter", "_refresh_asset_combos", "_mark_preview_dirty"})
+        for name in handler_names:
+            handler = getattr(self, name, None)
+            if handler is None or not callable(handler):
+                continue
+            if getattr(handler, "_render_ui_guarded", False):
+                continue
+            default_return = False if name == "eventFilter" else None
+            setattr(
+                self,
+                name,
+                self._make_safe_ui_handler(name, handler, default_return=default_return),
+            )
+
+    def _make_safe_ui_handler(
+        self,
+        handler_name: str,
+        handler,
+        *,
+        default_return: Any,
+    ):
+        @wraps(handler)
+        def wrapped(*args, **kwargs):
+            try:
+                return handler(*args, **kwargs)
+            except Exception:
+                self._handle_ui_handler_failure(handler_name)
+                return default_return
+
+        wrapped._render_ui_guarded = True
+        return wrapped
+
+    def _handle_ui_handler_failure(self, handler_name: str) -> None:
+        """Log and surface UI-handler failures that would otherwise vanish into Qt."""
+        logger.exception("Render Composition UI handler %s failed.", handler_name)
+        label_attr = "_status_label" if self._is_render_status_handler(handler_name) else "_preview_status_label"
+        message = (
+            _RENDER_HANDLER_ERROR_TEXT
+            if label_attr == "_status_label"
+            else _EDITOR_HANDLER_ERROR_TEXT
+        )
+        label = getattr(self, label_attr, None)
+        if label is not None:
+            label.setText(message)
+        timeline = getattr(self, "_timeline", None)
+        if timeline is not None and hasattr(timeline, "cancel_active_interaction"):
+            try:
+                timeline.cancel_active_interaction()
+            except Exception:
+                logger.exception(
+                    "Render Composition UI failure recovery could not reset the timeline interaction."
+                )
+
+    def _is_render_status_handler(self, handler_name: str) -> bool:
+        return handler_name.startswith("_on_render") or handler_name in {
+            "_on_start_render",
+            "_on_cancel_render",
+        }
 
     # ------------------------------------------------------------------
     # UI construction
@@ -688,7 +759,7 @@ class RenderCompositionTab(BaseTab):
     # Timeline helpers
     # ------------------------------------------------------------------
 
-    def _refresh_timeline(self) -> None:
+    def _refresh_timeline(self, *, fit_view: bool = False) -> None:
         """Rebuild timeline items from model."""
         from audio_visualizer.ui.tabs.renderComposition.timelineWidget import TimelineItem
 
@@ -718,6 +789,8 @@ class RenderCompositionTab(BaseTab):
             ))
         if hasattr(self, "_timeline"):
             self._timeline.set_items(items)
+            if fit_view:
+                self._timeline.fit_visible_duration(_DEFAULT_TIMELINE_FIT_MAX_MS)
 
     def _on_timeline_item_selected(self, item_id: str) -> None:
         """Sync timeline selection with unified layer list."""
@@ -1213,6 +1286,29 @@ class RenderCompositionTab(BaseTab):
         if row_type == "audio" and row_id:
             return self._model.get_audio_layer(row_id)
         return None
+
+    def _flush_pending_editor_state(self) -> None:
+        """Commit pending matte editor values into the selected layer."""
+        if self._updating_ui:
+            return
+
+        layer = self._selected_layer()
+        if layer is None:
+            return
+
+        layer.matte_settings = {
+            "mode": self._matte_mode_combo.currentText(),
+            "key_target": self._key_color_edit.text(),
+            "threshold": self._threshold_spin.value(),
+            "similarity": self._similarity_spin.value(),
+            "blend": self._blend_spin.value(),
+            "softness": self._softness_spin.value(),
+            "erode": self._erode_spin.value(),
+            "dilate": self._dilate_spin.value(),
+            "feather": self._feather_spin.value(),
+            "despill": self._despill_cb.isChecked(),
+            "invert": self._invert_cb.isChecked(),
+        }
 
     def _on_layer_selected(self, row: int) -> None:
         """Update property panels when a layer is selected in the unified list."""
@@ -1973,7 +2069,8 @@ class RenderCompositionTab(BaseTab):
 
     def _on_pick_key_from_preview(self) -> None:
         """Start pick-from-preview mode for key color."""
-        pixmap = self._preview_label.grab()
+        preview_widget = self._active_pick_preview_widget()
+        pixmap = self._grab_pick_preview_pixmap(preview_widget)
         if pixmap is None or pixmap.isNull():
             QMessageBox.information(
                 self,
@@ -1982,30 +2079,62 @@ class RenderCompositionTab(BaseTab):
             )
             return
         self._picking_key_color = True
-        self._preview_label.setCursor(QCursor(Qt.CursorShape.CrossCursor))
-        self._preview_label.setFocus(Qt.FocusReason.OtherFocusReason)
-        self._preview_label.installEventFilter(self)
+        for widget in self._pick_preview_widgets():
+            widget.setCursor(QCursor(Qt.CursorShape.CrossCursor))
+            widget.installEventFilter(self)
+        preview_widget.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """Handle pick-from-preview mouse events."""
-        if obj is self._preview_label and self._picking_key_color:
-            if event.type() == QEvent.Type.MouseButtonPress:
-                if event.button() == Qt.MouseButton.RightButton:
-                    self._cancel_pick_mode()
+        try:
+            if obj in self._pick_preview_widgets() and self._picking_key_color:
+                if event.type() == QEvent.Type.MouseButtonPress:
+                    if event.button() == Qt.MouseButton.RightButton:
+                        self._cancel_pick_mode()
+                        return True
+                    if event.button() == Qt.MouseButton.LeftButton:
+                        self._sample_preview_color(event.position().toPoint(), obj)
+                        return True
                     return True
-                if event.button() == Qt.MouseButton.LeftButton:
-                    self._sample_preview_color(event.position().toPoint())
-                    return True
-                return True
-            if event.type() == QEvent.Type.KeyPress:
-                if event.key() == Qt.Key.Key_Escape:
-                    self._cancel_pick_mode()
-                    return True
+                if event.type() == QEvent.Type.KeyPress:
+                    if event.key() == Qt.Key.Key_Escape:
+                        self._cancel_pick_mode()
+                        return True
+        except Exception:
+            logger.exception("Render Composition preview color picking failed.")
+            self._preview_status_label.setText(
+                "Color picking failed — check logs for details."
+            )
+            self._cancel_pick_mode()
+            return True
         return super().eventFilter(obj, event)
 
-    def _sample_preview_color(self, click_pos) -> None:
-        """Sample color at *click_pos* from the compositor widget."""
-        pixmap = self._preview_label.grab()
+    def _pick_preview_widgets(self) -> tuple[QWidget, ...]:
+        """Return all preview widgets that can participate in color picking."""
+        return (self._compositor_widget, self._layer_preview_label)
+
+    def _active_pick_preview_widget(self) -> QWidget:
+        """Return the preview widget the user is currently looking at."""
+        current = self._preview_tabs.currentWidget()
+        if current is self._layer_preview_label:
+            return self._layer_preview_label
+        return self._compositor_widget
+
+    def _grab_pick_preview_pixmap(self, preview_widget: QWidget) -> QPixmap | None:
+        """Return a pixmap for *preview_widget* when color picking is possible."""
+        if preview_widget is self._layer_preview_label:
+            layer_pixmap = self._layer_preview_label.pixmap()
+            if layer_pixmap is None or layer_pixmap.isNull():
+                return None
+        pixmap = preview_widget.grab()
+        if pixmap is None or pixmap.isNull():
+            return
+        return pixmap
+
+    def _sample_preview_color(self, click_pos, preview_widget: QWidget | None = None) -> None:
+        """Sample color at *click_pos* from the active preview widget."""
+        preview_widget = preview_widget or self._active_pick_preview_widget()
+        pixmap = self._grab_pick_preview_pixmap(preview_widget)
         if pixmap is None or pixmap.isNull():
             self._cancel_pick_mode()
             return
@@ -2026,8 +2155,9 @@ class RenderCompositionTab(BaseTab):
     def _cancel_pick_mode(self) -> None:
         """Exit pick-from-preview mode."""
         self._picking_key_color = False
-        self._preview_label.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
-        self._preview_label.removeEventFilter(self)
+        for widget in self._pick_preview_widgets():
+            widget.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+            widget.removeEventFilter(self)
 
     # ------------------------------------------------------------------
     # Audio layer management
@@ -2337,6 +2467,7 @@ class RenderCompositionTab(BaseTab):
     # ------------------------------------------------------------------
 
     def _on_start_render(self) -> None:
+        self._flush_pending_editor_state()
         valid, msg = self.validate_settings()
         if not valid:
             QMessageBox.warning(self, "Validation Error", msg)
@@ -2484,6 +2615,7 @@ class RenderCompositionTab(BaseTab):
         return True, ""
 
     def collect_settings(self) -> dict[str, Any]:
+        self._flush_pending_editor_state()
         return {
             "model": self._model.to_dict(),
             "output_path": self._output_path_edit.text(),
@@ -2498,7 +2630,7 @@ class RenderCompositionTab(BaseTab):
             self._refresh_layer_list()
             self._refresh_asset_combos()
             self._sync_output_ui()
-            self._refresh_timeline()
+            self._refresh_timeline(fit_view=True)
             current_row_type, current_row_id = self._unified_row_type(
                 self._layer_list.currentRow()
             )

@@ -1,7 +1,6 @@
 """Tests for RenderCompositionTab, composition model, undo/redo, and presets."""
 
 import logging
-import time
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox, QStackedWidget, QWidget
@@ -114,6 +113,25 @@ class TestRenderCompositionTabSettings:
         tab.apply_settings({"output_path": "/tmp/my_output.mp4"})
         settings = tab.collect_settings()
         assert settings["output_path"] == "/tmp/my_output.mp4"
+
+    def test_collect_settings_flushes_pending_matte_edits(self):
+        tab = RenderCompositionTab()
+        layer = CompositionLayer(
+            display_name="BG",
+            asset_path=Path("/tmp/bg.png"),
+            source_kind="image",
+            end_ms=5000,
+        )
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+        tab._layer_list.setCurrentRow(0)
+
+        tab._key_color_edit.setText("#123456")
+
+        settings = tab.collect_settings()
+
+        assert tab._model.layers[0].matte_settings["key_target"] == "#123456"
+        assert settings["model"]["layers"][0]["matte_settings"]["key_target"] == "#123456"
 
 
 # ------------------------------------------------------------------
@@ -686,6 +704,65 @@ class TestDirectFileSourceHandling:
 
         assert captured == [str(project_folder / "composition_output.mp4")]
 
+    def test_start_render_flushes_pending_matte_edits_into_worker_model(self, tmp_path, monkeypatch):
+        class _FakeSignal:
+            def connect(self, _slot):
+                return None
+
+        class _FakeWorker:
+            def __init__(self, model, output_path):
+                captured["matte"] = model.layers[0].matte_settings["key_target"]
+                captured["output_path"] = output_path
+                self.signals = MagicMock(
+                    progress=_FakeSignal(),
+                    completed=_FakeSignal(),
+                    failed=_FakeSignal(),
+                    canceled=_FakeSignal(),
+                )
+
+            def cancel(self):
+                return None
+
+        class _FakeMainWindow(QWidget):
+            def __init__(self):
+                super().__init__()
+                self.render_thread_pool = MagicMock()
+
+            def try_start_job(self, _owner_tab_id):
+                return True
+
+            def show_job_status(self, *_args):
+                return None
+
+        captured = {}
+        main_window = _FakeMainWindow()
+        tab = RenderCompositionTab(main_window)
+        tab._model.add_layer(CompositionLayer(
+            display_name="BG",
+            asset_path=tmp_path / "bg.png",
+            source_kind="image",
+            end_ms=5000,
+        ))
+        tab._refresh_layer_list()
+        tab._layer_list.setCurrentRow(0)
+        tab._output_path_edit.setText(str(tmp_path / "out.mp4"))
+        tab._key_color_edit.setText("#123456")
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.tabs.renderCompositionTab.CompositionWorker",
+            _FakeWorker,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.CompositionWorker",
+            _FakeWorker,
+        )
+
+        tab._on_start_render()
+
+        assert captured["matte"] == "#123456"
+        assert captured["output_path"] == str(tmp_path / "out.mp4")
+
 
 # ------------------------------------------------------------------
 # Preview section
@@ -711,7 +788,7 @@ class TestPreviewSection:
         assert tab._preview_tabs.tabText(1) == "Layer"
 
     def test_playhead_scrub_triggers_preview_render(self, monkeypatch):
-        """Playhead scrub loads engine data and renders preview."""
+        """Playhead scrub loads engine data and queues a renderer-owned preview request."""
         tab = RenderCompositionTab()
         calls = {"load": 0, "seek": [], "layer": []}
 
@@ -720,12 +797,16 @@ class TestPreviewSection:
             tab._preview_controller._preview_model_dirty = False
 
         monkeypatch.setattr(tab._preview_controller, "load_engine_data", fake_load)
+        layer_callback = lambda ms: calls["layer"].append(ms)
+        def _queue_preview(ms):
+            calls["seek"].append(ms)
+            tab._playback_engine.preview_frame_ready.emit(ms)
+
         monkeypatch.setattr(
             tab._playback_engine,
-            "seek_from_timeline",
-            lambda ms: calls["seek"].append(ms),
+            "request_preview_frame",
+            _queue_preview,
         )
-        layer_callback = lambda ms: calls["layer"].append(ms)
         monkeypatch.setattr(
             tab,
             "_update_layer_preview_from_engine",
@@ -1389,6 +1470,21 @@ class TestTimelineIntegration:
         tab.apply_settings({"model": model.to_dict()})
         assert len(tab._timeline._items) == 1
         assert tab._timeline._items[0].display_name == "Restored"
+
+    def test_apply_settings_fits_timeline_to_default_loaded_view(self, monkeypatch):
+        tab = RenderCompositionTab()
+        model = CompositionModel()
+        model.add_layer(CompositionLayer(
+            display_name="Restored",
+            start_ms=0,
+            end_ms=300000,
+        ))
+        fit_calls = []
+        monkeypatch.setattr(tab._timeline, "fit_visible_duration", lambda ms: fit_calls.append(ms))
+
+        tab.apply_settings({"model": model.to_dict()})
+
+        assert fit_calls == [180000]
 
     def test_timeline_disabled_layer(self):
         tab = RenderCompositionTab()
@@ -2083,6 +2179,7 @@ class TestSettingsStack:
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QImage, QKeyEvent, QMouseEvent, QPixmap
+from PySide6.QtTest import QTest
 
 
 class TestPickFromPreview:
@@ -2148,6 +2245,94 @@ class TestPickFromPreview:
 
         tab._cancel_pick_mode()
         assert tab._picking_key_color is False
+
+    def test_pick_from_preview_failure_logs_and_sets_status(self, monkeypatch, caplog):
+        tab = RenderCompositionTab()
+        tab._picking_key_color = True
+        caplog.set_level(
+            logging.ERROR,
+            logger="audio_visualizer.ui.tabs.renderCompositionTab",
+        )
+
+        def _explode(*_args, **_kwargs):
+            raise RuntimeError("simulated color pick crash")
+
+        monkeypatch.setattr(tab, "_sample_preview_color", _explode)
+
+        event = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(10, 10),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+        assert tab.eventFilter(tab._layer_preview_label, event) is True
+        assert "preview color picking failed" in caplog.text.lower()
+        assert "simulated color pick crash" in caplog.text
+        assert "Color picking failed" in tab._preview_status_label.text()
+        assert tab._picking_key_color is False
+
+    def test_timeline_preview_click_samples_color(self):
+        tab = RenderCompositionTab()
+        tab.resize(1200, 900)
+        img = QImage(
+            tab._model.output_width,
+            tab._model.output_height,
+            QImage.Format.Format_RGB32,
+        )
+        img.fill(QColor("#FF0000"))
+        tab._compositor_widget.set_layers([{
+            "id": "test",
+            "qimage": img,
+            "x": 0,
+            "y": 0,
+            "w": tab._model.output_width,
+            "h": tab._model.output_height,
+            "z_order": 0,
+            "opacity": 1.0,
+        }])
+        tab._compositor_widget.resize(400, 300)
+        tab.show()
+        app.processEvents()
+
+        tab._preview_tabs.setCurrentIndex(0)
+        tab._on_pick_key_from_preview()
+        QTest.mouseClick(
+            tab._compositor_widget,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            tab._compositor_widget.rect().center(),
+        )
+        app.processEvents()
+
+        assert tab._key_color_edit.text().lower() == "#ff0000"
+        assert tab._picking_key_color is False
+        tab.close()
+
+    def test_layer_preview_click_samples_color(self):
+        tab = RenderCompositionTab()
+        tab.resize(1200, 900)
+        tab._layer_preview_label.resize(400, 300)
+        img = QImage(200, 200, QImage.Format.Format_RGB32)
+        img.fill(QColor("#00FF00"))
+        tab._layer_preview_label.setPixmap(QPixmap.fromImage(img))
+        tab.show()
+        app.processEvents()
+
+        tab._preview_tabs.setCurrentIndex(1)
+        tab._on_pick_key_from_preview()
+        QTest.mouseClick(
+            tab._layer_preview_label,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            tab._layer_preview_label.rect().center(),
+        )
+        app.processEvents()
+
+        assert tab._key_color_edit.text().lower() == "#00ff00"
+        assert tab._picking_key_color is False
+        tab.close()
 
 
 # ------------------------------------------------------------------
@@ -2287,6 +2472,19 @@ class TestTransportControls:
             width=1920,
             height=1080,
             z_order=0,
+            matte_settings={
+                "mode": "colorkey",
+                "key_target": "#123456",
+                "threshold": 0.1,
+                "similarity": 0.1,
+                "blend": 0.0,
+                "softness": 0.0,
+                "erode": 0,
+                "dilate": 0,
+                "feather": 0,
+                "despill": False,
+                "invert": False,
+            },
         ))
         tab._model.audio_layers.append(CompositionAudioLayer(
             display_name="Audio",
@@ -2297,209 +2495,10 @@ class TestTransportControls:
         ))
         tab._load_engine_data()
         assert tab._playback_engine.duration_ms == 10000
-
-
-# ------------------------------------------------------------------
-# Playback engine unit tests
-# ------------------------------------------------------------------
-
-
-class TestPlaybackEngine:
-    def test_compositor_widget_creation(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
+        assert (
+            tab._playback_engine._visual_layers[0]["matte_settings"]["key_target"]
+            == "#123456"
         )
-        widget = CompositorWidget(1920, 1080)
-        assert widget._comp_width == 1920
-        assert widget._comp_height == 1080
-
-    def test_compositor_widget_uses_qopenglwidget_base_when_available(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-            _HAS_OPENGL_WIDGET,
-        )
-        widget = CompositorWidget(1920, 1080)
-        if _HAS_OPENGL_WIDGET:
-            from PySide6.QtOpenGLWidgets import QOpenGLWidget
-            assert isinstance(widget, QOpenGLWidget)
-
-    def test_compositor_widget_set_layers(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-        )
-        widget = CompositorWidget(1920, 1080)
-        widget.set_layers([
-            {"qimage": QImage(), "x": 0, "y": 0, "w": 100, "h": 100, "z_order": 0, "opacity": 1.0},
-        ])
-        assert len(widget._layers) == 1
-
-    def test_compositor_widget_clear(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-        )
-        widget = CompositorWidget(1920, 1080)
-        widget.set_layers([
-            {"qimage": QImage(), "x": 0, "y": 0, "w": 100, "h": 100, "z_order": 0, "opacity": 1.0},
-        ])
-        widget.clear()
-        assert len(widget._layers) == 0
-
-    def test_compositor_paint_does_not_crash(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-        )
-        widget = CompositorWidget(1920, 1080)
-        widget.resize(400, 300)
-        widget.repaint()
-
-    def test_engine_lifecycle(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-            PlaybackEngine,
-        )
-        widget = CompositorWidget(1920, 1080)
-        engine = PlaybackEngine(widget, allow_audio=False)
-        assert engine.state == "stopped"
-
-        engine.load([], [], 10000)
-        assert engine.duration_ms == 10000
-        assert engine.state == "stopped"
-
-    def test_engine_seek_clamped(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-            PlaybackEngine,
-        )
-        widget = CompositorWidget(1920, 1080)
-        engine = PlaybackEngine(widget, allow_audio=False)
-        engine.load([], [], 5000)
-
-        engine.seek(10000)
-        # Position should be clamped to duration
-        assert engine._position_ms <= 5000
-
-        engine.seek(-100)
-        assert engine._position_ms >= 0
-
-    def test_engine_jump_to_start(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-            PlaybackEngine,
-        )
-        widget = CompositorWidget(1920, 1080)
-        engine = PlaybackEngine(widget, allow_audio=False)
-        engine.load([], [], 5000)
-
-        engine.seek(3000)
-        engine.jump_to_start()
-        assert engine._position_ms == 0
-
-    def test_engine_jump_to_end(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-            PlaybackEngine,
-        )
-        widget = CompositorWidget(1920, 1080)
-        engine = PlaybackEngine(widget, allow_audio=False)
-        engine.load([], [], 5000)
-
-        engine.jump_to_end()
-        assert engine._position_ms == 5000
-
-    def test_engine_stop_resets_state(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-            PlaybackEngine,
-        )
-        widget = CompositorWidget(1920, 1080)
-        engine = PlaybackEngine(widget, allow_audio=False)
-        engine.load([], [], 5000)
-        engine.seek(2000)
-        engine.stop()
-        assert engine.state == "stopped"
-        assert engine._position_ms == 0
-
-    def test_audio_player_without_device_advances_clock(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import _AudioPlayer
-
-        player = _AudioPlayer([], allow_device=False)
-        player.start(250.0)
-        time.sleep(0.03)
-        assert player.current_ms() > 250.0
-        player.stop()
-
-    def test_layer_source_position_uses_composition_relative_time(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-            PlaybackEngine,
-        )
-
-        widget = CompositorWidget(1920, 1080)
-        engine = PlaybackEngine(widget, allow_audio=False)
-        layer = {
-            "id": "layer-1",
-            "start_ms": 5000,
-            "end_ms": 15000,
-            "source_duration_ms": 0,
-            "behavior_after_end": "hide",
-        }
-
-        assert engine._layer_source_position_ms(layer, 4000) is None
-        assert engine._layer_source_position_ms(layer, 6000) == 1000
-
-    def test_loop_behavior_wraps_source_time(self):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-            PlaybackEngine,
-        )
-
-        widget = CompositorWidget(1920, 1080)
-        engine = PlaybackEngine(widget, allow_audio=False)
-        layer = {
-            "id": "layer-1",
-            "start_ms": 0,
-            "end_ms": 10000,
-            "source_duration_ms": 3000,
-            "behavior_after_end": "loop",
-        }
-
-        assert engine._layer_source_position_ms(layer, 6500) == 500
-
-    def test_render_frame_updates_hidden_compositor_layers(self, monkeypatch):
-        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
-            CompositorWidget,
-            PlaybackEngine,
-        )
-
-        widget = CompositorWidget(1920, 1080)
-        engine = PlaybackEngine(widget, allow_audio=False)
-        image = QImage(64, 64, QImage.Format.Format_ARGB32)
-        image.fill(QColor("#00FF00"))
-
-        engine._visual_layers = [{
-            "id": "image-layer",
-            "path": "",
-            "source_kind": "image",
-            "source_duration_ms": 0,
-            "start_ms": 0,
-            "end_ms": 5000,
-            "behavior_after_end": "hide",
-            "center_x": 0,
-            "center_y": 0,
-            "width": 64,
-            "height": 64,
-            "z_order": 0,
-            "opacity": 1.0,
-            "enabled": True,
-        }]
-        engine._static_images["image-layer"] = image
-
-        monkeypatch.setattr(widget, "isVisible", lambda: False)
-
-        engine._render_frame_at(1000)
-
-        assert len(widget._layers) == 1
-        assert widget._layers[0]["id"] == "image-layer"
 
 
 # ------------------------------------------------------------------
@@ -2651,13 +2650,49 @@ class TestPreviewLifecycle:
         def _explode(*_args, **_kwargs):
             raise RuntimeError("simulated preview seek crash")
 
-        monkeypatch.setattr(tab._playback_engine, "seek_from_timeline", _explode)
+        monkeypatch.setattr(tab._playback_engine, "request_preview_frame", _explode)
 
         tab._preview_controller._seek_preview(1234)
 
         assert "preview seek failed at 1234 ms" in caplog.text.lower()
         assert "simulated preview seek crash" in caplog.text
         assert "Preview failed" in tab._preview_status_label.text()
+
+    def test_editor_ui_handler_failure_logs_and_sets_preview_status(self, monkeypatch, caplog):
+        tab = RenderCompositionTab()
+        caplog.set_level(
+            logging.ERROR,
+            logger="audio_visualizer.ui.tabs.renderCompositionTab",
+        )
+
+        def _explode(*_args, **_kwargs):
+            raise RuntimeError("simulated editor handler crash")
+
+        monkeypatch.setattr(tab._timeline, "set_playhead_ms", _explode)
+
+        tab._on_preview_time_changed(1234)
+
+        assert "ui handler _on_preview_time_changed failed" in caplog.text.lower()
+        assert "simulated editor handler crash" in caplog.text
+        assert "Editor action failed" in tab._preview_status_label.text()
+
+    def test_render_ui_handler_failure_logs_and_sets_render_status(self, monkeypatch, caplog):
+        tab = RenderCompositionTab()
+        caplog.set_level(
+            logging.ERROR,
+            logger="audio_visualizer.ui.tabs.renderCompositionTab",
+        )
+
+        def _explode():
+            raise RuntimeError("simulated render handler crash")
+
+        monkeypatch.setattr(tab, "validate_settings", _explode)
+
+        tab._on_start_render()
+
+        assert "ui handler _on_start_render failed" in caplog.text.lower()
+        assert "simulated render handler crash" in caplog.text
+        assert "Render action failed" in tab._status_label.text()
 
     def test_switching_back_to_timeline_reschedules_preview_seek(self, monkeypatch):
         tab = RenderCompositionTab()

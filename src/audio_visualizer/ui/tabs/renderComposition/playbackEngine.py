@@ -11,6 +11,7 @@ unavailable.  Tests can instantiate the engine with
 """
 from __future__ import annotations
 
+from collections import deque
 import logging
 import queue
 import threading
@@ -27,9 +28,15 @@ from audio_visualizer.ui.tabs.renderComposition.evaluation import (
     evaluate_visual_layer,
     evaluate_audio_layer,
 )
+from audio_visualizer.ui.tabs.renderComposition.matte import apply_matte_to_image
 from audio_visualizer.ui.tabs.renderComposition.model import (
     CompositionAudioLayer,
     CompositionLayer,
+)
+from audio_visualizer.ui.tabs.renderComposition.previewRenderer import (
+    PreviewRenderRequest,
+    PreviewRenderResult,
+    StandalonePreviewRenderer,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,58 +128,75 @@ class _VideoDecodeWorker(threading.Thread):
     def run(self) -> None:
         if av is None:
             return
-        try:
-            container = av.open(self.source_path)
-            video_stream = None
-            for s in container.streams:
-                if s.type == "video":
-                    video_stream = s
-                    break
-            if video_stream is None:
-                container.close()
-                return
+        seek_ms = self.start_source_ms
+        while not self._stop_event.is_set():
+            container = None
+            try:
+                container = av.open(self.source_path)
+                video_stream = None
+                for s in container.streams:
+                    if s.type == "video":
+                        video_stream = s
+                        break
+                if video_stream is None:
+                    return
 
-            # Seek to the initial source-time offset for this layer.
-            if self.start_source_ms > 0:
-                container.seek(
-                    int(self.start_source_ms * 1000),
-                    stream=video_stream,
-                    backward=True,
-                )
+                # Reopen and reseek instead of seeking inside an active decode iterator.
+                if seek_ms > 0:
+                    container.seek(
+                        int(seek_ms * 1000),
+                        stream=video_stream,
+                        backward=True,
+                    )
 
-            for frame in container.decode(video_stream):
-                if self._stop_event.is_set():
-                    break
+                restart_with_seek = False
+                for frame in container.decode(video_stream):
+                    if self._stop_event.is_set():
+                        return
 
-                # Handle pending seek
-                if self._seek_event.is_set():
-                    with self._lock:
-                        seek_ms = self._seek_ms
-                        self._seek_event.clear()
-                    # Flush queue
-                    while not self.frame_queue.empty():
+                    if self._seek_event.is_set():
+                        seek_ms = self._consume_seek_request()
+                        self._drain_output_queue()
+                        restart_with_seek = True
+                        break
+
+                    pts_ms = (
+                        int(frame.pts * float(frame.time_base) * 1000)
+                        if frame.pts is not None
+                        else 0
+                    )
+                    img = self._frame_to_qimage(frame)
+                    if img is not None:
                         try:
-                            self.frame_queue.get_nowait()
-                        except queue.Empty:
-                            break
-                    container.seek(int(seek_ms * 1000), stream=video_stream, backward=True)
-                    continue
-
-                pts_ms = int(frame.pts * float(frame.time_base) * 1000) if frame.pts is not None else 0
-                img = self._frame_to_qimage(frame)
-                if img is not None:
+                            self.frame_queue.put((pts_ms, img), timeout=0.5)
+                        except queue.Full:
+                            pass  # drop frame if consumer is slow
+                else:
+                    if self._seek_event.is_set():
+                        seek_ms = self._consume_seek_request()
+                        self._drain_output_queue()
+                        restart_with_seek = True
+                    else:
+                        return
+                if not restart_with_seek:
+                    return
+            except Exception:
+                logger.exception(
+                    "Video decode worker failed for %s (layer_id=%s).",
+                    self.source_path,
+                    self.layer_id,
+                )
+                return
+            finally:
+                if container is not None:
                     try:
-                        self.frame_queue.put((pts_ms, img), timeout=0.5)
-                    except queue.Full:
-                        pass  # drop frame if consumer is slow
-
-            container.close()
-        except Exception:
-            logger.exception(
-                "Video decode worker failed for %s (layer_id=%s).",
-                self.source_path,
-                self.layer_id,
-            )
+                        container.close()
+                    except Exception:
+                        logger.debug(
+                            "Video decode worker failed to close container for %s.",
+                            self.source_path,
+                            exc_info=True,
+                        )
 
     def seek(self, ms: int) -> None:
         with self._lock:
@@ -181,6 +205,19 @@ class _VideoDecodeWorker(threading.Thread):
 
     def stop(self) -> None:
         self._stop_event.set()
+
+    def _consume_seek_request(self) -> int:
+        with self._lock:
+            seek_ms = self._seek_ms
+            self._seek_event.clear()
+        return seek_ms
+
+    def _drain_output_queue(self) -> None:
+        while not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except queue.Empty:
+                break
 
     @staticmethod
     def _frame_to_qimage(frame) -> QImage | None:
@@ -712,11 +749,16 @@ class PlaybackEngine(QObject):
     state_changed(str)
         Emitted when the state changes. Payload is ``"playing"``,
         ``"paused"``, or ``"stopped"``.
+    preview_frame_ready(int)
+        Emitted when the standalone queued preview renderer settles a
+        stopped-state frame request and the compositor has been updated.
     """
 
     position_changed = Signal(int)
     playback_finished = Signal()
     state_changed = Signal(str)
+    preview_frame_ready = Signal(int)
+    preview_render_resolved = Signal(object)
 
     def __init__(
         self,
@@ -752,6 +794,23 @@ class PlaybackEngine(QObject):
 
         # Guard against feedback loops when syncing position
         self._suppress_position_signal = False
+
+        # Renderer-owned stopped-state preview queue
+        self._preview_request_queue: deque[int] = deque()
+        self._pending_preview_request_ms: int | None = None
+        self._preview_request_token: tuple[int, int] | None = None
+        self._preview_request_generation: int = 0
+        self._preview_request_counter: int = 0
+        self._preview_layer_images: dict[str, QImage] = {}
+        self._preview_result_ms: int | None = None
+        self._preview_request_pump = QTimer(self)
+        self._preview_request_pump.setSingleShot(True)
+        self._preview_request_pump.timeout.connect(self._pump_preview_requests)
+        self.preview_render_resolved.connect(self._on_preview_render_resolved)
+        self._preview_renderer = StandalonePreviewRenderer(
+            self.preview_render_resolved.emit,
+        )
+        self.destroyed.connect(self._shutdown_preview_renderer)
 
     # ------------------------------------------------------------------
     # Public API
@@ -797,6 +856,32 @@ class PlaybackEngine(QObject):
         self._compositor.set_composition_size(output_width, output_height)
         self._position_ms = 0.0
 
+    def request_preview_frame(self, ms: int) -> None:
+        """Queue a stopped-state preview request owned by the renderer.
+
+        The GUI should use this rather than directly forcing a synchronous
+        render/seek path. Requests are processed FIFO so the renderer can
+        settle each frame request on its own cadence.
+        """
+        if self._duration_ms <= 0:
+            return
+        ms = max(0, min(ms, self._duration_ms))
+        self._position_ms = float(ms)
+        if self._audio_player:
+            self._audio_player.seek(float(ms))
+
+        last_requested = (
+            self._preview_request_queue[-1]
+            if self._preview_request_queue
+            else self._pending_preview_request_ms
+        )
+        if last_requested == ms:
+            return
+
+        self._preview_request_queue.append(ms)
+        if self._state != "playing" and self._pending_preview_request_ms is None:
+            self._preview_request_pump.start(0)
+
     def play(self) -> bool:
         if self._state == "playing":
             return True
@@ -808,6 +893,7 @@ class PlaybackEngine(QObject):
             return False
 
         try:
+            self._reset_preview_requests()
             self._start_decode_workers()
             self._start_audio()
             self._render_frame_at(int(self._position_ms))
@@ -839,6 +925,7 @@ class PlaybackEngine(QObject):
     def stop(self) -> None:
         self._state = "stopped"
         self._display_timer.stop()
+        self._reset_preview_requests()
         self._stop_workers()
         if self._audio_player:
             self._audio_player.stop()
@@ -856,16 +943,15 @@ class PlaybackEngine(QObject):
         if self._audio_player:
             self._audio_player.seek(float(ms))
 
-        # Seek video workers
-        for layer_id, worker in self._video_workers.items():
-            layer = self._visual_layer_by_id(layer_id)
-            if layer is None:
-                continue
-            worker.seek(self._worker_seek_ms(layer, ms))
-
         # If paused or stopped, render the frame at this position
         if self._state != "playing":
-            self._render_frame_at(ms)
+            self.request_preview_frame(ms)
+        else:
+            for layer_id, worker in self._video_workers.items():
+                layer = self._visual_layer_by_id(layer_id)
+                if layer is None:
+                    continue
+                worker.seek(self._worker_seek_ms(layer, ms))
 
         self._suppress_position_signal = True
         self.position_changed.emit(int(ms))
@@ -879,13 +965,14 @@ class PlaybackEngine(QObject):
         self._position_ms = float(ms)
         if self._audio_player:
             self._audio_player.seek(float(ms))
+        if self._state != "playing":
+            self.request_preview_frame(ms)
+            return
         for layer_id, worker in self._video_workers.items():
             layer = self._visual_layer_by_id(layer_id)
             if layer is None:
                 continue
             worker.seek(self._worker_seek_ms(layer, ms))
-        if self._state != "playing":
-            self._render_frame_at(ms)
 
     def toggle_play_pause(self) -> bool:
         if self._state == "playing":
@@ -936,9 +1023,17 @@ class PlaybackEngine(QObject):
             worker.start()
 
     def _stop_workers(self) -> None:
-        for w in self._video_workers.values():
+        workers = list(self._video_workers.values())
+        for w in workers:
             w.stop()
-        # Don't join — they are daemon threads
+        for w in workers:
+            w.join(timeout=1.0)
+            if w.is_alive():
+                logger.warning(
+                    "Video decode worker did not exit cleanly (layer_id=%s, path=%s).",
+                    w.layer_id,
+                    w.source_path,
+                )
         self._video_workers.clear()
         self._frame_queues.clear()
         self._frame_buffers.clear()
@@ -987,7 +1082,70 @@ class PlaybackEngine(QObject):
             logger.exception("Display tick failed, stopping playback")
             self.stop()
 
-    def _render_frame_at(self, pos_ms: int) -> None:
+    def _pump_preview_requests(self) -> None:
+        """Begin processing the next queued stopped-state preview request."""
+        if self._state == "playing":
+            return
+        if self._pending_preview_request_ms is not None or self._preview_request_token is not None:
+            return
+        if not self._preview_request_queue:
+            return
+
+        ms = self._preview_request_queue.popleft()
+        try:
+            self._pending_preview_request_ms = ms
+            self._preview_request_counter += 1
+            token = (self._preview_request_generation, self._preview_request_counter)
+            self._preview_request_token = token
+            self._preview_renderer.submit(
+                PreviewRenderRequest(
+                    token=token,
+                    position_ms=ms,
+                    output_width=self._compositor._comp_width,
+                    output_height=self._compositor._comp_height,
+                    layers=[dict(layer) for layer in self._visual_layers],
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Queued preview request failed at %d ms.",
+                ms,
+            )
+            self._pending_preview_request_ms = None
+            self._preview_request_token = None
+            if self._preview_request_queue:
+                self._preview_request_pump.start(0)
+
+    def _on_preview_render_resolved(self, result: PreviewRenderResult) -> None:
+        """Apply a standalone renderer result on the UI thread."""
+        if result.token != self._preview_request_token:
+            return
+        self._preview_layer_images = result.layer_images
+        self._preview_result_ms = result.position_ms
+        self._compositor.set_layers(result.composed_layers)
+        self._pending_preview_request_ms = None
+        self._preview_request_token = None
+        self.preview_frame_ready.emit(result.position_ms)
+        if self._preview_request_queue:
+            self._preview_request_pump.start(0)
+
+    def _reset_preview_requests(self) -> None:
+        """Clear queued stopped-state preview requests."""
+        self._preview_request_queue.clear()
+        self._pending_preview_request_ms = None
+        self._preview_request_token = None
+        self._preview_request_generation += 1
+        self._preview_layer_images = {}
+        self._preview_result_ms = None
+        self._preview_request_pump.stop()
+
+    def _shutdown_preview_renderer(self, *_args) -> None:
+        try:
+            self._preview_renderer.close()
+        except Exception:
+            logger.debug("Standalone preview renderer shutdown failed.", exc_info=True)
+
+    def _render_frame_at(self, pos_ms: int, *, allow_blocking_decode: bool = False) -> None:
         """Composite and display all visible layers at *pos_ms*."""
         if not self._visual_layers:
             return
@@ -1003,7 +1161,11 @@ class PlaybackEngine(QObject):
                 continue
 
             try:
-                img = self._image_for_layer_at(vl, source_ms)
+                img = self._image_for_layer_at(
+                    vl,
+                    source_ms,
+                    allow_blocking_decode=allow_blocking_decode,
+                )
             except Exception:
                 logger.warning(
                     "Failed to resolve preview image for layer %s at %d ms (path=%s).",
@@ -1051,7 +1213,13 @@ class PlaybackEngine(QObject):
             if len(buffer) > _MAX_FRAME_HISTORY:
                 del buffer[:-_MAX_FRAME_HISTORY]
 
-    def _image_for_layer_at(self, layer: dict, source_ms: int) -> QImage | None:
+    def _image_for_layer_at(
+        self,
+        layer: dict,
+        source_ms: int,
+        *,
+        allow_blocking_decode: bool = False,
+    ) -> QImage | None:
         """Return the best frame/image for *layer* at *source_ms*."""
         layer_id = layer.get("id", "")
         if layer.get("source_kind") == "image":
@@ -1060,15 +1228,12 @@ class PlaybackEngine(QObject):
                 image = QImage(layer["path"])
                 if not image.isNull():
                     self._static_images[layer_id] = image
-            return image
+        else:
+            image = self._select_buffered_frame(layer_id, source_ms)
+            if image is None and self._state != "playing" and allow_blocking_decode:
+                image = self._decode_frame_at(layer.get("path", ""), source_ms)
 
-        buffered = self._select_buffered_frame(layer_id, source_ms)
-        if buffered is not None:
-            return buffered
-
-        if self._state != "playing":
-            return self._decode_frame_at(layer.get("path", ""), source_ms)
-        return None
+        return apply_matte_to_image(image, layer.get("matte_settings"))
 
     def _select_buffered_frame(self, layer_id: str, source_ms: int) -> QImage | None:
         """Return the best buffered frame for *layer_id* at *source_ms*."""
@@ -1156,10 +1321,16 @@ class PlaybackEngine(QObject):
         This is used by the Layer preview tab to display individual layer
         frames synchronized with the playhead.
         """
+        if self._state != "playing" and self._preview_result_ms == position_ms:
+            return self._preview_layer_images.get(layer_id)
         layer = self._visual_layer_by_id(layer_id)
         if layer is None:
             return None
         source_ms = self._layer_source_position_ms(layer, position_ms)
         if source_ms is None:
             return None
-        return self._image_for_layer_at(layer, source_ms)
+        return self._image_for_layer_at(
+            layer,
+            source_ms,
+            allow_blocking_decode=False,
+        )

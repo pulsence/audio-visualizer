@@ -181,11 +181,13 @@ class TimelineWidget(QWidget):
         self._drag_original_start: int = 0
         self._drag_original_end: int = 0
         self._drag_original_visual_index: int = -1
+        self._pending_fit_max_visible_ms: int | None = None
 
     def set_items(self, items: list[TimelineItem]) -> None:
         """Set the timeline items and refresh."""
         self._items = items
         self._recalc_duration()
+        self._apply_pending_fit_view()
         self.update()
 
     def set_selected(self, item_id: str | None) -> None:
@@ -234,6 +236,7 @@ class TimelineWidget(QWidget):
     # ------------------------------------------------------------------
 
     def set_scroll_offset(self, ms: int) -> None:
+        self._pending_fit_max_visible_ms = None
         self._scroll_offset = max(0, ms)
         self._clamp_scroll()
         self._emit_scroll_state()
@@ -243,6 +246,7 @@ class TimelineWidget(QWidget):
         return self._scroll_offset
 
     def set_pixels_per_ms(self, value: float) -> None:
+        self._pending_fit_max_visible_ms = None
         self._pixels_per_ms = max(0.0001, min(100.0, value))
         self._clamp_scroll()
         self._emit_scroll_state()
@@ -251,11 +255,30 @@ class TimelineWidget(QWidget):
     def pixels_per_ms(self) -> float:
         return self._pixels_per_ms
 
+    def fit_visible_duration(self, max_visible_ms: int = 180000) -> None:
+        """Fit the view to the full timeline or *max_visible_ms*, whichever is shorter."""
+        self._pending_fit_max_visible_ms = max(1, max_visible_ms)
+        self._apply_pending_fit_view()
+
     def _visible_duration_ms(self) -> int:
         available = max(1, self.width() - _HEADER_WIDTH)
         if self._pixels_per_ms <= 0:
             return self._duration_ms
         return max(1, int(available / self._pixels_per_ms))
+
+    def _apply_pending_fit_view(self) -> None:
+        """Apply a deferred fit request once the widget has a usable width."""
+        if self._pending_fit_max_visible_ms is None:
+            return
+        available = self.width() - _HEADER_WIDTH
+        if available <= 0:
+            return
+        target_visible_ms = max(1, min(self._duration_ms, self._pending_fit_max_visible_ms))
+        self._pixels_per_ms = available / target_visible_ms
+        self._scroll_offset = 0
+        self._clamp_scroll()
+        self._emit_scroll_state()
+        self._pending_fit_max_visible_ms = None
 
     def _clamp_scroll(self) -> None:
         max_offset = max(0, self._duration_ms - self._visible_duration_ms())
@@ -521,182 +544,27 @@ class TimelineWidget(QWidget):
         playhead_x = self._ms_to_x(self._playhead_ms)
         return abs(x - playhead_x) <= _PLAYHEAD_HIT_PX
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() != Qt.MouseButton.LeftButton:
-            return super().mousePressEvent(event)
-
-        x = event.position().x()
-
-        # Check for playhead scrub grab first (in content area)
-        if x >= _HEADER_WIDTH and self._is_near_playhead(x):
-            self._scrubbing = True
-            self._playhead_ms = self._x_to_ms(x)
-            self.playhead_changed.emit(self._playhead_ms)
-            self.setCursor(Qt.CursorShape.SizeHorCursor)
-            self.update()
+    def _begin_pointer_interaction(self) -> None:
+        """Capture the mouse so drags keep receiving release events outside bounds."""
+        if not self.isVisible():
             return
+        try:
+            self.grabMouse()
+        except Exception:
+            logger.warning("Timeline widget failed to grab the mouse for interaction", exc_info=True)
 
-        if x >= _HEADER_WIDTH:
-            # Update playhead on any left click in the timeline content area.
-            self._playhead_ms = self._x_to_ms(x)
-            self.playhead_changed.emit(self._playhead_ms)
-
-        item, hit_type = self._item_at(event.position().x(), event.position().y())
-        if item is not None:
-            if hit_type == "mute_toggle" and item.track_type == "audio":
-                item.muted = not item.muted
-                self.audio_mute_toggled.emit(item.item_id, item.muted)
-                self.update()
-                return
-            self._selected_id = item.item_id
-            self.item_selected.emit(item.item_id)
-
-            self._dragging = True
-            self._drag_item_id = item.item_id
-            self._drag_start_x = event.position().x()
-            self._drag_start_y = event.position().y()
-            self._drag_original_start = item.start_ms
-            self._drag_original_end = item.end_ms
-
-            # Record original visual index for reorder detection
-            visual_items = self._visual_items_in_display_order()
-            self._drag_original_visual_index = -1
-            for vi, vi_item in enumerate(visual_items):
-                if vi_item.item_id == item.item_id:
-                    self._drag_original_visual_index = vi
-                    break
-
-            if hit_type == "handle_start":
-                self._drag_mode = "trim_start"
-            elif hit_type == "handle_end":
-                self._drag_mode = "trim_end"
-            else:
-                self._drag_mode = "move"
-        else:
-            self._selected_id = None
-            self.item_selected.emit("")
-
-        self.update()
-
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        # Playhead scrub drag
-        if self._scrubbing:
-            x = event.position().x()
-            self._playhead_ms = max(0, self._x_to_ms(x))
-            self.playhead_changed.emit(self._playhead_ms)
-            self.update()
+    def _release_pointer_interaction(self) -> None:
+        """Release mouse capture if this widget owns it."""
+        if not self.isVisible():
             return
+        try:
+            self.releaseMouse()
+        except Exception:
+            logger.debug("Timeline widget failed to release the mouse cleanly", exc_info=True)
 
-        if not self._dragging or self._drag_item_id is None:
-            # Update cursor — show resize cursor near playhead line
-            x = event.position().x()
-            if x >= _HEADER_WIDTH and self._is_near_playhead(x):
-                self.setCursor(Qt.CursorShape.SizeHorCursor)
-                return
-            item, hit_type = self._item_at(x, event.position().y())
-            if hit_type == "mute_toggle":
-                self.setCursor(Qt.CursorShape.PointingHandCursor)
-            elif hit_type in ("handle_start", "handle_end"):
-                self.setCursor(Qt.CursorShape.SizeHorCursor)
-            elif hit_type == "body":
-                self.setCursor(Qt.CursorShape.OpenHandCursor)
-            else:
-                self.setCursor(Qt.CursorShape.ArrowCursor)
-            return
-
-        dx = event.position().x() - self._drag_start_x
-        delta_ms = self._x_to_ms(event.position().x()) - self._x_to_ms(self._drag_start_x)
-
-        item = next((i for i in self._items if i.item_id == self._drag_item_id), None)
-        if item is None:
-            return
-
-        self._snap_line_x = None
-
-        if self._drag_mode == "move":
-            new_start = max(0, self._drag_original_start + delta_ms)
-            duration = self._drag_original_end - self._drag_original_start
-            new_end = new_start + duration
-
-            snapped_start = self._snap_value(new_start, item.item_id)
-            snapped_end = self._snap_value(new_end, item.item_id)
-
-            start_changed = snapped_start != new_start
-            end_changed = snapped_end != new_end
-            dist_start = abs(snapped_start - new_start) if start_changed else _SNAP_THRESHOLD_MS + 1
-            dist_end = abs(snapped_end - new_end) if end_changed else _SNAP_THRESHOLD_MS + 1
-
-            if dist_start <= dist_end and dist_start <= _SNAP_THRESHOLD_MS:
-                item.start_ms = snapped_start
-                item.end_ms = snapped_start + duration
-                self._snap_line_x = self._ms_to_x(snapped_start)
-            elif dist_end <= _SNAP_THRESHOLD_MS:
-                item.end_ms = snapped_end
-                item.start_ms = snapped_end - duration
-                self._snap_line_x = self._ms_to_x(snapped_end)
-            else:
-                item.start_ms = new_start
-                item.end_ms = new_start + duration
-
-            # Vertical reorder: detect when a visual item is dragged to a different track row
-            if item.track_type == "visual" and self._drag_original_visual_index >= 0:
-                visual_items = self._visual_items_in_display_order()
-                y = event.position().y()
-                y_base = 25  # after ruler
-                track_step = _TRACK_HEIGHT + _TRACK_SPACING
-                target_index = max(0, min(int((y - y_base) / track_step), len(visual_items) - 1))
-                if target_index != self._drag_original_visual_index:
-                    # Swap the item in the visual items list
-                    old_idx = self._drag_original_visual_index
-                    # Find and move in self._items
-                    vis_ids = [vi.item_id for vi in visual_items]
-                    dragged_id = item.item_id
-                    if dragged_id in vis_ids:
-                        vis_ids.remove(dragged_id)
-                        vis_ids.insert(target_index, dragged_id)
-                        # Rebuild self._items: visual in new order, then audio
-                        audio_items = [i for i in self._items if i.track_type == "audio"]
-                        new_items = []
-                        for vid in vis_ids:
-                            for it in self._items:
-                                if it.item_id == vid:
-                                    new_items.append(it)
-                                    break
-                        new_items.extend(audio_items)
-                        self._items = new_items
-                        self._drag_original_visual_index = target_index
-                        self.item_reordered.emit(dragged_id, target_index)
-
-        elif self._drag_mode == "trim_start":
-            new_start = max(0, min(self._drag_original_start + delta_ms, item.end_ms - 100))
-            snapped = self._snap_value(new_start, item.item_id)
-            snapped = min(snapped, item.end_ms - 100)
-            if snapped != new_start and abs(snapped - new_start) <= _SNAP_THRESHOLD_MS:
-                item.start_ms = snapped
-                self._snap_line_x = self._ms_to_x(snapped)
-            else:
-                item.start_ms = new_start
-
-        elif self._drag_mode == "trim_end":
-            new_end = max(item.start_ms + 100, self._drag_original_end + delta_ms)
-            snapped = self._snap_value(new_end, item.item_id)
-            snapped = max(snapped, item.start_ms + 100)
-            if snapped != new_end and abs(snapped - new_end) <= _SNAP_THRESHOLD_MS:
-                item.end_ms = snapped
-                self._snap_line_x = self._ms_to_x(snapped)
-            else:
-                item.end_ms = new_end
-
-        self.update()
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        if self._scrubbing:
-            self._scrubbing = False
-            self.setCursor(Qt.CursorShape.ArrowCursor)
-            self.update()
-            return
-
-        if self._dragging and self._drag_item_id:
+    def _finish_pointer_interaction(self, commit: bool) -> None:
+        """End the active scrub/drag interaction and optionally emit the final change."""
+        if commit and self._dragging and self._drag_item_id:
             item = next((i for i in self._items if i.item_id == self._drag_item_id), None)
             if item:
                 if self._drag_mode == "move":
@@ -706,39 +574,251 @@ class TimelineWidget(QWidget):
                     ms = item.start_ms if which == "start" else item.end_ms
                     self.item_trimmed.emit(item.item_id, which, ms)
 
+        self._release_pointer_interaction()
+        self._scrubbing = False
         self._dragging = False
         self._drag_item_id = None
         self._drag_mode = ""
+        self._drag_original_visual_index = -1
         self._snap_line_x = None
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         self.update()
 
+    def cancel_active_interaction(self) -> None:
+        """Abort any active drag/scrub interaction without emitting model changes."""
+        self._finish_pointer_interaction(commit=False)
+
+    def _handle_ui_event_failure(self, handler_name: str) -> None:
+        """Log and recover from a timeline UI event failure."""
+        logger.exception("Render Composition timeline UI event %s failed.", handler_name)
+        self.cancel_active_interaction()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        try:
+            if event.button() != Qt.MouseButton.LeftButton:
+                return super().mousePressEvent(event)
+
+            x = event.position().x()
+
+            # Check for playhead scrub grab first (in content area)
+            if x >= _HEADER_WIDTH and self._is_near_playhead(x):
+                self._scrubbing = True
+                self._begin_pointer_interaction()
+                self._playhead_ms = self._x_to_ms(x)
+                self.playhead_changed.emit(self._playhead_ms)
+                self.setCursor(Qt.CursorShape.SizeHorCursor)
+                self.update()
+                return
+
+            if x >= _HEADER_WIDTH:
+                # Update playhead on any left click in the timeline content area.
+                self._playhead_ms = self._x_to_ms(x)
+                self.playhead_changed.emit(self._playhead_ms)
+
+            item, hit_type = self._item_at(event.position().x(), event.position().y())
+            if item is not None:
+                if hit_type == "mute_toggle" and item.track_type == "audio":
+                    item.muted = not item.muted
+                    self.audio_mute_toggled.emit(item.item_id, item.muted)
+                    self.update()
+                    return
+                self._selected_id = item.item_id
+                self.item_selected.emit(item.item_id)
+
+                self._dragging = True
+                self._drag_item_id = item.item_id
+                self._drag_start_x = event.position().x()
+                self._drag_start_y = event.position().y()
+                self._drag_original_start = item.start_ms
+                self._drag_original_end = item.end_ms
+
+                # Record original visual index for reorder detection
+                visual_items = self._visual_items_in_display_order()
+                self._drag_original_visual_index = -1
+                for vi, vi_item in enumerate(visual_items):
+                    if vi_item.item_id == item.item_id:
+                        self._drag_original_visual_index = vi
+                        break
+
+                if hit_type == "handle_start":
+                    self._drag_mode = "trim_start"
+                elif hit_type == "handle_end":
+                    self._drag_mode = "trim_end"
+                else:
+                    self._drag_mode = "move"
+                self._begin_pointer_interaction()
+            else:
+                self._selected_id = None
+                self.item_selected.emit("")
+
+            self.update()
+        except Exception:
+            self._handle_ui_event_failure("mousePressEvent")
+            event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        try:
+            if (self._scrubbing or self._dragging) and not (event.buttons() & Qt.MouseButton.LeftButton):
+                logger.warning(
+                    "Timeline interaction lost the left-button state; recovering without waiting for release"
+                )
+                self._finish_pointer_interaction(commit=True)
+                return
+
+            # Playhead scrub drag
+            if self._scrubbing:
+                x = event.position().x()
+                self._playhead_ms = max(0, self._x_to_ms(x))
+                self.playhead_changed.emit(self._playhead_ms)
+                self.update()
+                return
+
+            if not self._dragging or self._drag_item_id is None:
+                # Update cursor — show resize cursor near playhead line
+                x = event.position().x()
+                if x >= _HEADER_WIDTH and self._is_near_playhead(x):
+                    self.setCursor(Qt.CursorShape.SizeHorCursor)
+                    return
+                item, hit_type = self._item_at(x, event.position().y())
+                if hit_type == "mute_toggle":
+                    self.setCursor(Qt.CursorShape.PointingHandCursor)
+                elif hit_type in ("handle_start", "handle_end"):
+                    self.setCursor(Qt.CursorShape.SizeHorCursor)
+                elif hit_type == "body":
+                    self.setCursor(Qt.CursorShape.OpenHandCursor)
+                else:
+                    self.setCursor(Qt.CursorShape.ArrowCursor)
+                return
+
+            dx = event.position().x() - self._drag_start_x
+            delta_ms = self._x_to_ms(event.position().x()) - self._x_to_ms(self._drag_start_x)
+
+            item = next((i for i in self._items if i.item_id == self._drag_item_id), None)
+            if item is None:
+                return
+
+            self._snap_line_x = None
+
+            if self._drag_mode == "move":
+                new_start = max(0, self._drag_original_start + delta_ms)
+                duration = self._drag_original_end - self._drag_original_start
+                new_end = new_start + duration
+
+                snapped_start = self._snap_value(new_start, item.item_id)
+                snapped_end = self._snap_value(new_end, item.item_id)
+
+                start_changed = snapped_start != new_start
+                end_changed = snapped_end != new_end
+                dist_start = abs(snapped_start - new_start) if start_changed else _SNAP_THRESHOLD_MS + 1
+                dist_end = abs(snapped_end - new_end) if end_changed else _SNAP_THRESHOLD_MS + 1
+
+                if dist_start <= dist_end and dist_start <= _SNAP_THRESHOLD_MS:
+                    item.start_ms = snapped_start
+                    item.end_ms = snapped_start + duration
+                    self._snap_line_x = self._ms_to_x(snapped_start)
+                elif dist_end <= _SNAP_THRESHOLD_MS:
+                    item.end_ms = snapped_end
+                    item.start_ms = snapped_end - duration
+                    self._snap_line_x = self._ms_to_x(snapped_end)
+                else:
+                    item.start_ms = new_start
+                    item.end_ms = new_start + duration
+
+                # Vertical reorder: detect when a visual item is dragged to a different track row
+                if item.track_type == "visual" and self._drag_original_visual_index >= 0:
+                    visual_items = self._visual_items_in_display_order()
+                    y = event.position().y()
+                    y_base = 25  # after ruler
+                    track_step = _TRACK_HEIGHT + _TRACK_SPACING
+                    target_index = max(0, min(int((y - y_base) / track_step), len(visual_items) - 1))
+                    if target_index != self._drag_original_visual_index:
+                        # Swap the item in the visual items list
+                        old_idx = self._drag_original_visual_index
+                        # Find and move in self._items
+                        vis_ids = [vi.item_id for vi in visual_items]
+                        dragged_id = item.item_id
+                        if dragged_id in vis_ids:
+                            vis_ids.remove(dragged_id)
+                            vis_ids.insert(target_index, dragged_id)
+                            # Rebuild self._items: visual in new order, then audio
+                            audio_items = [i for i in self._items if i.track_type == "audio"]
+                            new_items = []
+                            for vid in vis_ids:
+                                for it in self._items:
+                                    if it.item_id == vid:
+                                        new_items.append(it)
+                                        break
+                            new_items.extend(audio_items)
+                            self._items = new_items
+                            self._drag_original_visual_index = target_index
+                            self.item_reordered.emit(dragged_id, target_index)
+
+            elif self._drag_mode == "trim_start":
+                new_start = max(0, min(self._drag_original_start + delta_ms, item.end_ms - 100))
+                snapped = self._snap_value(new_start, item.item_id)
+                snapped = min(snapped, item.end_ms - 100)
+                if snapped != new_start and abs(snapped - new_start) <= _SNAP_THRESHOLD_MS:
+                    item.start_ms = snapped
+                    self._snap_line_x = self._ms_to_x(snapped)
+                else:
+                    item.start_ms = new_start
+
+            elif self._drag_mode == "trim_end":
+                new_end = max(item.start_ms + 100, self._drag_original_end + delta_ms)
+                snapped = self._snap_value(new_end, item.item_id)
+                snapped = max(snapped, item.start_ms + 100)
+                if snapped != new_end and abs(snapped - new_end) <= _SNAP_THRESHOLD_MS:
+                    item.end_ms = snapped
+                    self._snap_line_x = self._ms_to_x(snapped)
+                else:
+                    item.end_ms = new_end
+
+            self.update()
+        except Exception:
+            self._handle_ui_event_failure("mouseMoveEvent")
+            event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        try:
+            self._finish_pointer_interaction(commit=True)
+        except Exception:
+            self._handle_ui_event_failure("mouseReleaseEvent")
+            event.accept()
+
     def wheelEvent(self, event: QWheelEvent) -> None:
-        delta = event.angleDelta().y()
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            # Zoom around mouse position
-            mouse_ms = self._x_to_ms(event.position().x())
-            factor = 1.2 if delta > 0 else 1 / 1.2
-            new_ppm = max(0.0001, min(100.0, self._pixels_per_ms * factor))
-            # Anchor: keep mouse_ms at the same pixel
-            mouse_px = event.position().x() - _HEADER_WIDTH
-            new_offset = int(mouse_ms - mouse_px / new_ppm)
-            self._pixels_per_ms = new_ppm
-            self._scroll_offset = max(0, new_offset)
-            self._clamp_scroll()
-            self._emit_scroll_state()
-            self.update()
-        else:
-            # Pan
-            visible = self._visible_duration_ms()
-            shift = int(visible * 0.1) * (-1 if delta > 0 else 1)
-            self._scroll_offset = max(0, self._scroll_offset + shift)
-            self._clamp_scroll()
-            self._emit_scroll_state()
-            self.update()
-        event.accept()
+        try:
+            delta = event.angleDelta().y()
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self._pending_fit_max_visible_ms = None
+                # Zoom around mouse position
+                mouse_ms = self._x_to_ms(event.position().x())
+                factor = 1.2 if delta > 0 else 1 / 1.2
+                new_ppm = max(0.0001, min(100.0, self._pixels_per_ms * factor))
+                # Anchor: keep mouse_ms at the same pixel
+                mouse_px = event.position().x() - _HEADER_WIDTH
+                new_offset = int(mouse_ms - mouse_px / new_ppm)
+                self._pixels_per_ms = new_ppm
+                self._scroll_offset = max(0, new_offset)
+                self._clamp_scroll()
+                self._emit_scroll_state()
+                self.update()
+            else:
+                self._pending_fit_max_visible_ms = None
+                # Pan
+                visible = self._visible_duration_ms()
+                shift = int(visible * 0.1) * (-1 if delta > 0 else 1)
+                self._scroll_offset = max(0, self._scroll_offset + shift)
+                self._clamp_scroll()
+                self._emit_scroll_state()
+                self.update()
+            event.accept()
+        except Exception:
+            self._handle_ui_event_failure("wheelEvent")
+            event.accept()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._apply_pending_fit_view()
         self._clamp_scroll()
         self._emit_scroll_state()
 

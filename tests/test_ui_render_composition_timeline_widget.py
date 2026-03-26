@@ -1,6 +1,7 @@
 """Tests for TimelineWidget snap-to-align, scrubbing, and waveform features."""
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -354,6 +355,113 @@ class TestPlayheadScrubbing:
 
         widget.mouseMoveEvent(move_event)
         assert widget.cursor().shape() == Qt.CursorShape.SizeHorCursor
+
+
+class TestInteractionRecovery:
+    """Tests for recovering timeline interactions when release is missed."""
+
+    def test_trim_drag_recovers_when_left_button_state_is_lost(self, widget):
+        item = TimelineItem("a", "A", 0, 5000)
+        widget.set_items([item])
+
+        row_y = 25 + (_TRACK_HEIGHT / 2)
+        press_x = widget._ms_to_x(item.end_ms) - 1
+        press_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(press_x, row_y),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        with patch.object(widget, "update"):
+            widget.mousePressEvent(press_event)
+
+        trimmed = []
+        widget.item_trimmed.connect(lambda item_id, which, ms: trimmed.append((item_id, which, ms)))
+
+        target_x = widget._ms_to_x(8000)
+        drag_event = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPointF(target_x, row_y),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        with patch.object(widget, "update"):
+            widget.mouseMoveEvent(drag_event)
+
+        lost_release_event = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPointF(target_x, row_y),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        with patch.object(widget, "update"):
+            widget.mouseMoveEvent(lost_release_event)
+
+        assert widget._dragging is False
+        assert widget._drag_item_id is None
+        assert trimmed == [("a", "end", item.end_ms)]
+        assert abs(item.end_ms - 8000) <= 20
+
+    def test_mouse_move_failure_logs_and_clears_drag_state(self, widget, monkeypatch, caplog):
+        item = TimelineItem("a", "A", 0, 5000)
+        widget.set_items([item])
+        widget._dragging = True
+        widget._drag_item_id = item.item_id
+        widget._drag_mode = "trim_end"
+        widget._drag_start_x = int(widget._ms_to_x(item.end_ms))
+        widget._drag_original_start = item.start_ms
+        widget._drag_original_end = item.end_ms
+
+        caplog.set_level(
+            logging.ERROR,
+            logger="audio_visualizer.ui.tabs.renderComposition.timelineWidget",
+        )
+
+        def _explode(*_args, **_kwargs):
+            raise RuntimeError("simulated timeline event crash")
+
+        monkeypatch.setattr(widget, "_x_to_ms", _explode)
+
+        move_event = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPointF(widget._ms_to_x(8000), 40),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+
+        widget.mouseMoveEvent(move_event)
+
+        assert "timeline ui event mousemoveevent failed" in caplog.text.lower()
+        assert "simulated timeline event crash" in caplog.text
+        assert widget._dragging is False
+        assert widget._drag_item_id is None
+        assert widget._scrubbing is False
+
+
+class TestFitVisibleDuration:
+    """Tests for fitting the visible timeline window."""
+
+    def test_fit_visible_duration_shows_full_short_timeline(self, widget):
+        widget.set_items([TimelineItem("a", "A", 0, 60000)])
+        widget.set_scroll_offset(2500)
+
+        widget.fit_visible_duration(180000)
+
+        assert abs(widget._visible_duration_ms() - 60000) <= 1
+        assert widget.scroll_offset() == 0
+
+    def test_fit_visible_duration_caps_view_at_max_duration(self, widget):
+        widget.set_items([TimelineItem("a", "A", 0, 300000)])
+        widget.set_scroll_offset(5000)
+
+        widget.fit_visible_duration(180000)
+
+        assert abs(widget._visible_duration_ms() - 180000) <= 1
+        assert widget.scroll_offset() == 0
 
 
 # ---------------------------------------------------------------------------

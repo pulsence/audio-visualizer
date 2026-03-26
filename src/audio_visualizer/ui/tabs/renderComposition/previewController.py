@@ -6,6 +6,7 @@ longer mixes preview scheduling directly with UI event handling.
 """
 from __future__ import annotations
 
+import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -51,11 +52,13 @@ class PreviewController:
         self._on_seek_completed = on_seek_completed
         self._preview_model_dirty = True
         self._pending_seek_ms: int | None = None
+        self._last_requested_seek_ms: int | None = None
 
         owner = parent_timer_owner or engine
         self._seek_timer = QTimer(owner)
         self._seek_timer.setSingleShot(True)
         self._seek_timer.timeout.connect(self._flush_seek)
+        self._engine.preview_frame_ready.connect(self._on_engine_preview_frame_ready)
 
     # ------------------------------------------------------------------
     # Public API
@@ -105,6 +108,7 @@ class PreviewController:
                     "z_order": layer.z_order,
                     "opacity": 1.0,
                     "enabled": layer.enabled,
+                    "matte_settings": copy.deepcopy(layer.matte_settings),
                 })
 
             for al in model.audio_layers:
@@ -159,14 +163,12 @@ class PreviewController:
         self._seek_preview(ms)
 
     def _seek_preview(self, ms: int) -> None:
-        """Load engine data if needed and render the frame at *ms*."""
+        """Load engine data if needed and enqueue a renderer-owned frame request."""
         if self._preview_model_dirty:
             self.load_engine_data()
         try:
-            self._engine.seek_from_timeline(ms)
-            if self._on_seek_completed is not None:
-                self._on_seek_completed(ms)
-            self._clear_failure_status()
+            self._last_requested_seek_ms = ms
+            self._engine.request_preview_frame(ms)
         except Exception:
             logger.exception(
                 "Render Composition preview seek failed at %d ms (dirty=%s).",
@@ -174,6 +176,20 @@ class PreviewController:
                 self._preview_model_dirty,
             )
             self._set_failure_status("Preview failed — check logs for details.")
+
+    def _on_engine_preview_frame_ready(self, ms: int) -> None:
+        """Update UI after the renderer settles a queued preview request."""
+        if self._last_requested_seek_ms is not None and ms != self._last_requested_seek_ms:
+            # Older queued frames can still arrive while the renderer drains its FIFO.
+            # The layer preview should continue to track each settled renderer frame.
+            logger.debug(
+                "Queued preview frame ready at %d ms while latest request is %d ms.",
+                ms,
+                self._last_requested_seek_ms,
+            )
+        if self._on_seek_completed is not None:
+            self._on_seek_completed(ms)
+        self._clear_failure_status()
 
     def _clear_failure_status(self) -> None:
         """Clear stale preview failure text after a successful operation."""

@@ -32,7 +32,7 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
-from audio_visualizer.app_logging import setup_logging
+from audio_visualizer.app_logging import get_log_file_path, install_process_diagnostics
 from audio_visualizer.app_paths import get_config_dir
 from audio_visualizer import updater
 from audio_visualizer.ui.workspaceContext import WorkspaceContext
@@ -65,7 +65,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         _t0 = time.monotonic()
         super().__init__()
-        self._log_path = setup_logging()
+        self._fault_log_path = install_process_diagnostics()
+        self._log_path = get_log_file_path()
         self.setWindowTitle("Audio Visualizer")
         self.setGeometry(100, 100, 1600, 1000)
 
@@ -101,6 +102,11 @@ class MainWindow(QMainWindow):
         # Load last settings
         self._load_last_settings_if_present()
 
+        logger.info(
+            "Logging active: app_log=%s fault_log=%s",
+            self._log_path,
+            self._fault_log_path,
+        )
         logger.info("MainWindow startup: %.1f ms", (time.monotonic() - _t0) * 1000)
 
     # ------------------------------------------------------------------
