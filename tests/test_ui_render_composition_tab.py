@@ -1,5 +1,6 @@
 """Tests for RenderCompositionTab, composition model, undo/redo, and presets."""
 
+import logging
 import time
 from pathlib import Path
 
@@ -2464,6 +2465,42 @@ class TestPlaybackEngine:
 
         assert engine._layer_source_position_ms(layer, 6500) == 500
 
+    def test_render_frame_updates_hidden_compositor_layers(self, monkeypatch):
+        from audio_visualizer.ui.tabs.renderComposition.playbackEngine import (
+            CompositorWidget,
+            PlaybackEngine,
+        )
+
+        widget = CompositorWidget(1920, 1080)
+        engine = PlaybackEngine(widget, allow_audio=False)
+        image = QImage(64, 64, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#00FF00"))
+
+        engine._visual_layers = [{
+            "id": "image-layer",
+            "path": "",
+            "source_kind": "image",
+            "source_duration_ms": 0,
+            "start_ms": 0,
+            "end_ms": 5000,
+            "behavior_after_end": "hide",
+            "center_x": 0,
+            "center_y": 0,
+            "width": 64,
+            "height": 64,
+            "z_order": 0,
+            "opacity": 1.0,
+            "enabled": True,
+        }]
+        engine._static_images["image-layer"] = image
+
+        monkeypatch.setattr(widget, "isVisible", lambda: False)
+
+        engine._render_frame_at(1000)
+
+        assert len(widget._layers) == 1
+        assert widget._layers[0]["id"] == "image-layer"
+
 
 # ------------------------------------------------------------------
 # Capabilities tests
@@ -2584,6 +2621,60 @@ class TestPreviewLifecycle:
         # Only the last value should have been flushed
         assert calls == [300]
 
+    def test_preview_load_failure_logs_and_sets_status(self, monkeypatch, caplog):
+        tab = RenderCompositionTab()
+        caplog.set_level(
+            logging.ERROR,
+            logger="audio_visualizer.ui.tabs.renderComposition.previewController",
+        )
+
+        def _explode(*_args, **_kwargs):
+            raise RuntimeError("simulated preview load crash")
+
+        monkeypatch.setattr(tab._playback_engine, "load", _explode)
+
+        with pytest.raises(RuntimeError, match="simulated preview load crash"):
+            tab._preview_controller.load_engine_data()
+
+        assert "preview load failed" in caplog.text.lower()
+        assert "simulated preview load crash" in caplog.text
+        assert "Preview failed" in tab._preview_status_label.text()
+
+    def test_preview_seek_failure_logs_and_sets_status(self, monkeypatch, caplog):
+        tab = RenderCompositionTab()
+        tab._preview_controller._preview_model_dirty = False
+        caplog.set_level(
+            logging.ERROR,
+            logger="audio_visualizer.ui.tabs.renderComposition.previewController",
+        )
+
+        def _explode(*_args, **_kwargs):
+            raise RuntimeError("simulated preview seek crash")
+
+        monkeypatch.setattr(tab._playback_engine, "seek_from_timeline", _explode)
+
+        tab._preview_controller._seek_preview(1234)
+
+        assert "preview seek failed at 1234 ms" in caplog.text.lower()
+        assert "simulated preview seek crash" in caplog.text
+        assert "Preview failed" in tab._preview_status_label.text()
+
+    def test_switching_back_to_timeline_reschedules_preview_seek(self, monkeypatch):
+        tab = RenderCompositionTab()
+        tab._preview_time_spin.setValue(1234)
+
+        calls = []
+        monkeypatch.setattr(
+            tab._preview_controller,
+            "schedule_seek",
+            lambda ms: calls.append(ms),
+        )
+
+        tab._preview_tabs.setCurrentIndex(1)
+        tab._preview_tabs.setCurrentIndex(0)
+
+        assert calls == [1234]
+
 
 class TestSyncViewsAfterEdit:
     """Ensure _sync_views_after_edit rebuilds all views consistently."""
@@ -2625,6 +2716,43 @@ class TestSyncViewsAfterEdit:
         layer.center_x = 999
         tab._sync_views_after_edit(layer.id)
         assert tab._x_spin.value() == 999
+
+    def test_layer_preview_failure_is_caught_and_reported(self, monkeypatch, caplog):
+        tab = RenderCompositionTab()
+        layer = CompositionLayer(
+            display_name="Visual", start_ms=0, end_ms=5000,
+        )
+        tab._model.add_layer(layer)
+        tab._refresh_layer_list()
+        tab._layer_list.setCurrentRow(0)
+        caplog.set_level(
+            logging.ERROR,
+            logger="audio_visualizer.ui.tabs.renderCompositionTab",
+        )
+
+        def _explode(*_args, **_kwargs):
+            raise RuntimeError("simulated layer preview crash")
+
+        monkeypatch.setattr(tab._playback_engine, "layer_image_at", _explode)
+
+        tab._update_layer_preview_from_engine(500)
+
+        assert "Layer preview update failed" in caplog.text
+        assert "simulated layer preview crash" in caplog.text
+        assert "Layer preview failed" in tab._layer_preview_label.text()
+
+    def test_jump_start_failure_sets_status_instead_of_raising(self, monkeypatch):
+        tab = RenderCompositionTab()
+        monkeypatch.setattr(tab, "_playback_availability", lambda: (True, ""))
+        monkeypatch.setattr(
+            tab,
+            "_load_engine_data",
+            lambda: (_ for _ in ()).throw(RuntimeError("simulated jump crash")),
+        )
+
+        tab._on_transport_jump_start()
+
+        assert "Playback failed" in tab._preview_status_label.text()
 
     def test_sync_reloads_audio_properties(self):
         tab = RenderCompositionTab()

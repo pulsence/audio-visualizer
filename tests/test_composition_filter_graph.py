@@ -225,6 +225,20 @@ class TestTimeline:
         expr = _build_enable_expr(layer)
         assert "lt(t,5.0)" in expr
 
+    def test_hide_behavior_stops_at_source_exhaustion(self):
+        layer = CompositionLayer(
+            display_name="Hidden After Source",
+            source_kind="video",
+            source_duration_ms=3000,
+            start_ms=1000,
+            end_ms=9000,
+            behavior_after_end="hide",
+        )
+        expr = _build_enable_expr(layer)
+        assert "gte(t,1.0)" in expr
+        assert "lt(t,4.0)" in expr
+        assert "lt(t,9.0)" not in expr
+
 
 # ------------------------------------------------------------------
 # Duration

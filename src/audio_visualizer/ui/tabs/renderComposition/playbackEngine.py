@@ -168,7 +168,11 @@ class _VideoDecodeWorker(threading.Thread):
 
             container.close()
         except Exception:
-            logger.debug("Video decode worker failed for %s", self.source_path, exc_info=True)
+            logger.exception(
+                "Video decode worker failed for %s (layer_id=%s).",
+                self.source_path,
+                self.layer_id,
+            )
 
     def seek(self, ms: int) -> None:
         with self._lock:
@@ -259,7 +263,11 @@ class _AudioPlayer:
                 if chunks:
                     self._decoded_audio[layer_id] = np.concatenate(chunks)
             except Exception:
-                logger.debug("Audio pre-decode failed for %s", path, exc_info=True)
+                logger.exception(
+                    "Audio pre-decode failed for %s (layer_id=%s).",
+                    path,
+                    layer_id,
+                )
 
     def start(self, position_ms: float = 0.0) -> None:
         with self._lock:
@@ -281,7 +289,7 @@ class _AudioPlayer:
             )
             self._stream.start()
         except Exception:
-            logger.debug("sounddevice stream start failed", exc_info=True)
+            logger.exception("Audio output stream start failed.")
             self._stream = None
 
     def stop(self) -> None:
@@ -909,6 +917,12 @@ class PlaybackEngine(QObject):
                 image = QImage(vl["path"])
                 if not image.isNull():
                     self._static_images[layer_id] = image
+                else:
+                    logger.warning(
+                        "Failed to load image layer for preview (layer_id=%s, path=%s).",
+                        layer_id,
+                        vl["path"],
+                    )
                 continue
             q: queue.Queue = queue.Queue(maxsize=_MAX_FRAME_QUEUE)
             self._frame_queues[layer_id] = q
@@ -977,8 +991,6 @@ class PlaybackEngine(QObject):
         """Composite and display all visible layers at *pos_ms*."""
         if not self._visual_layers:
             return
-        if not self._compositor.isVisible():
-            return
         self._drain_frame_queues()
 
         comp_layers: list[dict] = []
@@ -993,7 +1005,13 @@ class PlaybackEngine(QObject):
             try:
                 img = self._image_for_layer_at(vl, source_ms)
             except Exception:
-                logger.debug("Failed to get image for layer %s", layer_id, exc_info=True)
+                logger.warning(
+                    "Failed to resolve preview image for layer %s at %d ms (path=%s).",
+                    layer_id,
+                    source_ms,
+                    vl.get("path", ""),
+                    exc_info=True,
+                )
                 continue
             if img is None or img.isNull():
                 continue
@@ -1096,7 +1114,11 @@ class PlaybackEngine(QObject):
             container.close()
             return best_image
         except Exception:
-            logger.debug("Synchronous frame decode failed for %s", source_path, exc_info=True)
+            logger.exception(
+                "Synchronous frame decode failed for %s at %d ms.",
+                source_path,
+                source_ms,
+            )
             return None
 
     def _layer_source_position_ms(self, layer: dict, composition_ms: int) -> int | None:

@@ -1,5 +1,8 @@
 """Tests for WorkerBridge and WorkerSignals from audio_visualizer.ui.workers.workerBridge."""
 
+import io
+import logging
+
 from PySide6.QtWidgets import QApplication
 
 app = QApplication.instance() or QApplication([])
@@ -209,7 +212,13 @@ class TestCompositionWorkerSignalContract:
                 {"output_path": str(tmp_path / "out.mp4")},
             )
         ]
-        assert logs == []
+        assert logs == [
+            (
+                "ERROR",
+                "ffmpeg not found on PATH.",
+                {"output_path": str(tmp_path / "out.mp4")},
+            )
+        ]
         assert len(failed) == 1
         assert "ffmpeg not found on PATH" in failed[0][0]
 
@@ -259,16 +268,20 @@ class TestCompositionWorkerSignalContract:
                 {"output_path": str(tmp_path / "out.mp4")},
             ),
         ]
-        assert logs == [
-            (
-                "INFO",
-                "Prepared FFmpeg composition command.",
-                {
-                    "command": ["ffmpeg", "-y", str(tmp_path / "out.mp4")],
-                    "output_path": str(tmp_path / "out.mp4"),
-                },
-            )
-        ]
+        assert logs[0] == (
+            "INFO",
+            "Prepared FFmpeg composition command.",
+            {
+                "command": ["ffmpeg", "-y", str(tmp_path / "out.mp4")],
+                "output_path": str(tmp_path / "out.mp4"),
+            },
+        )
+        assert any(
+            level == "ERROR"
+            and message == "Failed to start FFmpeg."
+            and data["error"] == "spawn failed"
+            for level, message, data in logs
+        )
         assert failed == [
             (
                 "Failed to start FFmpeg: spawn failed",
@@ -352,3 +365,56 @@ class TestCompositionWorkerSignalContract:
             and data["video_encoder"] == "libx264"
             for _pct, message, data in progress
         )
+
+    def test_nonzero_exit_emits_diagnostic_log(self, monkeypatch, tmp_path, caplog):
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.shutil.which",
+            lambda _name: "/usr/bin/ffmpeg",
+        )
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.build_ffmpeg_command",
+            lambda model, output_path: ["ffmpeg", "-y", "-c:v", "libx264", str(output_path)],
+        )
+
+        class _Proc:
+            def __init__(self):
+                self.stderr = iter(["Encoder init failed\n", "Bad option\n"])
+                self.stdout = io.StringIO("stdout details\n")
+
+            def wait(self):
+                return 1
+
+            def terminate(self):
+                return None
+
+        monkeypatch.setattr(
+            "audio_visualizer.ui.workers.compositionWorker.subprocess.Popen",
+            lambda *args, **kwargs: _Proc(),
+        )
+
+        worker = CompositionWorker(CompositionModel(), tmp_path / "out.mp4")
+        logs: list[tuple[str, str, dict]] = []
+        failed: list[tuple[str, dict]] = []
+        worker.signals.log.connect(lambda level, message, data: logs.append((level, message, data)))
+        worker.signals.failed.connect(lambda message, data: failed.append((message, data)))
+        caplog.set_level(
+            logging.ERROR,
+            logger="audio_visualizer.ui.workers.compositionWorker",
+        )
+
+        worker.run()
+
+        assert failed == [
+            (
+                "FFmpeg exited with code 1:\nEncoder init failed\nBad option",
+                {"output_path": str(tmp_path / "out.mp4"), "video_encoder": "libx264"},
+            )
+        ]
+        assert any(
+            level == "ERROR"
+            and message == "FFmpeg exited with a non-zero status."
+            and data["stderr_tail"] == "Encoder init failed\nBad option"
+            and data["stdout_tail"] == "stdout details"
+            for level, message, data in logs
+        )
+        assert "FFmpeg exited with code 1 for composition render" in caplog.text

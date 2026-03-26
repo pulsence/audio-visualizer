@@ -131,6 +131,7 @@ The shell does not auto-open preview dialogs on completion.
 
 - Visual layers use scale/overlay filters plus enable expressions derived from timeline timing.
 - Video layers longer than their source duration use `-stream_loop -1`, then trim/shift inside the filter graph so preview and final export follow the same timing model.
+- Hide-after-source-exhaustion behavior is enforced in export by deriving the overlay enable window from the shared visual evaluation contract rather than only from the raw timeline end.
 - Audio layers support `adelay`, `atrim`, looping, and `amix=duration=longest` for layered audio output.
 - Timeline loop markers come from the same source-duration data used to build the FFmpeg command.
 
@@ -149,7 +150,9 @@ This eliminates the previous duplication where `PlaybackEngine._layer_source_pos
 
 - `CompositionWorker.cancel()` terminates the FFmpeg subprocess.
 - Progress is parsed from FFmpeg `stderr` by reading `time=` updates and converting them against `compute_composition_duration_ms()` from the shared Render Composition evaluation contract.
-- Recent stderr output is included in the failure message when FFmpeg exits non-zero.
+- Preview/load/seek/playback failures now log console-visible tracebacks with operation context through `PreviewController`, `PlaybackEngine`, and the Render Composition tab transport callbacks.
+- Composition export logs subprocess start failures, non-zero exit codes, and captured FFmpeg stderr/stdout tails through both the logger and `WorkerSignals.log`.
+- Recent stderr output is still included in the user-visible failure message when FFmpeg exits non-zero.
 
 ### Completion behavior
 

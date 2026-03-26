@@ -13,6 +13,8 @@ from typing import Any
 from audio_visualizer.ui.tabs.renderComposition.evaluation import (
     audio_needs_input_loop,
     compute_composition_duration_ms,
+    evaluate_audio_layer,
+    evaluate_visual_layer,
     visual_needs_input_loop,
 )
 from audio_visualizer.ui.tabs.renderComposition.model import (
@@ -168,16 +170,7 @@ def build_ffmpeg_command(
         audio_labels: list[str] = []
         for i, (input_idx, al) in enumerate(zip(audio_input_indices, audio_layers)):
             label = f"aud{i}"
-            parts: list[str] = []
-            eff_dur = al.effective_duration_ms()
-            if eff_dur > 0:
-                dur_s = eff_dur / 1000.0
-                parts.append(f"atrim=duration={dur_s}")
-            if al.start_ms > 0:
-                delay_ms = al.start_ms
-                parts.append(f"adelay={delay_ms}|{delay_ms}")
-            if al.volume != 1.0:
-                parts.append(f"volume={al.volume}")
+            parts = _build_audio_filter_parts(al)
             if parts:
                 audio_filters.append(f"[{input_idx}:a]{','.join(parts)}[{label}]")
             else:
@@ -202,16 +195,7 @@ def build_ffmpeg_command(
     elif len(audio_input_indices) == 1:
         al = audio_layers[0]
         input_idx = audio_input_indices[0]
-        parts_single: list[str] = []
-        eff_dur = al.effective_duration_ms()
-        if eff_dur > 0:
-            dur_s = eff_dur / 1000.0
-            parts_single.append(f"atrim=duration={dur_s}")
-        if al.start_ms > 0:
-            delay_ms = al.start_ms
-            parts_single.append(f"adelay={delay_ms}|{delay_ms}")
-        if al.volume != 1.0:
-            parts_single.append(f"volume={al.volume}")
+        parts_single = _build_audio_filter_parts(al)
 
         if parts_single:
             single_label = "aud0"
@@ -335,7 +319,7 @@ def _build_visual_stream_filter(
 ) -> str:
     """Build the filter chain for a single visual input stream."""
     filters: list[str] = []
-    requested_ms = layer.effective_duration_ms()
+    requested_ms = _visual_stream_duration_ms(layer)
 
     if layer.source_kind == "video" and requested_ms > 0:
         filters.append(f"trim=duration={_seconds_string(requested_ms)}")
@@ -444,17 +428,56 @@ def _build_behavior_filter(layer: CompositionLayer, model: CompositionModel) -> 
 def _build_enable_expr(layer: CompositionLayer) -> str:
     """Build an FFmpeg enable expression for layer timing."""
     start_s = layer.start_ms / 1000.0
-    requested_ms = layer.effective_duration_ms()
+    active_end_ms = _visual_active_end_ms(layer)
 
-    if start_s <= 0 and requested_ms <= 0:
+    if start_s <= 0 and active_end_ms is None:
         return ""
 
     parts: list[str] = []
     if start_s > 0:
         parts.append(f"gte(t,{start_s})")
-    if requested_ms > 0 and layer.end_ms > layer.start_ms:
-        parts.append(f"lt(t,{layer.end_ms / 1000.0})")
+    if active_end_ms is not None and active_end_ms > layer.start_ms:
+        parts.append(f"lt(t,{active_end_ms / 1000.0})")
 
     if not parts:
         return ""
     return "*".join(parts)
+
+
+def _visual_active_end_ms(layer: CompositionLayer) -> int | None:
+    """Return the composition timestamp where the layer stops contributing."""
+    timeline_end_ms = layer.end_ms if layer.end_ms > layer.start_ms else None
+    if layer.source_duration_ms <= 0:
+        return timeline_end_ms
+
+    source_exhausted_ms = layer.start_ms + layer.source_duration_ms
+    source_exhausted_eval = evaluate_visual_layer(layer, source_exhausted_ms)
+    if source_exhausted_eval.is_active:
+        return timeline_end_ms
+    if timeline_end_ms is None:
+        return source_exhausted_ms
+    return min(timeline_end_ms, source_exhausted_ms)
+
+
+def _visual_stream_duration_ms(layer: CompositionLayer) -> int:
+    """Return the visual stream duration required by export filters."""
+    active_end_ms = _visual_active_end_ms(layer)
+    if active_end_ms is None:
+        return layer.effective_duration_ms()
+    return max(0, active_end_ms - layer.start_ms)
+
+
+def _build_audio_filter_parts(al: CompositionAudioLayer) -> list[str]:
+    """Build audio trim/delay/volume filters using shared timing evaluation."""
+    parts: list[str] = []
+    audio_eval = evaluate_audio_layer(al, al.start_ms)
+    eff_dur = audio_eval.effective_duration_ms
+    if eff_dur > 0:
+        dur_s = eff_dur / 1000.0
+        parts.append(f"atrim=duration={dur_s}")
+    if al.start_ms > 0:
+        delay_ms = al.start_ms
+        parts.append(f"adelay={delay_ms}|{delay_ms}")
+    if al.volume != 1.0:
+        parts.append(f"volume={al.volume}")
+    return parts

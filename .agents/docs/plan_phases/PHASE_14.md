@@ -6,6 +6,8 @@ Follow the shared implementation rules in the main plan index. This file contain
 
 This phase is a targeted Render Composition refactor pass focused on stability, clearer ownership boundaries, and preview/export timing parity. It exists because the issues discovered in the earlier refinement phases point to structural coupling in the editor, preview, playback, and export pipeline rather than to one isolated bug.
 
+**Status note (2026-03-25):** Phase 14 follow-up diagnostics hardening is complete. Preview, playback, decode-worker, and export-worker failures are now expected to emit actionable console-visible context plus traceback or subprocess output details instead of failing silently.
+
 ## Render Composition Refactor Callout
 
 Phase 14 is a deliberate Render Composition refactor phase, not a generic cleanup bucket. It is being added because the recent refinement work has repeatedly found stability issues at the same architectural seams, which is a sign that localized fixes are no longer enough.
@@ -17,11 +19,13 @@ Phase 14 is a deliberate Render Composition refactor phase, not a generic cleanu
 - The same composition state is translated repeatedly into multiple mutable forms: `CompositionModel`, `TimelineItem` rows, layer-list rows, property widgets, playback-engine layer dicts, and FFmpeg command inputs. Nearly every edit has to manually re-synchronize those views.
 - `PlaybackEngine` currently owns decode-worker lifecycle, stopped-state synchronous frame decode, audio predecode/playback, compositor updates, and state transitions together. That concentration of responsibilities makes load/seek/play/pause/stop behavior hard to reason about and hard to harden.
 - Recent crash fixes have already required more guard logic and event-loop deferral around drag/preview interactions. That is useful as a short-term safety measure, but it is also evidence that the current interaction boundary between UI events and preview execution is too re-entrant and fragile.
+- Random Render Screen failures are still surfacing with little or no actionable error output. Some exception paths only update UI state or emit debug-level logging, which makes native/media/process failures difficult to diagnose from the console when users report “it just crashed.”
 
 ### Why This Refactor Needs to Happen Before Release
 
 - Continuing to patch these issues locally will keep adding special cases without reducing the underlying risk.
 - Render Composition is one of the most complex and user-visible workflows in v0.7.0; unstable preview/playback behavior undermines editing confidence and can also hide preview/export mismatches.
+- Silent or weakly surfaced failures slow down every stability pass, because crashes cannot be tied back to a concrete operation, asset, playhead position, or subprocess error stream.
 - Final review and release-preparation work should happen only after the preview, playback, and export responsibilities are consolidated behind clearer contracts and more testable boundaries.
 
 ## Reported Changes to Make
@@ -32,6 +36,7 @@ Phase 14 is a deliberate Render Composition refactor phase, not a generic cleanu
   - Remove re-entrant update chains where a model mutation immediately fans out into UI rebuilds, preview reloads, engine seeks, and layer-preview refreshes inside the same interaction path.
   - Reduce duplicate state translation between `CompositionModel`, `TimelineItem`, playback-engine layer dicts, list rows, and property widgets.
   - Harden playback and preview lifecycle management around load, seek, play, pause, stop, worker cleanup, and failure surfacing.
+  - Establish a no-silent-failure diagnostics policy for Render Composition: preview, playback, decode-worker, and export-worker failures must emit console-visible log messages with operation context and full traceback or stderr details when available.
   - Add automated regression coverage and an explicit manual verification checklist for the interaction paths most likely to crash or drift.
 - Architecture / Shared Rendering Docs
   - Update the architecture documentation so the extracted responsibilities and shared timing contract are documented clearly.
@@ -99,17 +104,18 @@ Note: `_build_behavior_filter()` in `filterGraph.py` currently returns `""`, mea
 - Manages the dirty-state flag so that model mutations mark the controller dirty, and the next scheduled seek triggers an engine reload automatically.
 - Delegates actual engine calls (`load()`, `seek()`, `seek_from_timeline()`) to `PlaybackEngine` but owns the decision of when to call them.
 
-**Failure surfacing:** The tab already has `self._preview_status_label` near the transport controls. The preview controller should update this label with a brief message (e.g., "Preview failed — decode error") when `_seek_preview()` or engine load raises, instead of silently catching and debug-logging the exception as the current `_seek_preview()` does.
+**Failure surfacing:** The tab already has `self._preview_status_label` near the transport controls. The preview controller should update this label with a brief message (e.g., "Preview failed — decode error") when `_seek_preview()` or engine load raises, but that UI message is not enough by itself. The refactor must also log the failure to the console/logger with `logger.exception(...)`-style traceback output plus operation context (load vs seek vs play vs stop, playhead position, and layer/source identifiers when available). No top-level preview/playback exception path should fail silently or log only at debug level.
 
 **Tasks:**
 1. Create `previewController.py` with the responsibilities described above, extracting `_mark_preview_dirty()`, `_schedule_preview_seek()`, `_flush_preview_seek()`, `_seek_preview()`, `_load_engine_data()`, and `_update_layer_preview_from_engine()` from `RenderCompositionTab`.
 2. Update `RenderCompositionTab` to instantiate `PreviewController` and route all preview-related calls through it. Timeline, property, and playhead handlers should call `self._preview_controller.schedule_seek(ms)` instead of directly invoking engine methods.
 3. Define explicit load/play/pause/seek/stop lifecycle and cleanup boundaries for decode workers, audio playback, and compositor resources in `PlaybackEngine`.
-4. Update `_preview_status_label` on preview-start and preview-seek failures with a user-readable message instead of relying only on `logger.debug`.
-5. Add automated regression coverage for stopped, paused, and actively playing preview transitions, and for coalesced seek behavior.
-6. Run tests: `pytest tests/ -v`.
-7. Update `.agents/docs/` architecture documentation as needed.
-8. Commit following `COMMIT_MESSAGE.md` format and then push.
+4. Replace silent or debug-only exception swallowing in preview/playback entry points with console-visible error logging that includes traceback and enough context to diagnose the failing operation.
+5. Update `_preview_status_label` on preview-start and preview-seek failures with a user-readable message, but do not rely on that UI label as the only failure signal.
+6. Add automated regression coverage for stopped, paused, and actively playing preview transitions, coalesced seek behavior, and failure surfacing/logging boundaries.
+7. Run tests: `pytest tests/ -v`.
+8. Update `.agents/docs/` architecture documentation as needed.
+9. Commit following `COMMIT_MESSAGE.md` format and then push.
 
 **Files:**
 - Create `src/audio_visualizer/ui/tabs/renderComposition/previewController.py`
@@ -117,7 +123,7 @@ Note: `_build_behavior_filter()` in `filterGraph.py` currently returns `""`, mea
 - `src/audio_visualizer/ui/tabs/renderComposition/playbackEngine.py`
 - `tests/test_ui_render_composition_tab.py` (preview lifecycle and transport tests)
 
-**Success criteria:** Preview updates remain live, but the UI no longer relies on re-entrant direct engine work during edit interactions, and playback state transitions are explicit and testable.
+**Success criteria:** Preview updates remain live, the UI no longer relies on re-entrant direct engine work during edit interactions, playback state transitions are explicit and testable, and preview/playback failures always produce actionable console-visible diagnostics.
 
 ### 14.3: Editor State and View Synchronization Cleanup
 
@@ -165,10 +171,11 @@ Selection retention should be handled inside `_refresh_layer_list()` by matching
 3. Update `compositionWorker.py` to use `compute_composition_duration_ms()` from the shared contract instead of calling `model.get_duration_ms()` directly, and ensure it passes shared evaluation outputs to `build_ffmpeg_command()` where applicable.
 4. Review and close the audio layer parity gaps: ensure `atrim`, `adelay`, and loop behavior in export match the `_audio_callback()` semantics now routed through `evaluate_audio_layer()`.
 5. Tighten render error reporting and fallback boundaries so FFmpeg/export failures are easier to diagnose without weakening cancellation or encoder fallback behavior.
-6. Add regression tests around command generation and timing parity for the refactored evaluation pipeline.
-7. Run tests: `pytest tests/ -v`.
-8. Update `.agents/docs/` architecture documentation as needed.
-9. Commit following `COMMIT_MESSAGE.md` format and then push.
+6. Ensure `compositionWorker.py` and related render-launch paths always surface subprocess launch failures, non-zero exit codes, and captured FFmpeg stderr/stdout to the console/logger with enough context to identify the composition and render step that failed.
+7. Add regression tests around command generation, timing parity, and render-failure surfacing for the refactored evaluation pipeline.
+8. Run tests: `pytest tests/ -v`.
+9. Update `.agents/docs/` architecture documentation as needed.
+10. Commit following `COMMIT_MESSAGE.md` format and then push.
 
 **Files:**
 - `src/audio_visualizer/ui/tabs/renderComposition/filterGraph.py`
@@ -191,9 +198,10 @@ Selection retention should be handled inside `_refresh_layer_list()` by matching
 8. **Preview/export parity:** Set up a composition with loop, freeze-last-frame, and hide behaviors. Export, then compare the exported video against the preview at several timestamps to verify timing matches.
 9. **Engine load failure:** Remove or rename a source file while the composition references it. Verify a user-visible message appears in the preview status label rather than a silent failure.
 10. **Rapid property edits:** Quickly change position, size, and timing values in the property panel. Verify seeks coalesce and the preview shows the final state without intermediate flicker or crash.
+11. **Failure diagnostics:** Force both a preview-side failure (bad/missing source or decode issue) and a render/export-side failure (bad FFmpeg args, inaccessible output, or missing source). Verify the UI shows a brief status message and the console/log contains the traceback or subprocess stderr needed to diagnose the failure.
 
 **Tasks:**
-1. Add targeted automated coverage for stopped/paused preview seeks, timeline drag/trim/reorder interactions, play/pause/seek/stop transitions, and layer-preview synchronization.
+1. Add targeted automated coverage for stopped/paused preview seeks, timeline drag/trim/reorder interactions, play/pause/seek/stop transitions, layer-preview synchronization, and crash-diagnostics surfacing.
 2. Write the manual verification checklist above into the phase documentation.
 3. Run the relevant targeted tests and the full suite with `pytest tests/ -v`.
 4. Update `.agents/docs/` architecture documentation as needed.
@@ -205,7 +213,7 @@ Selection retention should be handled inside `_refresh_layer_list()` by matching
 - `tests/test_composition_evaluation.py` (timing parity edge cases)
 - Phase 14 documentation
 
-**Success criteria:** The refactor is backed by regression coverage for the failure-prone interaction paths and by a concrete manual checklist for native/runtime-sensitive preview behavior.
+**Success criteria:** The refactor is backed by regression coverage for the failure-prone interaction paths, by explicit verification of console-visible failure diagnostics, and by a concrete manual checklist for native/runtime-sensitive preview behavior.
 
 ### 14.6: Phase 14 Code Review
 
@@ -238,6 +246,12 @@ Selection retention should be handled inside `_refresh_layer_list()` by matching
 
 ## Phase 14 Completion Notes
 
+### Diagnostics Follow-Up Resolved
+
+- Preview load/seek failures, playback transport failures, and layer-preview failures now emit console-visible exception logs with operation context instead of relying on debug-only logging or brief UI text alone.
+- Decode-worker and paused-seek decode failures now log actionable context so asset/runtime issues can be traced back to the failing source path and operation.
+- Composition export failures now surface subprocess start failures, non-zero exit codes, and captured FFmpeg stderr/stdout tails through both the logger and worker log signals.
+
 ### Pain Points Resolved
 
 1. **Duplicated timing logic** — `PlaybackEngine._layer_source_position_ms()` and `filterGraph._build_enable_expr()` / `_add_visual_input()` carried parallel implementations of activity windows, loop behavior, freeze-last-frame, and source-time mapping. These are now unified in `evaluation.py`.
@@ -250,6 +264,8 @@ Selection retention should be handled inside `_refresh_layer_list()` by matching
 
 5. **Duplicate duration calculations** — `model.get_duration_ms()`, `_duration_seconds()`, and `_load_engine_data()` all computed duration independently. Now all use `compute_composition_duration_ms()`.
 
+6. **Weak failure diagnostics** — Preview/playback/export failures could disappear into debug-only logging or minimal UI text. The refactor now promotes those paths to console-visible diagnostics with traceback or subprocess tail context.
+
 ### New Contracts Extracted
 
 - **`evaluation.py`** — Pure functions (`evaluate_visual_layer`, `evaluate_audio_layer`, `compute_composition_duration_ms`, `visual_needs_input_loop`, `audio_needs_input_loop`) that both `playbackEngine.py` and `filterGraph.py` import. Result types `VisualLayerEval` and `AudioLayerEval` are frozen dataclasses.
@@ -257,6 +273,8 @@ Selection retention should be handled inside `_refresh_layer_list()` by matching
 - **`previewController.py`** — `PreviewController` owns dirty-state, coalesced seek timer, engine load/seek coordination, and failure surfacing to the status label.
 
 - **`_sync_views_after_edit()`** — Single method in `RenderCompositionTab` that encapsulates layer-list rebuild, property-panel reload, settings emission, and preview scheduling.
+
+- **Export/preview diagnostics boundary** — `CompositionWorker`, `PreviewController`, `PlaybackEngine`, and Render Composition transport callbacks now log actionable operation context for preview/playback/export failures instead of relying on silent or debug-only paths.
 
 ### Deliberate Preservation Decisions
 
@@ -268,7 +286,7 @@ Selection retention should be handled inside `_refresh_layer_list()` by matching
 ### Test Coverage
 
 - The Phase 14 refactor added dedicated automated coverage for shared evaluation logic, preview lifecycle behavior, editor/view synchronization, and preview/export timing parity.
-- Current review verification: full suite passing with 1428 tests (up from the 1369-test pre-phase baseline recorded in the plan index).
+- Current review verification: full suite passing with 1436 tests (up from the 1369-test pre-phase baseline recorded in the plan index).
 
 ### Manual Verification Checklist
 
@@ -282,3 +300,4 @@ Selection retention should be handled inside `_refresh_layer_list()` by matching
 8. Preview/export parity: set up loop/freeze/hide behaviors, export, compare timestamps
 9. Engine load failure: remove source file, verify status label message
 10. Rapid property edits: quickly change position/size/timing, verify no flicker/crash
+11. Failure diagnostics: force preview/render failures, verify console traceback or stderr is emitted

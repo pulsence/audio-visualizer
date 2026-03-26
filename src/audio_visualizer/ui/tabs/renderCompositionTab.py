@@ -311,6 +311,7 @@ class RenderCompositionTab(BaseTab):
         self._preview_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         preview_layout.addWidget(self._preview_tabs)
+        self._preview_tabs.currentChanged.connect(self._on_preview_tab_changed)
 
         preview_group.setLayout(preview_layout)
         upper_splitter.addWidget(preview_group)
@@ -828,6 +829,11 @@ class RenderCompositionTab(BaseTab):
             self._timeline.set_playhead_ms(ms)
         self._schedule_preview_seek(ms)
 
+    def _on_preview_tab_changed(self, index: int) -> None:
+        """Refresh the timeline preview when its tab becomes active."""
+        if index == 0:
+            self._schedule_preview_seek(self._preview_time_spin.value())
+
     def _schedule_preview_seek(self, ms: int) -> None:
         """Queue a preview seek for the next event-loop turn."""
         if self._preview_controller is None:
@@ -1013,7 +1019,13 @@ class RenderCompositionTab(BaseTab):
 
     def _on_transport_stop(self) -> None:
         if self._playback_engine:
-            self._playback_engine.stop()
+            try:
+                self._playback_engine.stop()
+            except Exception:
+                logger.exception("Playback stop failed")
+                self._preview_status_label.setText(
+                    "Playback failed \u2014 check logs for details."
+                )
 
     def _on_transport_jump_start(self) -> None:
         if self._playback_engine is None:
@@ -1021,10 +1033,16 @@ class RenderCompositionTab(BaseTab):
         if not self._playback_availability()[0]:
             self._preview_time_spin.setValue(0)
             return
-        if self._playback_engine:
-            if self._playback_engine.state == "stopped":
-                self._load_engine_data()
-            self._playback_engine.jump_to_start()
+        try:
+            if self._playback_engine:
+                if self._playback_engine.state == "stopped":
+                    self._load_engine_data()
+                self._playback_engine.jump_to_start()
+        except Exception:
+            logger.exception("Playback jump-to-start failed")
+            self._preview_status_label.setText(
+                "Playback failed \u2014 check logs for details."
+            )
 
     def _on_transport_jump_end(self) -> None:
         if self._playback_engine is None:
@@ -1032,10 +1050,16 @@ class RenderCompositionTab(BaseTab):
         if not self._playback_availability()[0]:
             self._preview_time_spin.setValue(compute_composition_duration_ms(self._model))
             return
-        if self._playback_engine:
-            if self._playback_engine.state == "stopped":
-                self._load_engine_data()
-            self._playback_engine.jump_to_end()
+        try:
+            if self._playback_engine:
+                if self._playback_engine.state == "stopped":
+                    self._load_engine_data()
+                self._playback_engine.jump_to_end()
+        except Exception:
+            logger.exception("Playback jump-to-end failed")
+            self._preview_status_label.setText(
+                "Playback failed \u2014 check logs for details."
+            )
 
     def _load_engine_data(self) -> None:
         """Prepare and load model data into the playback engine."""
@@ -2231,7 +2255,19 @@ class RenderCompositionTab(BaseTab):
             self._layer_preview_label.setText("Playback engine not available.")
             return
 
-        img = self._playback_engine.layer_image_at(row_id, ms)
+        try:
+            img = self._playback_engine.layer_image_at(row_id, ms)
+        except Exception:
+            logger.exception(
+                "Layer preview update failed for layer %s at %d ms.",
+                row_id,
+                ms,
+            )
+            self._layer_preview_label.setPixmap(QPixmap())
+            self._layer_preview_label.setText(
+                "Layer preview failed \u2014 check logs for details."
+            )
+            return
         if img is None or img.isNull():
             self._layer_preview_label.setPixmap(QPixmap())
             self._layer_preview_label.setText("No frame at this position.")

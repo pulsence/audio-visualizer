@@ -84,49 +84,62 @@ class PreviewController:
             return
 
         visual_layers: list[dict] = []
-        for layer in model.get_layers_sorted():
-            if not layer.enabled:
-                continue
-            visual_layers.append({
-                "id": layer.id,
-                "path": str(layer.asset_path) if layer.asset_path else "",
-                "source_kind": layer.source_kind,
-                "source_duration_ms": layer.source_duration_ms,
-                "start_ms": layer.start_ms,
-                "end_ms": layer.start_ms + layer.effective_duration_ms(),
-                "behavior_after_end": layer.behavior_after_end,
-                "center_x": layer.center_x,
-                "center_y": layer.center_y,
-                "width": layer.width,
-                "height": layer.height,
-                "z_order": layer.z_order,
-                "opacity": 1.0,
-                "enabled": layer.enabled,
-            })
-
         audio_layers: list[dict] = []
-        for al in model.audio_layers:
-            if not al.enabled:
-                continue
-            audio_layers.append({
-                "id": al.id,
-                "path": str(al.asset_path) if al.asset_path else "",
-                "start_ms": al.start_ms,
-                "duration_ms": al.effective_end_ms() - al.start_ms,
-                "volume": al.volume,
-                "muted": al.muted,
-                "enabled": al.enabled,
-            })
+        duration_ms = 0
+        try:
+            for layer in model.get_layers_sorted():
+                if not layer.enabled:
+                    continue
+                visual_layers.append({
+                    "id": layer.id,
+                    "path": str(layer.asset_path) if layer.asset_path else "",
+                    "source_kind": layer.source_kind,
+                    "source_duration_ms": layer.source_duration_ms,
+                    "start_ms": layer.start_ms,
+                    "end_ms": layer.start_ms + layer.effective_duration_ms(),
+                    "behavior_after_end": layer.behavior_after_end,
+                    "center_x": layer.center_x,
+                    "center_y": layer.center_y,
+                    "width": layer.width,
+                    "height": layer.height,
+                    "z_order": layer.z_order,
+                    "opacity": 1.0,
+                    "enabled": layer.enabled,
+                })
 
-        duration_ms = compute_composition_duration_ms(model)
-        self._engine.load(
-            visual_layers,
-            audio_layers,
-            duration_ms,
-            output_width=model.output_width,
-            output_height=model.output_height,
-        )
+            for al in model.audio_layers:
+                if not al.enabled:
+                    continue
+                audio_layers.append({
+                    "id": al.id,
+                    "path": str(al.asset_path) if al.asset_path else "",
+                    "start_ms": al.start_ms,
+                    "duration_ms": al.effective_end_ms() - al.start_ms,
+                    "volume": al.volume,
+                    "muted": al.muted,
+                    "enabled": al.enabled,
+                })
+
+            duration_ms = compute_composition_duration_ms(model)
+            self._engine.load(
+                visual_layers,
+                audio_layers,
+                duration_ms,
+                output_width=model.output_width,
+                output_height=model.output_height,
+            )
+        except Exception:
+            logger.exception(
+                "Render Composition preview load failed "
+                "(visual_layers=%d, audio_layers=%d, duration_ms=%d).",
+                len(visual_layers),
+                len(audio_layers),
+                duration_ms,
+            )
+            self._set_failure_status("Preview failed — check logs for details.")
+            raise
         self._preview_model_dirty = False
+        self._clear_failure_status()
 
     def ensure_loaded(self) -> None:
         """Reload engine data if dirty."""
@@ -147,13 +160,29 @@ class PreviewController:
 
     def _seek_preview(self, ms: int) -> None:
         """Load engine data if needed and render the frame at *ms*."""
+        if self._preview_model_dirty:
+            self.load_engine_data()
         try:
-            if self._preview_model_dirty:
-                self.load_engine_data()
             self._engine.seek_from_timeline(ms)
             if self._on_seek_completed is not None:
                 self._on_seek_completed(ms)
+            self._clear_failure_status()
         except Exception:
-            logger.debug("Preview seek failed at %d ms", ms, exc_info=True)
-            if self._status_label is not None:
-                self._status_label.setText("Preview failed \u2014 decode error")
+            logger.exception(
+                "Render Composition preview seek failed at %d ms (dirty=%s).",
+                ms,
+                self._preview_model_dirty,
+            )
+            self._set_failure_status("Preview failed — check logs for details.")
+
+    def _clear_failure_status(self) -> None:
+        """Clear stale preview failure text after a successful operation."""
+        if self._status_label is None:
+            return
+        if self._status_label.text().startswith("Preview failed"):
+            self._status_label.setText("")
+
+    def _set_failure_status(self, text: str) -> None:
+        """Update the preview status label after a preview failure."""
+        if self._status_label is not None:
+            self._status_label.setText(text)

@@ -93,12 +93,32 @@ class CompositionWorker(QRunnable):
         try:
             self._do_render()
         except Exception as exc:
-            logger.exception("Composition render failed unexpectedly.")
+            logger.exception(
+                "Composition render failed unexpectedly (output_path=%s).",
+                self._output_path,
+            )
+            self.signals.log.emit(
+                "ERROR",
+                "Composition render failed unexpectedly.",
+                {
+                    "output_path": self._output_path,
+                    "error": str(exc),
+                },
+            )
             self.signals.failed.emit(str(exc), {})
 
     def _do_render(self) -> None:
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
+            logger.error(
+                "ffmpeg not found on PATH for composition render (output_path=%s).",
+                self._output_path,
+            )
+            self.signals.log.emit(
+                "ERROR",
+                "ffmpeg not found on PATH.",
+                {"output_path": self._output_path},
+            )
             self.signals.failed.emit(
                 "ffmpeg not found on PATH. Install FFmpeg to render compositions.",
                 {},
@@ -128,7 +148,7 @@ class CompositionWorker(QRunnable):
         if result is None:
             return
 
-        returncode, stderr_lines = result
+        returncode, stderr_lines, stdout_text = result
         actual_encoder = selected_encoder
 
         if (
@@ -137,6 +157,11 @@ class CompositionWorker(QRunnable):
             and is_hardware_encoder(selected_encoder)
             and not self._cancel_flag.is_set()
         ):
+            logger.warning(
+                "Hardware encoder %s failed for composition render; retrying with %s.",
+                selected_encoder,
+                _SOFTWARE_FALLBACK_ENCODER,
+            )
             self.signals.log.emit(
                 "WARNING",
                 "Hardware encoder failed; retrying with software encoder.",
@@ -166,10 +191,34 @@ class CompositionWorker(QRunnable):
             result = self._run_ffmpeg_command(fallback_cmd, duration_s, actual_encoder, retry=True)
             if result is None:
                 return
-            returncode, stderr_lines = result
+            returncode, stderr_lines, stdout_text = result
 
         if returncode != 0:
-            stderr_text = "".join(stderr_lines[-20:])
+            stderr_text = self._tail_text(stderr_lines)
+            stdout_tail = stdout_text.strip()
+            logger.error(
+                "FFmpeg exited with code %d for composition render (output_path=%s, encoder=%s). "
+                "stderr tail:\n%s%s",
+                returncode,
+                self._output_path,
+                actual_encoder,
+                stderr_text or "<no stderr captured>",
+                (
+                    f"\nstdout tail:\n{stdout_tail}"
+                    if stdout_tail
+                    else ""
+                ),
+            )
+            self.signals.log.emit(
+                "ERROR",
+                "FFmpeg exited with a non-zero status.",
+                {
+                    **self._stage_data(actual_encoder),
+                    "returncode": returncode,
+                    "stderr_tail": stderr_text,
+                    "stdout_tail": stdout_tail,
+                },
+            )
             self.signals.failed.emit(
                 f"FFmpeg exited with code {returncode}:\n{stderr_text}",
                 self._stage_data(actual_encoder),
@@ -229,7 +278,7 @@ class CompositionWorker(QRunnable):
         video_encoder: str | None,
         *,
         retry: bool = False,
-    ) -> tuple[int, list[str]] | None:
+    ) -> tuple[int, list[str], str] | None:
         """Run one FFmpeg invocation and collect stderr for progress/failure."""
         status_message = (
             f"Retrying with {video_encoder}..."
@@ -248,6 +297,20 @@ class CompositionWorker(QRunnable):
                 text=True,
             )
         except OSError as exc:
+            logger.exception(
+                "Failed to start FFmpeg for composition render (output_path=%s, encoder=%s).",
+                self._output_path,
+                video_encoder,
+            )
+            self.signals.log.emit(
+                "ERROR",
+                "Failed to start FFmpeg.",
+                {
+                    **self._stage_data(video_encoder),
+                    "command": cmd,
+                    "error": str(exc),
+                },
+            )
             self.signals.failed.emit(
                 f"Failed to start FFmpeg: {exc}",
                 self._stage_data(video_encoder),
@@ -260,6 +323,7 @@ class CompositionWorker(QRunnable):
             return None
 
         stderr_lines: list[str] = []
+        stdout_text = ""
         try:
             if self._process.stderr is None:
                 raise RuntimeError("FFmpeg process stderr is unavailable")
@@ -278,16 +342,48 @@ class CompositionWorker(QRunnable):
                         self._stage_data(video_encoder),
                     )
         except Exception as exc:
-            logger.warning("Error reading FFmpeg output: %s", exc)
+            logger.exception(
+                "Error reading FFmpeg stderr for composition render "
+                "(output_path=%s, encoder=%s).",
+                self._output_path,
+                video_encoder,
+            )
+            self.signals.log.emit(
+                "WARNING",
+                "Error reading FFmpeg stderr.",
+                {
+                    **self._stage_data(video_encoder),
+                    "error": str(exc),
+                },
+            )
 
         returncode = self._process.wait()
+        proc_stdout = getattr(self._process, "stdout", None)
+        if proc_stdout is not None:
+            try:
+                stdout_text = proc_stdout.read()
+            except Exception as exc:
+                logger.exception(
+                    "Error reading FFmpeg stdout for composition render "
+                    "(output_path=%s, encoder=%s).",
+                    self._output_path,
+                    video_encoder,
+                )
+                self.signals.log.emit(
+                    "WARNING",
+                    "Error reading FFmpeg stdout.",
+                    {
+                        **self._stage_data(video_encoder),
+                        "error": str(exc),
+                    },
+                )
         self._process = None
 
         if self._cancel_flag.is_set():
             self.signals.canceled.emit("Render canceled.")
             return None
 
-        return returncode, stderr_lines
+        return returncode, stderr_lines, stdout_text
 
     def _extract_video_encoder(self, cmd: list[str]) -> str | None:
         """Return the ``-c:v`` encoder from an FFmpeg command, if present."""
@@ -311,3 +407,7 @@ class CompositionWorker(QRunnable):
         data = self._stage_data(video_encoder)
         data["command"] = cmd
         return data
+
+    def _tail_text(self, lines: list[str], *, max_lines: int = 20) -> str:
+        """Return a compact diagnostic tail from subprocess output lines."""
+        return "".join(lines[-max_lines:]).strip()
